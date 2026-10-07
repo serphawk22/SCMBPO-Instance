@@ -89,8 +89,21 @@ export default function LeadsPage() {
   const [noteSaving, setNoteSaving] = useState(false);
   const [showSalesAssign, setShowSalesAssign] = useState(false);
   const [pendingLeadForm, setPendingLeadForm] = useState<any>(null);
+  const [availableSources, setAvailableSources] = useState<string[]>(SOURCES);
 
-  useEffect(() => { fetchLeads(); fetchActivities(); }, []);
+  useEffect(() => {
+    fetchLeads();
+    fetchActivities();
+    fetch(`${API_BASE_URL}/lead-sources`)
+      .then(r => r.json())
+      .then(d => {
+        const list = (d.sources || []).map((s: any) => s.name).filter(Boolean);
+        if (list.length) {
+          setAvailableSources(Array.from(new Set([...list, ...SOURCES])));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const searchParams = useSearchParams();
   useEffect(() => {
@@ -636,7 +649,7 @@ export default function LeadsPage() {
                     <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">{t("leads.source")}</label>
                     <select value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))}
                       className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
-                      {SOURCES.map(s => <option key={s}>{s}</option>)}
+                      {availableSources.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                 </div>

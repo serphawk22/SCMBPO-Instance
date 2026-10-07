@@ -12,6 +12,7 @@ import { useLanguage } from "@/context/LanguageContext";
 import PageGuide from "@/components/PageGuide";
 import { ResultCard, ResearchResultData, SendEmailResult, CopyButton } from "@/components/email-agent/ResultCard";
 import GmailAgentLoop from "./GmailAgentLoop";
+import ExcelCampaignManager from "./ExcelCampaignManager";
 import { useRole } from "@/context/RoleContext";
 
 
@@ -53,7 +54,7 @@ function BottomUpFillMail() {
 export default function EmailAgentPage() {
   const { role } = useRole();
   const { t } = useLanguage();
-  const [mode, setMode] = useState<"single" | "bulk">("single");
+  const [mode, setMode] = useState<"single" | "bulk" | "excel">("single");
   const [companyName, setCompanyName] = useState("");
   const [inputValue, setInputValue] = useState("");
   
@@ -422,6 +423,12 @@ export default function EmailAgentPage() {
               >
                 {t('email_agent.mode_bulk')}
               </button>
+              <button
+                onClick={() => setMode("excel")}
+                className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${mode === "excel" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
+              >
+                Excel Campaign
+              </button>
             </div>
           </div>
           <div className="flex gap-4 hidden sm:flex">
@@ -545,9 +552,13 @@ export default function EmailAgentPage() {
           </div>
         )}
           </>
-        ) : (
+        ) : mode === "bulk" ? (
           <div className="w-full max-w-4xl mx-auto">
             <GmailAgentLoop />
+          </div>
+        ) : (
+          <div className="w-full max-w-5xl mx-auto">
+            <ExcelCampaignManager />
           </div>
         )}
 

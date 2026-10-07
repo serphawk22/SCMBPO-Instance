@@ -30,12 +30,16 @@ import {
   Building2,
   Trash2,
   Zap,
-  X
+  UserX,
+  UserCheck,
+  X,
+  ChevronDown
 } from 'lucide-react';
 import Link from 'next/link';
 import { API_BASE_URL } from '@/config';
 import { cn } from '@/lib/utils';
 import { useLanguage } from '@/context/LanguageContext';
+import DropClientModal from '@/components/DropClientModal';
 import { useRole } from '@/context/RoleContext';
 import PageGuide from '@/components/PageGuide';
 import SalesAssignModal from '@/components/SalesAssignModal';
@@ -143,6 +147,15 @@ export default function ClientsPage() {
   
   // Pitch Modal State
   const [pitchModal, setPitchModal] = useState<{isOpen: boolean, pitch: string, clientName: string}>({ isOpen: false, pitch: "", clientName: "" });
+  const [reassignClient, setReassignClient] = useState<Client | null>(null);
+
+  // Dropped Clients State & Dropdown
+  const [droppedClients, setDroppedClients] = useState<any[]>([]);
+  const [droppedCount, setDroppedCount] = useState(0);
+  const [isDroppedDropdownOpen, setIsDroppedDropdownOpen] = useState(false);
+  const [dropClientTarget, setDropClientTarget] = useState<any>(null);
+  const [isDropModalOpen, setIsDropModalOpen] = useState(false);
+  const droppedDropdownRef = useRef<HTMLDivElement>(null);
 
   const [formData, setFormData] = useState({
     companyName: '',
@@ -278,10 +291,34 @@ export default function ClientsPage() {
     }
   };
 
+  const fetchDroppedClients = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/dropped-clients`);
+      if (res.ok) {
+        const data = await res.json();
+        setDroppedClients(data.dropped_clients || []);
+        setDroppedCount(data.total || (data.dropped_clients || []).length);
+      }
+    } catch (e) {
+      console.error("Failed to fetch dropped clients", e);
+    }
+  };
+
   useEffect(() => {
     fetchStatuses();
     fetchActivities();
+    fetchDroppedClients();
   }, [role, user]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (droppedDropdownRef.current && !droppedDropdownRef.current.contains(e.target as Node)) {
+        setIsDroppedDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     fetchClients();
@@ -511,6 +548,12 @@ export default function ClientsPage() {
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{t("clients.description")}</p>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              href="/dropped-clients"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors shadow-sm"
+            >
+              <UserX className="w-4 h-4" /> Dropped Clients
+            </Link>
             <button 
               onClick={async () => {
                 try {
@@ -599,10 +642,168 @@ export default function ClientsPage() {
           <ViewSwitcher currentView={viewMode as any} onViewChange={(v: any) => setViewMode(v)} />
           {["All", ...statuses.map(s => s.name)].map(s => (
             <button key={s} onClick={() => { setFilter(s === "All" ? "All" : s); setPage(1); }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${(filter === "All" ? "All" : filter) === s ? "bg-blue-600 dark:bg-white text-white dark:text-black shadow-sm" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"}`}>
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${(filter === "All" ? "All" : filter) === s ? (s === "Dropped" ? "bg-rose-600 text-white shadow-sm shadow-rose-500/30" : "bg-blue-600 dark:bg-white text-white dark:text-black shadow-sm") : (s === "Dropped" ? "bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 hover:bg-rose-100 border border-rose-200 dark:border-rose-900/40" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700")}`}>
               {s}
             </button>
           ))}
+
+          {/* Dropped Clients Dropdown Menu */}
+          <div className="relative" ref={droppedDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsDroppedDropdownOpen(p => !p)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border",
+                filter === "Dropped"
+                  ? "bg-rose-600 text-white border-rose-600 shadow-sm shadow-rose-500/30"
+                  : isDroppedDropdownOpen
+                  ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-300 dark:border-rose-800"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-transparent hover:bg-slate-200 dark:hover:bg-slate-700"
+              )}
+            >
+              <UserX className={cn("w-3.5 h-3.5", filter === "Dropped" ? "text-white" : "text-rose-500")} />
+              <span>Dropped Clients</span>
+              <span className={cn(
+                "px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none",
+                filter === "Dropped"
+                  ? "bg-white/20 text-white"
+                  : "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300"
+              )}>
+                {droppedCount}
+              </span>
+              <ChevronDown className={cn("w-3 h-3 transition-transform duration-200", isDroppedDropdownOpen && "rotate-180")} />
+            </button>
+
+            {/* Dropdown Popover */}
+            <AnimatePresence>
+              {isDroppedDropdownOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute right-0 top-full mt-2 w-80 bg-white dark:bg-[#1e293b] border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl z-50 overflow-hidden"
+                >
+                  {/* Dropdown Header */}
+                  <div className="p-3.5 border-b border-slate-100 dark:border-slate-800 bg-rose-50/50 dark:bg-rose-950/20 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-rose-500 text-white shadow-sm shadow-rose-500/30">
+                        <UserX className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900 dark:text-zinc-100">Dropped Clients</h4>
+                        <p className="text-[10px] text-slate-500 dark:text-zinc-400">{droppedCount} discontinued accounts</p>
+                      </div>
+                    </div>
+                    <Link
+                      href="/dropped-clients"
+                      onClick={() => setIsDroppedDropdownOpen(false)}
+                      className="text-[10px] font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-0.5"
+                    >
+                      Retention Hub →
+                    </Link>
+                  </div>
+
+                  {/* Quick Dropdown Actions */}
+                  <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFilter("Dropped");
+                        setPage(1);
+                        setIsDroppedDropdownOpen(false);
+                      }}
+                      className={cn(
+                        "flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold text-center transition-all",
+                        filter === "Dropped"
+                          ? "bg-rose-600 text-white shadow-sm"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                      )}
+                    >
+                      {filter === "Dropped" ? "✓ Viewing Dropped" : "Filter Table"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDropClientTarget({ id: 0, companyName: "" });
+                        setIsDropModalOpen(true);
+                        setIsDroppedDropdownOpen(false);
+                      }}
+                      className="flex-1 py-1.5 px-2 rounded-lg text-[11px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 transition-all text-center flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" /> Record Drop
+                    </button>
+                  </div>
+
+                  {/* Dropped Clients Preview List */}
+                  <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                    {droppedClients.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-slate-400">
+                        <UserX className="w-6 h-6 mx-auto mb-2 opacity-40 text-rose-400" />
+                        No dropped clients recorded yet
+                      </div>
+                    ) : (
+                      droppedClients.slice(0, 5).map((dc) => (
+                        <div
+                          key={dc.id}
+                          onClick={() => {
+                            setIsDroppedDropdownOpen(false);
+                            if (dc.client_id) {
+                              router.push(`/admin/clients/${dc.client_id}`);
+                            } else {
+                              router.push("/dropped-clients");
+                            }
+                          }}
+                          className="p-3 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate">
+                              {dc.company_name}
+                            </span>
+                            {dc.reason_category && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 shrink-0">
+                                {dc.reason_category}
+                              </span>
+                            )}
+                          </div>
+                          {dc.reason && (
+                            <p className="text-[10px] text-slate-500 dark:text-zinc-400 line-clamp-1 mt-0.5">
+                              {dc.reason}
+                            </p>
+                          )}
+                          <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1">
+                            {dc.last_revenue > 0 ? (
+                              <span>${Number(dc.last_revenue).toLocaleString()} lost rev</span>
+                            ) : (
+                              <span>—</span>
+                            )}
+                            {dc.reactivation_potential && (
+                              <span className="font-semibold text-slate-500">
+                                {dc.reactivation_potential} Reactivation
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Dropdown Footer */}
+                  {droppedClients.length > 5 && (
+                    <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 text-center">
+                      <Link
+                        href="/dropped-clients"
+                        onClick={() => setIsDroppedDropdownOpen(false)}
+                        className="text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:text-rose-600 transition-colors"
+                      >
+                        See all {droppedCount} dropped clients →
+                      </Link>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 
@@ -634,7 +835,9 @@ export default function ClientsPage() {
                           actions={[
                             { label: 'Open in New Tab', icon: <ExternalLink className="w-4 h-4" />, onClick: () => window.open(`/admin/clients/${client.id}`, '_blank') },
                             { label: 'Open Client', icon: <ChevronRight className="w-4 h-4" />, onClick: () => router.push(`/admin/clients/${client.id}`) },
+                            { label: 'Reassign Salesperson', icon: <UserCheck className="w-4 h-4 text-violet-500" />, onClick: () => setReassignClient(client) },
                             { label: 'AI Call Pitch', icon: <Phone className="w-4 h-4" />, onClick: () => handleSimulateCall(client.id) },
+                            { label: 'Mark as Dropped', icon: <UserX className="w-4 h-4 text-rose-500" />, onClick: () => { setDropClientTarget(client); setIsDropModalOpen(true); } },
                             { label: 'Delete Client', icon: <XCircle className="w-4 h-4" />, danger: true, onClick: () => handleDeleteClient(client.id) },
                           ]}
                         >
@@ -643,6 +846,19 @@ export default function ClientsPage() {
                             <div className="font-semibold text-slate-900 dark:text-white text-sm">{client.companyName || client.projectName || client.email || 'Unnamed Client'}</div>
                             {client.website && <div className="text-[12px] text-slate-500 mt-1 line-clamp-1">{client.website}</div>}
                             {client.email && <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><Mail className="w-3 h-3"/>{client.email}</div>}
+                            <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-zinc-800">
+                              <span className="text-[11px] font-semibold text-slate-600 dark:text-zinc-400 flex items-center gap-1 truncate max-w-[170px]">
+                                <UserCheck className="w-3 h-3 text-violet-500 shrink-0" />
+                                <span className="truncate">{client.assignedEmployeeName || 'Unassigned'}</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setReassignClient(client); }}
+                                className="text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-950/40 shrink-0"
+                              >
+                                Reassign
+                              </button>
+                            </div>
                           </motion.div>
                         </ContextMenu>
                       ))}
@@ -764,10 +980,15 @@ export default function ClientsPage() {
                             {client.status || "Active"}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="text-[13px] text-slate-600 dark:text-slate-300">
-                            {client.assignedEmployeeName || '—'}
-                          </span>
+                        <td className="px-6 py-4" onClick={(e) => { e.stopPropagation(); setReassignClient(client); }}>
+                          <button
+                            type="button"
+                            title="Click to reassign or view audit history"
+                            className="text-[13px] text-slate-600 dark:text-slate-300 hover:text-violet-600 dark:hover:text-violet-400 font-medium flex items-center gap-1 group/btn text-left"
+                          >
+                            <span>{client.assignedEmployeeName || '—'}</span>
+                            <UserCheck className="w-3.5 h-3.5 opacity-0 group-hover/btn:opacity-100 text-violet-500 transition-opacity" />
+                          </button>
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-[13px] text-slate-600 dark:text-slate-300">
@@ -784,8 +1005,14 @@ export default function ClientsPage() {
                             <button onClick={(e) => { e.stopPropagation(); setExpandedRowId(p => p === client.id ? null : client.id); }} title="Quick Actions" className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 transition-colors">
                               <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", expandedRowId === client.id && "rotate-90")} />
                             </button>
+                            <button onClick={(e) => { e.stopPropagation(); setReassignClient(client); }} title="Reassign Salesperson" className="p-1.5 rounded-lg hover:bg-violet-100 dark:hover:bg-violet-900/30 text-slate-400 hover:text-violet-600 transition-colors">
+                              <UserCheck className="w-3.5 h-3.5" />
+                            </button>
                             <button disabled={actionLoading[client.id] === 'call'} onClick={(e) => { e.stopPropagation(); handleSimulateCall(client.id); }} title="AI Call Pitch" className="p-1.5 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/30 text-slate-400 hover:text-green-600 transition-colors disabled:opacity-50">
                               {actionLoading[client.id] === 'call' ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <Phone className="w-3.5 h-3.5" />}
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); setDropClientTarget(client); setIsDropModalOpen(true); }} title="Mark as Dropped" className="p-1.5 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-900/30 text-slate-400 hover:text-rose-600 transition-colors">
+                              <UserX className="w-3.5 h-3.5" />
                             </button>
                             <button onClick={(e) => { e.stopPropagation(); window.open(`/admin/clients/${client.id}`, '_blank'); }} title="Open in New Tab" className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-slate-400 hover:text-blue-600 transition-colors">
                               <ExternalLink className="w-3.5 h-3.5" />
@@ -805,7 +1032,14 @@ export default function ClientsPage() {
                             className="bg-slate-50 dark:bg-[#1e293b] border-y border-slate-200 dark:border-slate-700 overflow-hidden"
                           >
                             <td colSpan={6} className="p-0">
-                              <div className="px-6 py-4 flex items-center gap-3">
+                              <div className="px-6 py-4 flex items-center gap-3 flex-wrap">
+                                <button
+                                  onClick={() => setReassignClient(client)}
+                                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 text-sm font-semibold hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors shadow-sm"
+                                >
+                                  <UserCheck className="w-4 h-4 text-violet-500" />
+                                  Reassign Salesperson
+                                </button>
                                 <button
                                   onClick={() => handleQuickAction(client.id, 'analyse')}
                                   disabled={!!actionLoading[client.id]}
@@ -1306,6 +1540,64 @@ export default function ClientsPage() {
         onAssign={doCreateClient}
         entityType="client"
       />
+
+      {/* Reassign Existing Client Modal */}
+      {reassignClient && (
+        <SalesAssignModal
+          isOpen={!!reassignClient}
+          onClose={() => setReassignClient(null)}
+          onAssign={async (empId, empName, reason) => {
+            if (!reassignClient || !empId) {
+              setReassignClient(null);
+              return;
+            }
+            try {
+              const res = await fetch(`${API_BASE_URL}/salesperson/reassign`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  client_id: reassignClient.id,
+                  to_user_id: empId,
+                  reason: reason || null,
+                }),
+              });
+              if (res.ok) {
+                // Refresh client list to show updated assignee
+                const resClients = await fetch(`${API_BASE_URL}/clients?page=${page}&per_page=${perPage}`);
+                if (resClients.ok) {
+                  const data = await resClients.json();
+                  setClients(data.clients || []);
+                }
+              }
+            } catch (e) {
+              console.error(e);
+            } finally {
+              setReassignClient(null);
+            }
+          }}
+          entityType="client"
+          clientId={reassignClient.id}
+          currentSalespersonName={reassignClient.assignedEmployeeName}
+        />
+      )}
+
+      {/* Drop Client Modal */}
+      {isDropModalOpen && (
+        <DropClientModal
+          isOpen={isDropModalOpen}
+          onClose={() => {
+            setIsDropModalOpen(false);
+            setDropClientTarget(null);
+          }}
+          client={dropClientTarget || { id: 0, companyName: "" }}
+          onSuccess={() => {
+            fetchClients();
+            fetchDroppedClients();
+            setIsDropModalOpen(false);
+            setDropClientTarget(null);
+          }}
+        />
+      )}
 
     </div>
   );

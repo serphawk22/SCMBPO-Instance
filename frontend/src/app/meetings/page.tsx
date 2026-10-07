@@ -7,6 +7,7 @@ import { useLanguage } from "@/context/LanguageContext";
 
 interface Meeting {
   id: number; title: string; description?: string; location?: string;
+  meeting_link?: string; timezone?: string;
   meeting_type: string; status: string;
   scheduled_at?: string; duration_minutes?: number;
   host_name?: string; lead_name?: string; client_name?: string; contact_name?: string;
@@ -43,9 +44,10 @@ export default function MeetingsPage() {
   const [leads, setLeads] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [attendeeTab, setAttendeeTab] = useState<"clients" | "leads" | "contacts">("clients");
+  const userTz = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" : "UTC";
   const [form, setForm] = useState({
-    title: "", description: "", location: "", meeting_type: "Meeting",
-    status: "Scheduled", scheduled_at: "", duration_minutes: "",
+    title: "", description: "", location: "", meeting_link: "", timezone: userTz,
+    meeting_type: "Meeting", status: "Scheduled", scheduled_at: "", duration_minutes: "60",
     attendees: "", notes: "", linked: "",
   });
 
@@ -79,7 +81,8 @@ export default function MeetingsPage() {
       const matchSearch = !q || m.title.toLowerCase().includes(q) ||
         (m.client_name || "").toLowerCase().includes(q) ||
         (m.lead_name || "").toLowerCase().includes(q) ||
-        (m.location || "").toLowerCase().includes(q);
+        (m.location || "").toLowerCase().includes(q) ||
+        (m.meeting_link || "").toLowerCase().includes(q);
       const matchStatus = statusFilter === "All" || m.status === statusFilter;
       return matchSearch && matchStatus;
     });
@@ -87,16 +90,21 @@ export default function MeetingsPage() {
 
   const openCreate = () => {
     setEditMeeting(null);
-    setForm({ title: "", description: "", location: "", meeting_type: "Meeting", status: "Scheduled", scheduled_at: "", duration_minutes: "", attendees: "", notes: "", linked: "" });
+    setForm({
+      title: "", description: "", location: "", meeting_link: "", timezone: userTz,
+      meeting_type: "Meeting", status: "Scheduled", scheduled_at: "", duration_minutes: "60",
+      attendees: "", notes: "", linked: "",
+    });
     setShowModal(true);
   };
   const openEdit = (m: Meeting) => {
     setEditMeeting(m);
     setForm({
       title: m.title, description: m.description || "", location: m.location || "",
+      meeting_link: m.meeting_link || "", timezone: m.timezone || userTz,
       meeting_type: m.meeting_type, status: m.status,
       scheduled_at: m.scheduled_at ? m.scheduled_at.slice(0, 16) : "",
-      duration_minutes: m.duration_minutes?.toString() || "",
+      duration_minutes: m.duration_minutes?.toString() || "60",
       attendees: (m.attendees || []).join(", "), notes: m.notes || "",
       linked: m.client_id ? `client:${m.client_id}` : m.lead_id ? `lead:${m.lead_id}` : m.contact_id ? `contact:${m.contact_id}` : "",
     });
@@ -110,6 +118,7 @@ export default function MeetingsPage() {
     const linkIdNum = linkId ? parseInt(linkId) : null;
     const payload = {
       title: form.title, description: form.description || null, location: form.location || null,
+      meeting_link: form.meeting_link || null, timezone: form.timezone || userTz,
       meeting_type: form.meeting_type, status: form.status,
       scheduled_at: form.scheduled_at || null,
       duration_minutes: form.duration_minutes ? parseInt(form.duration_minutes) : null,
@@ -258,13 +267,35 @@ export default function MeetingsPage() {
                 </div>
                 <span className={`text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-lg border ${statusCls}`}>{m.status}</span>
               </div>
-              {m.scheduled_at && (
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-xs text-slate-600 dark:text-zinc-300">
-                    {new Date(m.scheduled_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    {m.duration_minutes && ` • ${m.duration_minutes} min`}
-                  </span>
+              {m.scheduled_at && (() => {
+                const start = new Date(m.scheduled_at);
+                const end = m.duration_minutes ? new Date(start.getTime() + m.duration_minutes * 60000) : null;
+                return (
+                  <div className="flex flex-col gap-0.5 mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="text-xs text-slate-600 dark:text-zinc-300">
+                        {start.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        {end && ` – ${end.toLocaleString("en-US", { hour: "2-digit", minute: "2-digit" })}`}
+                        {m.duration_minutes && ` (${m.duration_minutes}m)`}
+                      </span>
+                    </div>
+                    {m.timezone && (
+                      <span className="text-[10px] text-slate-400 pl-5">TZ: {m.timezone}</span>
+                    )}
+                  </div>
+                );
+              })()}
+              {m.meeting_link && (
+                <div className="mb-2">
+                  <a
+                    href={m.meeting_link.startsWith("http") ? m.meeting_link : `https://${m.meeting_link}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold transition-all shadow-sm"
+                  >
+                    <Video className="w-3.5 h-3.5" /> Join Meeting
+                  </a>
                 </div>
               )}
               {m.location && (
@@ -312,6 +343,7 @@ export default function MeetingsPage() {
               <div className="p-6 space-y-4">
                 {[
                   { label: t("meetings.title_label"), key: "title", placeholder: t("meetings.title_placeholder") },
+                  { label: "Meeting Link (Zoom / Google Meet)", key: "meeting_link", placeholder: "https://meet.google.com/... or https://zoom.us/..." },
                   { label: t("meetings.location_label"), key: "location", placeholder: t("meetings.location_placeholder") },
                 ].map(({ label, key, placeholder }) => (
                   <div key={key}>
@@ -320,6 +352,11 @@ export default function MeetingsPage() {
                       className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500" />
                   </div>
                 ))}
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest mb-1 block">Timezone</label>
+                  <input value={form.timezone} onChange={e => setForm(f => ({ ...f, timezone: e.target.value }))} placeholder="Asia/Kolkata or America/New_York"
+                    className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                </div>
                 <div>
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">{t("meetings.linked_party")}</label>
                   <select value={form.linked} onChange={e => setForm(f => ({ ...f, linked: e.target.value }))}

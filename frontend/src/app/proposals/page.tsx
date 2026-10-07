@@ -6,7 +6,7 @@ import {
   Clock, XCircle, DollarSign, Trash2, Eye, Edit3, Download,
   PlayCircle, Search, ShoppingCart, Package, ChevronRight,
   User2, Building2, IndianRupee, BadgeDollarSign, Minus,
-  AlertCircle, FileText, RefreshCw, ArrowLeft
+  AlertCircle, FileText, RefreshCw, ArrowLeft, FilePlus2, Link2
 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
@@ -28,6 +28,12 @@ interface Proposal {
   title: string;
   client_id?: number;
   lead_id?: number;
+  deal_id?: number;
+  deal_title?: string;
+  deal_stage?: string;
+  salesperson_id?: number;
+  salesperson_name?: string;
+  public_uuid?: string;
   recipient_type: string;
   client_name?: string;
   content?: string;
@@ -53,8 +59,9 @@ interface CatalogItem {
   current_stock: number;
 }
 
-interface Client { id: number; companyName: string; projectName?: string; }
+interface Client { id: number; companyName: string; projectName?: string; assignedEmployeeId?: number; assignedEmployeeName?: string; email?: string; }
 interface Lead   { id: number; company_name?: string; contact_name?: string; email?: string; }
+interface Deal   { id: number; title: string; stage: string; value: number; client_id?: number; }
 
 // ─── Wizard Steps ───────────────────────────────────────────────────────────
 type WizardStep = "recipient" | "cart" | "details";
@@ -90,9 +97,11 @@ export default function ProposalsPage() {
   const [proposals, setProposals]       = useState<Proposal[]>([]);
   const [clients,   setClients]         = useState<Client[]>([]);
   const [leads,     setLeads]           = useState<Lead[]>([]);
+  const [deals,     setDeals]           = useState<Deal[]>([]);
   const [catalog,   setCatalog]         = useState<CatalogItem[]>([]);
   const [loading,   setLoading]         = useState(true);
   const [filterStatus, setFilterStatus] = useState("All");
+  const [convertingId, setConvertingId] = useState<number | null>(null);
 
   // Wizard state
   const [showWizard, setShowWizard]     = useState(false);
@@ -116,6 +125,7 @@ export default function ProposalsPage() {
   const [validUntil, setValidUntil]     = useState("");
   const [notes, setNotes]               = useState("");
   const [sendStatus, setSendStatus]     = useState<"Draft" | "Sent">("Draft");
+  const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
 
   // Detail view
   const [selected, setSelected]         = useState<Proposal | null>(null);
@@ -141,15 +151,17 @@ export default function ProposalsPage() {
   useEffect(() => {
     fetchProposals();
     if (!isClient) {
-      // Parallel fetch clients + leads for the wizard
+      // Parallel fetch clients + leads + deals for the wizard
       Promise.all([
         fetch(`${API_BASE_URL}/clients?per_page=500`).then(r => r.json()),
         fetch(`${API_BASE_URL}/leads`).then(r => r.json()),
         fetch(`${API_BASE_URL}/proposals/catalog`).then(r => r.json()),
-      ]).then(([c, l, cat]) => {
+        fetch(`${API_BASE_URL}/deals`).then(r => r.json()),
+      ]).then(([c, l, cat, d]) => {
         setClients(c.clients || []);
         setLeads(l.leads || []);
         setCatalog(cat.items || []);
+        setDeals(d.deals || []);
       }).catch(console.error);
     }
   }, [fetchProposals, isClient]);
@@ -160,6 +172,7 @@ export default function ProposalsPage() {
     setRecipientType("client");
     setSelectedClientId(null);
     setSelectedLeadId(null);
+    setSelectedDealId(null);
     setRecipientSearch("");
     setCart([]);
     setCurrency("MXN");
@@ -252,6 +265,7 @@ export default function ProposalsPage() {
           total_value: totalMXN,
           line_items: cart,
           currency,
+          deal_id: selectedDealId || null,
         }),
       });
       setShowWizard(false);
@@ -330,11 +344,14 @@ export default function ProposalsPage() {
       <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-black">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-              {t("proposals.page_title")}
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2.5">
+              <span>Proposals &amp; Quotes</span>
+              <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                Commercial Engine
+              </span>
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-              {t("proposals.page_subtitle")}
+              Auto-mapped to Deals Pipeline &amp; Sales Representatives · Pre-invoice approvals
             </p>
           </div>
           <div className="flex gap-2">
@@ -406,60 +423,85 @@ export default function ProposalsPage() {
               return (
                 <div key={p.id}
                   onClick={() => setSelected(p)}
-                  className="bg-white dark:bg-[#111] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 cursor-pointer hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all group">
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <div className="flex-1 min-w-0">
-                      <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
-                        Q-{String(p.id).padStart(4, "0")}
+                  className="bg-white dark:bg-[#111] rounded-2xl border border-slate-200 dark:border-slate-800 p-5 cursor-pointer hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all group flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
+                          Q-{String(p.id).padStart(4, "0")}
+                        </span>
+                        <h3 className="font-semibold text-slate-900 dark:text-white text-sm leading-tight truncate mt-0.5">
+                          {p.title}
+                        </h3>
+                      </div>
+                      <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${cfg.color} bg-slate-100 dark:bg-slate-800`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                        {p.status}
                       </span>
-                      <h3 className="font-semibold text-slate-900 dark:text-white text-sm leading-tight truncate mt-0.5">
-                        {p.title}
-                      </h3>
                     </div>
-                    <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${cfg.color} bg-slate-100 dark:bg-slate-800`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                      {p.status}
-                    </span>
+
+                    {p.client_name && (
+                      <div className="flex items-center gap-1.5 mb-2.5">
+                        {p.recipient_type === "lead"
+                          ? <User2 className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                          : <Building2 className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
+                        <span className="text-xs text-slate-700 dark:text-slate-300 truncate font-semibold">
+                          {p.client_name}
+                        </span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ml-auto ${
+                          p.recipient_type === "lead"
+                            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                            : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                        }`}>
+                          {p.recipient_type === "lead" ? "Lead" : "Client"}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Salesperson & Pipeline Deal Badge */}
+                    <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-3 bg-slate-50 dark:bg-zinc-900/70 px-2.5 py-1.5 rounded-xl border border-slate-100 dark:border-zinc-800/80">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <User2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="truncate font-medium">{p.salesperson_name || p.creator_name || "Sales Rep"}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-100/70 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 shrink-0">
+                        <span>Pipeline:</span>
+                        <span>{p.deal_stage || "Negotiation"}</span>
+                      </div>
+                    </div>
+
+                    {p.line_items?.length > 0 && (
+                      <div className="mb-3 flex flex-wrap gap-1">
+                        {p.line_items.slice(0, 2).map((li, i) => (
+                          <span key={i} className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-2 py-0.5 rounded-md">
+                            {li.product_name} ×{li.quantity}
+                          </span>
+                        ))}
+                        {p.line_items.length > 2 && (
+                          <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md">
+                            +{p.line_items.length - 2} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  {p.client_name && (
-                    <div className="flex items-center gap-1.5 mb-3">
-                      {p.recipient_type === "lead"
-                        ? <User2 className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                        : <Building2 className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />}
-                      <span className="text-xs text-slate-600 dark:text-slate-300 truncate">
-                        {p.client_name}
-                      </span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ml-auto ${
-                        p.recipient_type === "lead"
-                          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                          : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                      }`}>
-                        {p.recipient_type === "lead" ? "Lead" : "Client"}
-                      </span>
-                    </div>
-                  )}
-
-                  {p.line_items?.length > 0 && (
-                    <div className="mb-3 flex flex-wrap gap-1">
-                      {p.line_items.slice(0, 2).map((li, i) => (
-                        <span key={i} className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-2 py-0.5 rounded-md">
-                          {li.product_name} ×{li.quantity}
-                        </span>
-                      ))}
-                      {p.line_items.length > 2 && (
-                        <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md">
-                          +{p.line_items.length - 2} more
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between mt-2">
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-zinc-800/80">
                     <span className="text-lg font-bold text-slate-900 dark:text-white">
                       {p.total_value ? fmtMoney(p.total_value, p.currency || "MXN") : "—"}
                     </span>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {p.public_uuid && (
+                        <a
+                          href={`/p/${p.public_uuid}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 transition-colors"
+                          title="Open Live Public Web Proposal">
+                          <Link2 className="w-3.5 h-3.5" />
+                        </a>
+                      )}
                       <button
                         onClick={e => { e.stopPropagation(); previewPDF(p.id); }}
                         className="p-1.5 rounded-lg bg-slate-100 hover:bg-purple-100 text-slate-500 hover:text-purple-600 dark:bg-slate-800 dark:hover:bg-purple-900/30 dark:text-slate-400 dark:hover:text-purple-400 transition-colors"
@@ -588,6 +630,8 @@ export default function ProposalsPage() {
               {/* Meta */}
               <div className="grid grid-cols-2 gap-3">
                 {[
+                  { label: "Assigned Sales Rep", value: selected.salesperson_name || selected.creator_name || "Unassigned" },
+                  { label: "Deals Pipeline",    value: `Stage: ${selected.deal_stage || "Negotiation"}` },
                   { label: t("proposals.meta_valid_until"),  value: selected.valid_until || "—" },
                   { label: t("proposals.meta_currency"),     value: selected.currency || "MXN" },
                   { label: t("proposals.meta_created"),      value: new Date(selected.created_at).toLocaleDateString("en-IN") },
@@ -595,10 +639,29 @@ export default function ProposalsPage() {
                 ].map(m => (
                   <div key={m.label} className="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl">
                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">{m.label}</p>
-                    <p className="text-sm font-medium text-slate-900 dark:text-white">{m.value}</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{m.value}</p>
                   </div>
                 ))}
               </div>
+
+              {/* Public Proposal Link */}
+              {selected.public_uuid && (
+                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-800/60 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold text-blue-900 dark:text-blue-300">Live Web Proposal &amp; Signature Link</p>
+                    <p className="text-xs text-slate-500 truncate font-mono">/p/{selected.public_uuid}</p>
+                  </div>
+                  <a
+                    href={`/p/${selected.public_uuid}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors shadow-sm"
+                  >
+                    <span>Open Web View</span>
+                    <Link2 className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
 
               {/* Digital Signature Block */}
               <div className="mt-6 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-6 bg-slate-50 dark:bg-slate-900/50 flex flex-col items-center justify-center">
@@ -651,6 +714,29 @@ export default function ProposalsPage() {
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 transition-colors">
                   <Download className="w-4 h-4" /> {t("proposals.download_pdf")}
                 </button>
+                {selected.status === 'Accepted' && (
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Convert this proposal to an invoice?')) return;
+                      setConvertingId(selected.id);
+                      try {
+                        const res = await fetch(`${API_BASE_URL}/proposals/${selected.id}/convert-to-invoice`, { method: 'POST' });
+                        if (res.ok) {
+                          alert('Invoice created! Go to Billing → Invoices to view it.');
+                        } else {
+                          const d = await res.json().catch(() => ({}));
+                          alert(d.detail || 'Failed to convert.');
+                        }
+                      } finally { setConvertingId(null); }
+                    }}
+                    disabled={convertingId === selected.id}
+                    className="px-4 py-2.5 bg-emerald-50 text-emerald-700 rounded-xl font-semibold text-sm hover:bg-emerald-100 dark:bg-emerald-900/20 dark:text-emerald-400 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    title="Convert to Invoice"
+                  >
+                    {convertingId === selected.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus2 className="w-4 h-4" />}
+                    Invoice
+                  </button>
+                )}
                 <button onClick={() => deleteProposal(selected.id)}
                   className="px-4 py-2.5 bg-red-50 text-red-600 rounded-xl font-semibold text-sm hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors">
                   <Trash2 className="w-4 h-4" />
@@ -794,6 +880,34 @@ export default function ProposalsPage() {
                     <p className="text-center text-slate-400 py-8 text-sm">{t("proposals.wizard_no_results")}</p>
                   )}
                 </div>
+
+                {/* Auto-mapping sales rep & deal banner */}
+                {recipientType === "client" && selectedClientId && (
+                  (() => {
+                    const selClient = clients.find(c => c.id === selectedClientId);
+                    return (
+                      <div className="mt-4 p-4 rounded-xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 space-y-2">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <User2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                              Assigned Sales Representative:
+                            </span>
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300">
+                              {selClient?.assignedEmployeeName || user?.name || "Auto-assigned upon creation"}
+                            </span>
+                          </div>
+                          <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 bg-white dark:bg-zinc-900 px-2.5 py-0.5 rounded-full border border-blue-200 dark:border-blue-800 shadow-sm">
+                            Auto-sync with Pipeline
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                          ⚡ Creating this proposal will automatically link or create an opportunity in your <strong>Sales Pipeline</strong> under stage <strong>Negotiation</strong>.
+                        </p>
+                      </div>
+                    );
+                  })()
+                )}
 
                 <div className="mt-6 flex justify-end">
                   <button
@@ -964,6 +1078,18 @@ export default function ProposalsPage() {
                   </div>
                   <p className="text-sm text-slate-500">{cart.length} product{cart.length !== 1 ? "s" : ""} · {currency}</p>
                   <p className="text-2xl font-black text-blue-700 dark:text-blue-400 mt-1">{fmtMoney(cartTotal, currency)}</p>
+
+                  {recipientType === "client" && selectedClientId && (
+                    <div className="mt-3 pt-3 border-t border-blue-200 dark:border-blue-800/50 flex items-center justify-between text-xs text-blue-800 dark:text-blue-300">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <User2 className="w-3.5 h-3.5" />
+                        Sales Owner: <strong>{clients.find(c => c.id === selectedClientId)?.assignedEmployeeName || user?.name || "Auto-assigned"}</strong>
+                      </span>
+                      <span className="flex items-center gap-1 text-[11px] bg-blue-100 dark:bg-blue-800 px-2 py-0.5 rounded font-bold">
+                        Pipeline: Negotiation
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4">
@@ -992,6 +1118,32 @@ export default function ProposalsPage() {
                       rows={4} placeholder={t("proposals.wizard_notes_placeholder")}
                       className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                   </div>
+
+                  {/* Deals Pipeline Option */}
+                  {recipientType === "client" && selectedClientId && (
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                        Sales Pipeline Deal Integration
+                      </label>
+                      <select
+                        value={selectedDealId || ""}
+                        onChange={e => setSelectedDealId(e.target.value ? Number(e.target.value) : null)}
+                        className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">⚡ Auto-sync / Create Deal in Pipeline (Stage: Negotiation)</option>
+                        {deals
+                          .filter(d => d.client_id === selectedClientId && d.stage !== "Closed Won" && d.stage !== "Closed Lost")
+                          .map(d => (
+                            <option key={d.id} value={d.id}>
+                              Link to: {d.title} ({d.stage} — ${d.value?.toLocaleString()})
+                            </option>
+                          ))}
+                      </select>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Automatically keeps pipeline stage and deal value synchronized with this proposal.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Save as Draft or Send */}
                   <div>

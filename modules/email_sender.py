@@ -10,14 +10,13 @@ from email.mime.base import MIMEBase
 from email import encoders
 from email.utils import formatdate, make_msgid
 
-# ── SerpHawk logo (used in every HTML email) ────────────────────────────────
+# ── SCM BPO logo (used in every HTML email) ────────────────────────────────
 _logo_lock = threading.Lock()
 _logo_bytes_cache = None
-_LOGO_FILENAME = "Serp Hwak Logo.png"
+_LOGO_FILENAME = "static/logo.png"
 
-
-def _serphawk_logo_bytes():
-    """Load + resize the SerpHawk logo from the project folder, cached, as PNG bytes."""
+def _scmbpo_logo_bytes():
+    """Load + resize the SCM BPO logo from the static folder, cached, as PNG bytes."""
     global _logo_bytes_cache
     if _logo_bytes_cache is not None:
         return _logo_bytes_cache
@@ -43,28 +42,30 @@ def _serphawk_logo_bytes():
                 im.save(buf, format="PNG", optimize=True)
                 _logo_bytes_cache = buf.getvalue()
         except Exception as e:
-            print(f"[SerpHawk logo load failed] {e}")
+            print(f"[SCM BPO logo load failed] {e}")
             _logo_bytes_cache = None
     return _logo_bytes_cache
 
 
-def _logo_img_html(alt="SERP Hawk"):
+def _logo_img_html(alt="SCM BPO"):
     return (
-        f'<img src="cid:serphawk_logo" alt="{alt}" width="150" height="150" '
-        'style="display:block;width:150px;height:150px;border-radius:12px;background:#ffffff;padding:4px;box-sizing:border-box" />'
+        f'<img src="cid:scmbpo_logo" alt="{alt}" width="150" height="150" '
+        'style="display:block;width:150px;height:auto;border-radius:12px;background:#ffffff;padding:4px;box-sizing:border-box" />'
     )
 
 
 def _inject_logo(html):
-    """Insert the SerpHawk logo into an HTML email body."""
-    if "cid:serphawk_logo" in html:
+    """Insert the SCM BPO logo into an HTML email body."""
+    if "cid:scmbpo_logo" in html:
         return html
     img = _logo_img_html()
     replacements = [
         ('<strong style="font-size:18px">🦅 SERP Hawk CRM</strong>', img),
-        ('<strong style="font-size:18px">🦅 SERP Hawk Supplier Portal</strong>', _logo_img_html("SERP Hawk Supplier Portal")),
+        ('<strong style="font-size:18px">🦅 SERP Hawk Supplier Portal</strong>', _logo_img_html("SCM BPO Supplier Portal")),
         ('<strong style="font-size:18px">SerpHawk CRM</strong>', img),
         ('<p style="margin:0;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#93c5fd">SerpHawk CRM</p>', img),
+        ('<strong style="font-size:18px">🦅 SCM BPO CRM</strong>', img),
+        ('<p style="margin:0;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#93c5fd">SCM BPO CRM</p>', img),
     ]
     for old, new in replacements:
         if old in html:
@@ -163,7 +164,7 @@ def send_email_outlook(
         if not is_document:
             body = branded_email(title=subject, body_html=body.lstrip())
 
-        logo_bytes = _serphawk_logo_bytes()
+        logo_bytes = _scmbpo_logo_bytes()
         if logo_bytes:
             body = _inject_logo(body)
             body_part = MIMEText(body, "html")
@@ -172,8 +173,8 @@ def send_email_outlook(
             img_part = MIMEBase("image", "png")
             img_part.set_payload(logo_bytes)
             encoders.encode_base64(img_part)
-            img_part.add_header("Content-ID", "<serphawk_logo>")
-            img_part.add_header("Content-Disposition", "inline", filename="serphawk_logo.png")
+            img_part.add_header("Content-ID", "<scmbpo_logo>")
+            img_part.add_header("Content-Disposition", "inline", filename="scmbpo_logo.png")
             related.attach(img_part)
             msg.attach(related)
         else:

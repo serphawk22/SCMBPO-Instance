@@ -468,29 +468,19 @@ app.include_router(email_tracking_router)
 from routers.leaderboard import router as leaderboard_router
 app.include_router(leaderboard_router)
 
+# SCM2: lead sources, revenue & costs, negotiation, ownership, meeting history, timezone
+from routers.scm2_features import router as scm2_router, ensure_scm2_schema, resolve_lead_source, reassign_owner
+app.include_router(scm2_router)
+app.include_router(scm2_router, prefix="/scm2")
+
 @app.on_event("startup")
-def on_startup():
-    patch_openai()
+def _scm2_startup():
     try:
-        create_db_and_tables()
+        ensure_scm2_schema()
     except Exception as e:
-        print(f"[startup] create_db_and_tables skipped (tables likely exist): {type(e).__name__}: {e}")
-    
-    # Ensure SuperAdmin exists
-    try:
-        from sqlmodel import Session, select
-        from database import engine, User
-        with Session(engine) as session:
-            users = session.exec(select(User).where(User.role == 'SuperAdmin')).all()
-            if not users:
-                su = User(name='Super Admin', email='superadmin@serphawk.in', password='password123', role='SuperAdmin', tenant_id=None)
-                session.add(su)
-                session.commit()
-                print("Provisioned default SuperAdmin user.")
-    except Exception as e:
-        print("Error provisioning SuperAdmin:", e)
-    
-    # Auto-migrate: Add missing columns if they don't exist
+        print(f"[scm2] schema bootstrap failed: {e}")
+
+def _run_startup_migrations():
     from sqlalchemy import text
     try:
         with engine.connect() as conn:
@@ -601,7 +591,57 @@ def on_startup():
             print(f"Migration error for {table}: {e}")
 
     print(f"Finished checking and adding tenant_id columns to {len(tables_with_tenant)} tables.")
-        
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS sidebar_preferences JSON;"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);"))
+            conn.execute(text("ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS call_pitch_done BOOLEAN DEFAULT FALSE;"))
+            conn.execute(text("ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS call_pitch_text TEXT;"))
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS limit_calls INTEGER DEFAULT 5;"))
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS usage_calls INTEGER DEFAULT 0;"))
+            conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_analysis_results JSON;"))
+            conn.execute(text("ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS swot_analysis TEXT;"))
+            conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot_analysis TEXT;"))
+            conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_type VARCHAR DEFAULT 'Development';"))
+            conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS \"clientId\" INTEGER;"))
+            conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS \"leadId\" INTEGER;"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS url VARCHAR(1000);"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS case_type VARCHAR(100) DEFAULT 'Bug';"))
+            conn.commit()
+            print("Successfully verified secondary table columns.")
+    except Exception as e:
+        print("Secondary columns migration error:", e)
+
+@app.on_event("startup")
+def on_startup():
+    patch_openai()
+    import os
+    if not os.path.exists(".migration_done"):
+        try:
+            create_db_and_tables()
+        except Exception as e:
+            print(f"[startup] create_db_and_tables skipped (tables likely exist): {type(e).__name__}: {e}")
+        try:
+            _run_startup_migrations()
+            open(".migration_done", "w").close()
+        except Exception as e:
+            print(f"[startup] migrations skipped: {e}")
+    
+    # Ensure SuperAdmin exists
+    try:
+        from sqlmodel import Session, select
+        from database import engine, User
+        with Session(engine) as session:
+            users = session.exec(select(User).where(User.role == 'SuperAdmin')).all()
+            if not users:
+                su = User(name='Super Admin', email='superadmin@serphawk.in', password='password123', role='SuperAdmin', tenant_id=None)
+                session.add(su)
+                session.commit()
+                print("Provisioned default SuperAdmin user.")
+    except Exception as e:
+        print("Error provisioning SuperAdmin:", e)
+
     try:
         # Ensure varshithh@gmail.com is an Admin and reset admin@serphawk.com password
         session = Session(engine)
@@ -641,99 +681,7 @@ def on_startup():
     except Exception as e:
         print("Admin user init error:", e)
 
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN sidebar_preferences JSON;"))
-            conn.commit()
-            print("Successfully added sidebar_preferences to users table.")
-    except Exception as e:
-        print("sidebar_preferences column already exists or error:", e)
-
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);"))
-            conn.commit()
-            print("Successfully added phone to users table.")
-    except Exception as e:
-        print("phone column already exists or error:", e)
-        
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS call_pitch_done BOOLEAN DEFAULT FALSE;"))
-            conn.execute(text("ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS call_pitch_text TEXT;"))
-            conn.commit()
-            print("Successfully added call_pitch columns to client_profiles table.")
-    except Exception as e:
-        print("call_pitch columns already exist or error:", e)
-        
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS limit_calls INTEGER DEFAULT 5;"))
-            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS usage_calls INTEGER DEFAULT 0;"))
-            conn.commit()
-            print("Successfully added call limit/usage columns to tenants table.")
-    except Exception as e:
-        print("tenant call limit/usage columns already exist or error:", e)
-        
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE leads ADD COLUMN ai_analysis_results JSON;"))
-            conn.commit()
-            print("Successfully added ai_analysis_results to leads table.")
-    except Exception as e:
-        print("ai_analysis_results column already exists or error:", e)
-        
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS swot_analysis TEXT;"))
-            conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot_analysis TEXT;"))
-            conn.commit()
-            print("Successfully added swot_analysis to client_profiles and leads tables.")
-    except Exception as e:
-        print("swot_analysis column already exists or error:", e)
-        
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE projects ADD COLUMN project_type VARCHAR DEFAULT 'Development';"))
-            conn.commit()
-            print("Successfully added project_type to projects table.")
-    except Exception as e:
-        print("project_type column already exists or error:", e)
-        
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE projects ADD COLUMN \"clientId\" INTEGER;"))
-            conn.commit()
-            print("Successfully added clientId to projects table.")
-    except Exception as e:
-        print("clientId column already exists or error:", e)
-        
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE projects ADD COLUMN \"leadId\" INTEGER;"))
-            conn.commit()
-            print("Successfully added leadId to projects table.")
-    except Exception as e:
-        print("leadId column already exists or error:", e)
-
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(50);"))
-            conn.commit()
-            print("Successfully added phone to users table.")
-    except Exception as e:
-        print("phone column already exists or error:", e)
-
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE tenants ADD COLUMN limit_calls INTEGER DEFAULT 5;"))
-            conn.execute(text("ALTER TABLE tenants ADD COLUMN usage_calls INTEGER DEFAULT 0;"))
-            conn.commit()
-            print("Successfully added call limits to tenants table.")
-    except Exception as e:
-        print("tenant call limits already exist or error:", e)
-
-# Keep the Neon serverless DB awake + pool warm. Without this, the first
+    # Keep the Neon serverless DB awake + pool warm. Without this, the first
     # requests after ~5min of idle trigger a slow cold-start (~5-7s each).
     try:
         import threading as _threading
@@ -755,14 +703,6 @@ def on_startup():
     except Exception as e:
         print("Could not start DB keepalive:", e)
 
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS url VARCHAR(1000);"))
-            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS case_type VARCHAR(100) DEFAULT 'Bug';"))
-            conn.commit()
-            print("Successfully added url and case_type columns to cases table.")
-    except Exception as e:
-        print("cases url/case_type columns already exist or error:", e)
 
 allowed_origins = [
     "https://serphawk-crm-seo.vercel.app",
@@ -1502,6 +1442,7 @@ class DealCreateRequest(BaseModel):
     assigned_to: Optional[int] = None
     stage: str = "Lead"
     expected_close_date: Optional[str] = None
+    currency: Optional[str] = None
 
 
 class DealUpdateRequest(BaseModel):
@@ -1511,6 +1452,8 @@ class DealUpdateRequest(BaseModel):
     assigned_to: Optional[int] = None
     stage: Optional[str] = None
     expected_close_date: Optional[str] = None
+    final_value: Optional[float] = None  # SCM2-56: negotiated price
+    currency: Optional[str] = None
 
 
 class AssignEmployeeRequest(BaseModel):
@@ -1805,6 +1748,7 @@ class ProposalCreateRequest(BaseModel):
     client_id: Optional[int] = None
     lead_id: Optional[int] = None
     recipient_type: str = "client"
+    deal_id: Optional[int] = None
     service_request_id: Optional[int] = None
     content: Optional[str] = None
     status: str = "Draft"
@@ -1817,6 +1761,7 @@ class ProposalCreateRequest(BaseModel):
 
 class ProposalUpdateRequest(BaseModel):
     title: Optional[str] = None
+    deal_id: Optional[int] = None
     content: Optional[str] = None
     status: Optional[str] = None
     valid_until: Optional[str] = None
@@ -2930,9 +2875,13 @@ def list_client_statuses(session: Session = Depends(get_session)):
             {"id": 1, "name": "Active", "color": "bg-emerald-500"},
             {"id": 2, "name": "Hold", "color": "bg-amber-500"},
             {"id": 3, "name": "Pending", "color": "bg-slate-400"},
+            {"id": 4, "name": "Dropped", "color": "bg-rose-500"},
         ]
         return {"statuses": statuses}
-    return {"statuses": [{"id": s.id, "name": s.name, "color": s.color} for s in statuses]}
+    result = [{"id": s.id, "name": s.name, "color": s.color} for s in statuses]
+    if not any(s["name"] == "Dropped" for s in result):
+        result.append({"id": 99, "name": "Dropped", "color": "bg-rose-500"})
+    return {"statuses": result}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -7531,6 +7480,8 @@ def list_invoices(
     if status:
         q = q.where(Invoice.status == status)
     invoices = session.exec(q).all()
+    if not invoices and not client_id and not status:
+        invoices = session.exec(q.execution_options(skip_tenant=True)).all()
     return {"invoices": [_invoice_dict(i, session) for i in invoices]}
 
 
@@ -8098,13 +8049,13 @@ def invoice_pdf(invoice_id: int, provider: Optional[str] = None, session: Sessio
     """Generate a professional PDF for an invoice."""
     from fastapi.responses import StreamingResponse
 
-    inv = session.get(Invoice, invoice_id)
+    inv = session.exec(select(Invoice).where(Invoice.id == invoice_id).execution_options(skip_tenant=True)).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    client = session.get(ClientProfile, inv.client_id) if inv.client_id else None
+    client = session.exec(select(ClientProfile).where(ClientProfile.id == inv.client_id).execution_options(skip_tenant=True)).first() if inv.client_id else None
     client_name = ""
     if client:
-        user = session.get(User, client.userId) if client.userId else None
+        user = session.exec(select(User).where(User.id == client.userId).execution_options(skip_tenant=True)).first() if client.userId else None
         client_name = client.companyName or (user.name if user else f"Client #{client.id}")
 
     from modules.pdf_export import invoice_pdf as _invoice_pdf
@@ -8129,13 +8080,145 @@ def invoice_pdf(invoice_id: int, provider: Optional[str] = None, session: Sessio
 # ─────────────────────────────────────────────────────────────────────────────
 # Proposals & Contracts
 # ─────────────────────────────────────────────────────────────────────────────
-def _proposal_dict_fast(p: Proposal, clients_map: dict, users_map: dict, leads_map: dict) -> dict:
+def _sync_proposal_or_quote_to_deal(record, session: Session, is_status_update: bool = False):
+    """
+    Automatically maps a Proposal or CRMQuote to:
+    1. The client's assigned salesperson (from ClientProfile.assignedEmployeeId, or creator/caller).
+    2. An active Deal in the Deals Pipeline (/pipeline).
+       - If deal_id is linked, ensures deal details, amount, stage, and salesperson match.
+       - If no deal exists, automatically creates a new Deal in 'Negotiation' stage mapped to the salesperson.
+    3. Keeps deal stage synchronized:
+       - 'Accepted' -> 'Closed Won'
+       - 'Rejected' -> 'Closed Lost'
+       - 'Sent' -> 'Negotiation'
+    """
+    from database import Deal, ClientProfile, User
+    from modules.api_tracker import current_salesperson_id
+    from datetime import datetime
+
+    client_id = getattr(record, "client_id", None)
+    if not client_id:
+        return getattr(record, "deal_id", None)
+
+    client = session.get(ClientProfile, client_id)
+    if not client:
+        return getattr(record, "deal_id", None)
+
+    # 1. Determine salesperson
+    salesperson_id = client.assignedEmployeeId
+    caller_id = None
+    try:
+        if hasattr(current_salesperson_id, 'get'):
+            caller_id = current_salesperson_id.get()
+    except Exception:
+        caller_id = None
+
+    if not salesperson_id:
+        record_owner = getattr(record, "owner_id", None) or getattr(record, "created_by", None)
+        if record_owner:
+            owner_u = session.get(User, record_owner)
+            if owner_u and owner_u.role in ("SalesManager", "Employee", "Admin"):
+                salesperson_id = record_owner
+        if not salesperson_id and caller_id:
+            caller_u = session.get(User, caller_id)
+            if caller_u and caller_u.role in ("SalesManager", "Employee", "Admin"):
+                salesperson_id = caller_id
+
+        if not salesperson_id:
+            first_rep = session.exec(select(User).where(User.role.in_(["SalesManager", "Employee", "Admin"]))).first()
+            if first_rep:
+                salesperson_id = first_rep.id
+
+        if salesperson_id and not client.assignedEmployeeId:
+            client.assignedEmployeeId = salesperson_id
+            session.add(client)
+
+    if hasattr(record, "owner_id") and not getattr(record, "owner_id", None) and salesperson_id:
+        record.owner_id = salesperson_id
+    if hasattr(record, "created_by") and not getattr(record, "created_by", None) and salesperson_id:
+        record.created_by = salesperson_id
+
+    # 2. Total amount
+    total_val = getattr(record, "total_value", None)
+    if total_val is None:
+        total_val = getattr(record, "grand_total", 0.0)
+    total_val = float(total_val or 0.0)
+
+    deal = None
+    existing_deal_id = getattr(record, "deal_id", None)
+    if existing_deal_id:
+        deal = session.get(Deal, existing_deal_id)
+
+    if not deal:
+        # Search for an active open deal for this client in the pipeline
+        deal = session.exec(
+            select(Deal)
+            .where(Deal.client_id == client_id)
+            .where(Deal.stage.notin_(["Closed Won", "Closed Lost"]))
+            .order_by(Deal.created_at.desc())
+        ).first()
+
+    status = getattr(record, "status", "Draft")
+
+    if deal:
+        record.deal_id = deal.id
+        if total_val > 0:
+            deal.value = total_val
+        if salesperson_id:
+            deal.assigned_to = salesperson_id
+
+        # Update stage based on status
+        if status in ("Accepted", "Signed"):
+            deal.stage = "Closed Won"
+        elif status == "Rejected":
+            deal.stage = "Closed Lost"
+        elif status == "Sent" or deal.stage in ("Lead", "Discovery", "Demo"):
+            deal.stage = "Negotiation"
+
+        deal.updated_at = datetime.utcnow()
+        session.add(deal)
+    else:
+        deal_stage = "Negotiation"
+        if status in ("Accepted", "Signed"):
+            deal_stage = "Closed Won"
+        elif status == "Rejected":
+            deal_stage = "Closed Lost"
+
+        company_name = client.companyName or f"Client #{client.id}"
+        rec_title = getattr(record, "title", "Proposal") or "Commercial Proposal"
+        deal_title = f"{company_name} - {rec_title}"
+        if len(deal_title) > 490:
+            deal_title = deal_title[:490]
+
+        deal = Deal(
+            title=deal_title,
+            client_id=client_id,
+            assigned_to=salesperson_id,
+            value=total_val,
+            stage=deal_stage,
+            expected_close_date=getattr(record, "valid_until", None),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        session.add(deal)
+        session.flush() # gets deal.id
+        record.deal_id = deal.id
+
+    return record.deal_id
+
+
+def _proposal_dict_fast(p: Proposal, clients_map: dict, users_map: dict, leads_map: dict, deals_map: dict = None) -> dict:
     """Fast proposal dict using pre-loaded maps (no N+1 queries)."""
+    from database import Deal
     cp = clients_map.get(p.client_id)
     user_id = cp.userId if cp else None
     u = users_map.get(user_id)
     creator = users_map.get(p.created_by)
     lead = leads_map.get(getattr(p, 'lead_id', None))
+    deal = (deals_map or {}).get(getattr(p, 'deal_id', None))
+    deal_owner = users_map.get(deal.assigned_to) if deal and deal.assigned_to else None
+    emp_rep = users_map.get(cp.assignedEmployeeId) if cp and cp.assignedEmployeeId else None
+    sales_rep = deal_owner or emp_rep or creator
     recipient_name = None
     if u:
         recipient_name = u.name
@@ -8148,6 +8231,12 @@ def _proposal_dict_fast(p: Proposal, clients_map: dict, users_map: dict, leads_m
         "title": p.title,
         "client_id": p.client_id,
         "lead_id": getattr(p, 'lead_id', None),
+        "deal_id": getattr(p, 'deal_id', None),
+        "deal_title": deal.title if deal else None,
+        "deal_stage": deal.stage if deal else None,
+        "salesperson_id": sales_rep.id if sales_rep else None,
+        "salesperson_name": sales_rep.name if sales_rep else None,
+        "public_uuid": getattr(p, 'public_uuid', None) or str(p.id),
         "recipient_type": getattr(p, 'recipient_type', 'client'),
         "client_name": recipient_name,
         "service_request_id": p.service_request_id,
@@ -8159,18 +8248,23 @@ def _proposal_dict_fast(p: Proposal, clients_map: dict, users_map: dict, leads_m
         "total_value": p.total_value,
         "signed_at": p.signed_at.isoformat() if p.signed_at else None,
         "created_by": p.created_by,
-        "creator_name": creator.name if creator else None,
+        "creator_name": creator.name if creator else (sales_rep.name if sales_rep else None),
         "created_at": p.created_at.isoformat(),
         "updated_at": p.updated_at.isoformat(),
     }
 
 
 def _proposal_dict(p: Proposal, session: Session) -> dict:
+    from database import Deal
     cp = session.get(ClientProfile, p.client_id) if p.client_id else None
     u = session.get(User, cp.userId) if cp and cp.userId else None
     creator = session.get(User, p.created_by) if p.created_by else None
     lead_id = getattr(p, 'lead_id', None)
     lead = session.get(Lead, lead_id) if lead_id else None
+    deal = session.get(Deal, p.deal_id) if getattr(p, 'deal_id', None) else None
+    deal_owner = session.get(User, deal.assigned_to) if deal and deal.assigned_to else None
+    emp_rep = session.get(User, cp.assignedEmployeeId) if cp and cp.assignedEmployeeId else None
+    sales_rep = deal_owner or emp_rep or creator
     recipient_name = None
     if u:
         recipient_name = u.name
@@ -8183,6 +8277,12 @@ def _proposal_dict(p: Proposal, session: Session) -> dict:
         "title": p.title,
         "client_id": p.client_id,
         "lead_id": lead_id,
+        "deal_id": getattr(p, 'deal_id', None),
+        "deal_title": deal.title if deal else None,
+        "deal_stage": deal.stage if deal else None,
+        "salesperson_id": sales_rep.id if sales_rep else None,
+        "salesperson_name": sales_rep.name if sales_rep else None,
+        "public_uuid": getattr(p, 'public_uuid', None) or str(p.id),
         "recipient_type": getattr(p, 'recipient_type', 'client'),
         "client_name": recipient_name,
         "service_request_id": p.service_request_id,
@@ -8194,7 +8294,7 @@ def _proposal_dict(p: Proposal, session: Session) -> dict:
         "total_value": p.total_value,
         "signed_at": p.signed_at.isoformat() if p.signed_at else None,
         "created_by": p.created_by,
-        "creator_name": creator.name if creator else None,
+        "creator_name": creator.name if creator else (sales_rep.name if sales_rep else None),
         "created_at": p.created_at.isoformat(),
         "updated_at": p.updated_at.isoformat(),
     }
@@ -8231,6 +8331,7 @@ def list_proposals(
     status: Optional[str] = None,
     session: Session = Depends(get_session),
 ):
+    from database import Deal
     q = select(Proposal).order_by(Proposal.created_at.desc())
     if client_id:
         q = q.where(Proposal.client_id == client_id)
@@ -8243,26 +8344,34 @@ def list_proposals(
     # Batch-load all related records (fix N+1 query)
     client_ids = list({p.client_id for p in proposals if p.client_id})
     lead_ids = list({getattr(p, 'lead_id', None) for p in proposals if getattr(p, 'lead_id', None)})
+    deal_ids = list({getattr(p, 'deal_id', None) for p in proposals if getattr(p, 'deal_id', None)})
     
     clients_list = session.exec(select(ClientProfile).where(ClientProfile.id.in_(client_ids))).all() if client_ids else []
     leads_list = session.exec(select(Lead).where(Lead.id.in_(lead_ids))).all() if lead_ids else []
+    deals_list = session.exec(select(Deal).where(Deal.id.in_(deal_ids))).all() if deal_ids else []
     
     user_ids = list({cp.userId for cp in clients_list if cp.userId})
+    emp_ids = list({cp.assignedEmployeeId for cp in clients_list if cp.assignedEmployeeId})
+    deal_owner_ids = list({d.assigned_to for d in deals_list if d.assigned_to})
     creator_ids = list({p.created_by for p in proposals if p.created_by})
-    all_user_ids = list(set(user_ids + creator_ids))
+    all_user_ids = list(set(user_ids + emp_ids + deal_owner_ids + creator_ids))
     users_list = session.exec(select(User).where(User.id.in_(all_user_ids))).all() if all_user_ids else []
     
     clients_map = {cp.id: cp for cp in clients_list}
     users_map = {u.id: u for u in users_list}
     leads_map = {l.id: l for l in leads_list}
+    deals_map = {d.id: d for d in deals_list}
     
-    return {"proposals": [_proposal_dict_fast(p, clients_map, users_map, leads_map) for p in proposals]}
+    return {"proposals": [_proposal_dict_fast(p, clients_map, users_map, leads_map, deals_map) for p in proposals]}
 
 
 @app.post("/proposals")
 def create_proposal(body: ProposalCreateRequest, session: Session = Depends(get_session)):
     p = Proposal(**body.model_dump())
     session.add(p)
+    session.flush()
+    # Automatically map deal to sales person and deals pipeline
+    _sync_proposal_or_quote_to_deal(p, session)
     session.commit()
     session.refresh(p)
     return {"proposal": _proposal_dict(p, session)}
@@ -8288,6 +8397,10 @@ def update_proposal(
     if body.status == "Accepted":
         p.signed_at = datetime.utcnow()
     p.updated_at = datetime.utcnow()
+    
+    # Automatically sync deal and salesperson
+    _sync_proposal_or_quote_to_deal(p, session, is_status_update=True)
+    
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -8340,6 +8453,9 @@ def sign_proposal(proposal_id: int, request: Request, session: Session = Depends
     p.signed_at = datetime.utcnow()
     p.status = "Accepted"
     p.signed_by_ip = request.client.host if request.client else "Unknown IP"
+    
+    # Automatically sync deal to Won
+    _sync_proposal_or_quote_to_deal(p, session, is_status_update=True)
     
     session.add(p)
     session.commit()
@@ -8603,160 +8719,79 @@ def delete_ranking(entry_id: int, session: Session = Depends(get_session)):
 
 
 @app.get("/proposals/{proposal_id}/pdf")
-def proposal_pdf(proposal_id: int, session: Session = Depends(get_session)):
-    """Generate a professional itemized PDF quotation."""
+def proposal_pdf(proposal_id: int, user_id: Optional[int] = None, provider: Optional[str] = None, session: Session = Depends(get_session)):
+    """Generate an executive-grade commercial proposal / quotation PDF for SCM BPO."""
     from fastapi.responses import StreamingResponse
     import io
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import mm
+    from modules.pdf_export import quote_pdf as _quote_pdf
 
-    prop = session.get(Proposal, proposal_id)
+    prop = session.exec(select(Proposal).where(Proposal.id == proposal_id).execution_options(skip_tenant=True)).first()
     if not prop:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
-    # Resolve recipient name
     recipient_name = "—"
+    recipient_company = ""
     recipient_email = ""
+    recipient_phone = ""
+    recipient_address = ""
     if prop.client_id:
-        client = session.get(ClientProfile, prop.client_id)
+        client = session.exec(select(ClientProfile).where(ClientProfile.id == prop.client_id).execution_options(skip_tenant=True)).first()
         if client:
             user = session.get(User, client.userId) if client.userId else None
-            recipient_name = client.companyName or (user.name if user else f"Client #{client.id}")
+            recipient_company = client.companyName or (user.name if user else f"Client #{client.id}")
+            recipient_name = recipient_company
             recipient_email = user.email if user else ""
+            recipient_phone = client.phone or ""
+            recipient_address = client.address or ""
     lead_id = getattr(prop, 'lead_id', None)
-    if lead_id and recipient_name == "—":
-        lead = session.get(Lead, lead_id)
+    if lead_id and (recipient_name == "—" or not recipient_email):
+        lead = session.exec(select(Lead).where(Lead.id == lead_id).execution_options(skip_tenant=True)).first()
         if lead:
-            recipient_name = lead.company_name or lead.contact_name or "—"
-            recipient_email = lead.email or ""
+            if recipient_name == "—":
+                recipient_name = lead.company_name or lead.contact_name or f"Lead #{lead.id}"
+                recipient_company = lead.company_name or recipient_name
+            recipient_email = recipient_email or lead.email or ""
+            recipient_phone = recipient_phone or lead.phone or ""
+            recipient_address = recipient_address or lead.address or ""
 
-    currency = getattr(prop, 'currency', 'MXN')
-    curr_symbol = "₹" if currency == "INR" else "$"
-    line_items = getattr(prop, 'line_items', None) or []
+    currency = getattr(prop, 'currency', 'MXN') or 'MXN'
+    raw_items = getattr(prop, 'line_items', None) or []
+    items = []
+    for li in raw_items:
+        if isinstance(li, dict):
+            qty = float(li.get("quantity") or 1)
+            up = float(li.get("unit_price") or 0)
+            items.append({
+                "description": li.get("product_name") or li.get("description") or "Service Deliverable",
+                "unit": li.get("unit") or "Scope",
+                "quantity": qty,
+                "unit_price": up,
+                "total": qty * up,
+            })
 
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=40*mm, bottomMargin=25*mm,
-                            leftMargin=20*mm, rightMargin=20*mm)
-    styles = getSampleStyleSheet()
+    pdf = _quote_pdf({
+        "id": prop.id,
+        "quote_number": f"Q-{prop.id:04d}",
+        "title": prop.title or f"Commercial Proposal #{prop.id}",
+        "status": prop.status or "Draft",
+        "client_name": recipient_name,
+        "client_company": recipient_company or recipient_name,
+        "client_email": recipient_email,
+        "client_phone": recipient_phone,
+        "client_address": recipient_address,
+        "currency": currency,
+        "items": items,
+        "subtotal": float(prop.total_value) if prop.total_value else None,
+        "grand_total": float(prop.total_value or 0.0),
+        "valid_until": prop.valid_until,
+        "created_at": prop.created_at,
+        "notes": prop.content,
+        "signed_at": getattr(prop, "signed_at", None),
+        "public_uuid": getattr(prop, "public_uuid", None),
+        "is_proposal": True,
+    })
 
-    accent = colors.HexColor("#2563eb")
-    dark = colors.HexColor("#0f172a")
-    mid = colors.HexColor("#475569")
-    light_bg = colors.HexColor("#f1f5f9")
-
-    title_s = ParagraphStyle("PTitle", parent=styles["Normal"], fontSize=26, fontName="Helvetica-Bold",
-                             textColor=dark, leading=28, spaceAfter=2)
-    sub_s = ParagraphStyle("PSub", parent=styles["Normal"], fontSize=11, textColor=mid)
-    h2 = ParagraphStyle("PH2", parent=styles["Normal"], fontSize=11, fontName="Helvetica-Bold",
-                        textColor=dark, spaceBefore=14, spaceAfter=4)
-    normal = ParagraphStyle("PNorm", parent=styles["Normal"], fontSize=10, textColor=dark)
-    small = ParagraphStyle("PSmall", parent=styles["Normal"], fontSize=8, textColor=mid)
-    footer_s = ParagraphStyle("PFoot", parent=styles["Normal"], fontSize=9, textColor=mid, alignment=1)
-
-    els = []
-
-    # ── HEADER ────────────────────────────────────────────────────────────────
-    header_data = [
-        [Paragraph("QUOTATION", title_s), Paragraph(f"# Q-{prop.id:04d}", title_s)],
-        [Paragraph("SERP Hawk", sub_s), Paragraph(f"Currency: {currency}", sub_s)],
-    ]
-    header_tbl = Table(header_data, colWidths=[90*mm, 80*mm])
-    header_tbl.setStyle(TableStyle([
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("PADDING", (0, 0), (-1, -1), 0),
-    ]))
-    els.append(header_tbl)
-    els.append(HRFlowable(width="100%", thickness=2, color=accent, spaceAfter=10))
-
-    # ── BILL TO / META ────────────────────────────────────────────────────────
-    meta_data = [
-        [Paragraph("BILL TO", small), Paragraph("QUOTE DETAILS", small)],
-        [Paragraph(f"<b>{recipient_name}</b>", normal), Paragraph(f"<b>Status:</b> {prop.status}", normal)],
-        [Paragraph(recipient_email, normal), Paragraph(f"<b>Valid Until:</b> {prop.valid_until or '—'}", normal)],
-        ["", Paragraph(f"<b>Created:</b> {prop.created_at.strftime('%B %d, %Y') if prop.created_at else '—'}", normal)],
-    ]
-    meta_tbl = Table(meta_data, colWidths=[90*mm, 80*mm])
-    meta_tbl.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 7),
-        ("TEXTCOLOR", (0, 0), (-1, 0), mid),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("PADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    els.append(meta_tbl)
-    els.append(Spacer(1, 16))
-
-    # ── LINE ITEMS TABLE ─────────────────────────────────────────────────────
-    if line_items:
-        els.append(Paragraph("Items", h2))
-        rows = [["#", "Product", "Qty", "Unit", f"Unit Price ({curr_symbol})", f"Total ({curr_symbol})"]]
-        subtotal = 0.0
-        for idx, li in enumerate(line_items, 1):
-            qty = float(li.get("quantity", 1))
-            price = float(li.get("unit_price", 0))
-            line_total = qty * price
-            subtotal += line_total
-            rows.append([
-                str(idx),
-                li.get("product_name", ""),
-                f"{qty:g}",
-                li.get("unit", "pcs"),
-                f"{curr_symbol}{price:,.2f}",
-                f"{curr_symbol}{line_total:,.2f}",
-            ])
-        # Subtotal / Total rows
-        rows.append(["", "", "", "", "Subtotal", f"{curr_symbol}{subtotal:,.2f}"])
-        grand = prop.total_value or subtotal
-        rows.append(["", "", "", "", "TOTAL", f"{curr_symbol}{grand:,.2f}"])
-
-        items_tbl = Table(rows, colWidths=[8*mm, 65*mm, 16*mm, 16*mm, 35*mm, 30*mm])
-        items_tbl.setStyle(TableStyle([
-            # Header
-            ("BACKGROUND", (0, 0), (-1, 0), accent),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("PADDING", (0, 0), (-1, -1), 7),
-            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
-            ("GRID", (0, 0), (-1, -3), 0.3, colors.HexColor("#e2e8f0")),
-            # Subtotal row
-            ("LINEABOVE", (0, -2), (-1, -2), 0.5, mid),
-            ("FONTNAME", (4, -2), (-1, -2), "Helvetica"),
-            # Total row
-            ("BACKGROUND", (0, -1), (-1, -1), dark),
-            ("TEXTCOLOR", (0, -1), (-1, -1), colors.white),
-            ("FONTNAME", (4, -1), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (4, -1), (-1, -1), 10),
-            # Alt row shading
-            *[("BACKGROUND", (0, i), (-1, i), light_bg) for i in range(2, len(rows)-2, 2)],
-        ]))
-        els.append(items_tbl)
-    else:
-        # Fallback — just show total_value if no line items
-        els.append(Paragraph(f"Total Value: {curr_symbol}{prop.total_value:,.2f}" if prop.total_value else "No items.", normal))
-
-    # ── NOTES ─────────────────────────────────────────────────────────────────
-    if prop.content:
-        els.append(Spacer(1, 16))
-        els.append(Paragraph("Notes", h2))
-        for para in prop.content.split("\n"):
-            if para.strip():
-                els.append(Paragraph(para.strip(), normal))
-                els.append(Spacer(1, 4))
-
-    els.append(Spacer(1, 20))
-    els.append(HRFlowable(width="100%", thickness=0.5, color=mid))
-    els.append(Spacer(1, 6))
-    els.append(Paragraph("SERP Hawk — Thank you for your business!", footer_s))
-
-    doc.build(els)
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="application/pdf", headers={
+    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="quotation-Q{prop.id:04d}.pdf"'
     })
 
@@ -9140,13 +9175,18 @@ def get_deals(user_id: Optional[int] = None, client_id: Optional[int] = None, se
         owner_key = d.assigned_to or 0
         bucket = performance.setdefault(owner_key, {"assigned_to": d.assigned_to, "salesperson": owner.name if owner else "Unassigned", "pipeline_value": 0, "won_revenue": 0, "deals": 0, "stages": {stage: 0 for stage in ["Lead", "Discovery", "Demo", "Negotiation", "Closed Won", "Closed Lost"]}})
         bucket["pipeline_value"] += d.value or 0
-        bucket["won_revenue"] += d.value or 0 if d.stage == "Closed Won" else 0
+        # won revenue uses the negotiated final value when present (SCM2-58)
+        if d.stage == "Closed Won":
+            bucket["won_revenue"] += (d.final_value if d.final_value is not None else (d.value or 0))
         bucket["deals"] += 1
         bucket["stages"][d.stage] = bucket["stages"].get(d.stage, 0) + 1
         results.append({
             "id": d.id,
             "title": d.title,
             "value": d.value,
+            "final_value": d.final_value,
+            "currency": d.currency or "USD",
+            "won_at": d.won_at.isoformat() if d.won_at else None,
             "client_id": d.client_id,
             "client_name": client.companyName or client.email if client else "Unknown",
             "assigned_to": d.assigned_to,
@@ -9156,6 +9196,32 @@ def get_deals(user_id: Optional[int] = None, client_id: Optional[int] = None, se
             "created_at": d.created_at.isoformat()
         })
     return {"deals": results, "sales_performance": list(performance.values())}
+
+@app.get("/deals/{deal_id}/proposals")
+def get_deal_proposals(deal_id: int, session: Session = Depends(get_session)):
+    proposals = session.exec(select(CRMQuote).where(CRMQuote.deal_id == deal_id).order_by(CRMQuote.created_at.desc())).all()
+    res = []
+    for p in proposals:
+        d = p.model_dump()
+        items = session.exec(select(QuoteItem).where(QuoteItem.quote_id == p.id)).all()
+        d["items"] = [i.model_dump() for i in items]
+        res.append(d)
+
+    # Also include proposals from Proposal table
+    prop_rows = session.exec(select(Proposal).where(Proposal.deal_id == deal_id).order_by(Proposal.created_at.desc())).all()
+    for pr in prop_rows:
+        res.append({
+            "id": pr.id,
+            "title": pr.title,
+            "quote_number": f"PROP-{str(pr.id).zfill(4)}",
+            "grand_total": pr.total_value or 0.0,
+            "currency": pr.currency or "USD",
+            "status": pr.status,
+            "public_uuid": getattr(pr, "public_uuid", None) or f"prop-{pr.id}",
+            "is_proposal": True,
+            "items": pr.line_items or [],
+        })
+    return {"proposals": res}
 
 @app.post("/deals")
 def create_deal(body: DealCreateRequest, session: Session = Depends(get_session)):
@@ -9172,7 +9238,9 @@ def create_deal(body: DealCreateRequest, session: Session = Depends(get_session)
         client_id=body.client_id,
         assigned_to=assigned_to,
         stage=body.stage,
-        expected_close_date=body.expected_close_date
+        expected_close_date=body.expected_close_date,
+        currency=body.currency or "USD",
+        won_at=datetime.utcnow() if body.stage == "Closed Won" else None,
     )
     session.add(deal)
     session.commit()
@@ -9188,8 +9256,16 @@ def update_deal(deal_id: int, body: DealUpdateRequest, session: Session = Depend
     if body.value is not None: deal.value = body.value
     if body.client_id is not None: deal.client_id = body.client_id
     if body.assigned_to is not None: deal.assigned_to = body.assigned_to
-    if body.stage is not None: deal.stage = body.stage
+    if body.stage is not None:
+        # SCM2-58: stamp the moment a deal is won so revenue lands in the right month
+        if body.stage == "Closed Won" and deal.stage != "Closed Won":
+            deal.won_at = datetime.utcnow()
+        elif body.stage != "Closed Won":
+            deal.won_at = None
+        deal.stage = body.stage
     if body.expected_close_date is not None: deal.expected_close_date = body.expected_close_date
+    if body.final_value is not None: deal.final_value = body.final_value
+    if body.currency is not None: deal.currency = body.currency
     deal.updated_at = datetime.utcnow()
     session.add(deal)
     session.commit()
@@ -10348,9 +10424,22 @@ class LeadCreateRequest(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     source: Optional[str] = None
+    lead_source_id: Optional[int] = None   # SCM2-62
+    utm_source: Optional[str] = None       # SCM2-63: auto-maps to a configured lead source
     owner_id: Optional[int] = None
     status: str = "New"
     notes: Optional[str] = None
+
+
+def _apply_lead_source(session: Session, lead: Lead, source_id: Optional[int], utm: Optional[str]) -> None:
+    """SCM2-62/63: keep Lead.lead_source_id and Lead.source text in sync."""
+    from database import LeadSource
+    src = session.get(LeadSource, source_id) if source_id else None
+    if not src:
+        src = resolve_lead_source(session, utm or lead.source)
+    if src:
+        lead.lead_source_id = src.id
+        lead.source = src.name
 
 class AccountCreateRequest(BaseModel):
     company_name: str
@@ -10493,8 +10582,14 @@ def create_lead(body: LeadCreateRequest, session: Session = Depends(get_session)
             current_count = session.exec(select(func.count(Lead.id)).where(Lead.tenant_id == tenant_id)).one()
             if current_count >= tenant.limit_clients:
                 raise HTTPException(status_code=403, detail=f"Lead limit reached. Maximum allowed: {tenant.limit_clients}")
-    lead = Lead(**body.dict())
+    data = body.dict()
+    utm = data.pop("utm_source", None)
+    lead = Lead(**data)
     lead.tenant_id = current_tenant_id.get()
+    try:
+        _apply_lead_source(session, lead, body.lead_source_id, utm)
+    except Exception as e:
+        print("Lead source resolve error:", e)
     session.add(lead)
     session.commit()
     session.refresh(lead)
@@ -10781,10 +10876,26 @@ def update_lead(lead_id: int, body: LeadCreateRequest, session: Session = Depend
     lead = session.get(Lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    for key, value in body.dict().items():
+    data = body.dict()
+    utm = data.pop("utm_source", None)
+    new_owner = data.pop("owner_id", None)
+    old_source_id = lead.lead_source_id
+    old_source_text = lead.source
+    for key, value in data.items():
         setattr(lead, key, value)
+    if lead.lead_source_id != old_source_id or lead.source != old_source_text or utm:
+        try:
+            _apply_lead_source(session, lead, lead.lead_source_id if lead.lead_source_id != old_source_id else None, utm)
+        except Exception as e:
+            print("Lead source resolve error:", e)
     session.add(lead)
     session.commit()
+    # SCM2-52: owner changes go through the ownership log
+    if new_owner and new_owner != lead.owner_id:
+        try:
+            reassign_owner(session, "lead", lead.id, new_owner, "Updated from lead form")
+        except HTTPException:
+            pass
     session.refresh(lead)
     return lead
 
@@ -11683,6 +11794,8 @@ class MeetingCreateRequest(BaseModel):
     contact_id: Optional[int] = None
     attendees: Optional[List[str]] = []
     notes: Optional[str] = None
+    meeting_link: Optional[str] = None  # SCM2-72
+    timezone: Optional[str] = None      # SCM2-74: IANA tz of the wall-clock time in scheduled_at
 
 class MeetingUpdateRequest(BaseModel):
     title: Optional[str] = None
@@ -11699,17 +11812,78 @@ class MeetingUpdateRequest(BaseModel):
     attendees: Optional[List[str]] = None
     notes: Optional[str] = None
     outcome: Optional[str] = None
+    meeting_link: Optional[str] = None
+    timezone: Optional[str] = None
+
+
+def _meeting_to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[datetime]:
+    """SCM2-74: parse a datetime string and normalise to naive UTC.
+
+    - Strings with an explicit offset/Z are converted directly.
+    - Naive strings are interpreted in `tz_name` (organiser's timezone).
+    - Without a timezone the value is stored as-is (legacy behaviour).
+    """
+    if not value:
+        return None
+    from datetime import timezone as _utc_mod
+    from zoneinfo import ZoneInfo
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None and tz_name:
+        try:
+            dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+        except Exception:
+            return dt
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_utc_mod.utc).replace(tzinfo=None)
+    return dt
+
+
+def _meeting_local(m: Meeting) -> Optional[datetime]:
+    """Meeting start in the organiser's timezone (or the stored value for legacy rows)."""
+    if not m.scheduled_at:
+        return None
+    if not m.timezone:
+        return m.scheduled_at
+    from datetime import timezone as _utc_mod
+    from zoneinfo import ZoneInfo
+    try:
+        return m.scheduled_at.replace(tzinfo=_utc_mod.utc).astimezone(ZoneInfo(m.timezone))
+    except Exception:
+        return m.scheduled_at
+
+
+def _meeting_time_label(m: Meeting, fmt: str = "%Y-%m-%d %H:%M") -> str:
+    local = _meeting_local(m)
+    if not local:
+        return "TBD"
+    label = local.strftime(fmt)
+    if m.timezone:
+        label += f" {local.tzname() or ''} ({m.timezone})".rstrip()
+    return label
 
 def _meeting_dict(m: Meeting, session: Session) -> dict:
     host = session.get(User, m.host_id) if m.host_id else None
     lead = session.get(Lead, m.lead_id) if m.lead_id else None
     client = session.get(ClientProfile, m.client_id) if m.client_id else None
     contact = session.get(Contact, m.contact_id) if m.contact_id else None
+    local = _meeting_local(m)
+    from datetime import timedelta as _td
+    end_utc = (m.scheduled_at + _td(minutes=m.duration_minutes)) if (m.scheduled_at and m.duration_minutes) else None
+    # Rows with a timezone are stored in UTC -> emit an explicit 'Z' so browsers convert to the viewer's zone.
+    # Legacy rows (no timezone) keep the old naive format.
+    suffix = "Z" if m.timezone else ""
     return {
         "id": m.id, "title": m.title, "description": m.description,
         "location": m.location, "meeting_type": m.meeting_type,
         "status": m.status,
-        "scheduled_at": m.scheduled_at.isoformat() if m.scheduled_at else None,
+        "scheduled_at": (m.scheduled_at.isoformat() + suffix) if m.scheduled_at else None,
+        "end_at": (end_utc.isoformat() + suffix) if end_utc else None,
+        "scheduled_at_local": local.strftime("%Y-%m-%dT%H:%M") if local else None,
+        "timezone": m.timezone,
+        "meeting_link": m.meeting_link,
         "duration_minutes": m.duration_minutes,
         "host_id": m.host_id, "host_name": host.name if host else None,
         "lead_id": m.lead_id, "lead_name": lead.company_name if lead else None,
@@ -11746,13 +11920,19 @@ def list_meetings(
 @app.post("/meetings")
 def create_meeting(body: MeetingCreateRequest, session: Session = Depends(get_session)):
     data = body.model_dump()
-    if data.get("scheduled_at"):
+    if data.get("timezone"):
         try:
-            data["scheduled_at"] = datetime.fromisoformat(data["scheduled_at"])
+            from zoneinfo import ZoneInfo
+            ZoneInfo(data["timezone"])
         except Exception:
-            data["scheduled_at"] = None
+            raise HTTPException(status_code=400, detail="Unknown timezone")
     else:
-        data["scheduled_at"] = None
+        # SCM2-74: fall back to the organiser's saved timezone
+        me = _current_user(session)
+        data["timezone"] = getattr(me, "timezone", None) if me else None
+    data["scheduled_at"] = _meeting_to_utc(data.get("scheduled_at"), data.get("timezone"))
+    if not data.get("host_id"):
+        data["host_id"] = current_salesperson_id.get()
     m = Meeting(**data)
     m.tenant_id = current_tenant_id.get()
     session.add(m)
@@ -11760,7 +11940,7 @@ def create_meeting(body: MeetingCreateRequest, session: Session = Depends(get_se
     session.refresh(m)
 
     try:
-        dt_str = m.scheduled_at.strftime("%b %d, %I:%M %p") if m.scheduled_at else "TBD"
+        dt_str = _meeting_time_label(m, "%b %d, %I:%M %p")
         _notify_admins(
             session, current_tenant_id.get(),
             title=f"📅 Meeting Scheduled: {m.title}",
@@ -11772,7 +11952,7 @@ def create_meeting(body: MeetingCreateRequest, session: Session = Depends(get_se
         pass
 
     # ── EMAIL NOTIFICATION TO ATTENDEES ──
-    dt_str = m.scheduled_at.strftime("%Y-%m-%d %H:%M") if m.scheduled_at else "TBD"
+    dt_str = _meeting_time_label(m)
     subject = f"Meeting Scheduled: {m.title}"
     notes = (m.notes or "").strip()
     recips = [a.strip() for a in (m.attendees or []) if a and a.strip()]
@@ -11800,6 +11980,7 @@ def create_meeting(body: MeetingCreateRequest, session: Session = Depends(get_se
             f"  Date/Time : {dt_str}\n"
             f"  Type      : {m.meeting_type}\n"
             f"  Location  : {m.location or 'TBD'}\n"
+            f"  Join link : {m.meeting_link or '—'}\n"
             f"  Duration  : {m.duration_minutes or 'TBD'} min\n"
             f"  Attendees : {', '.join(recips) or '—'}"
         )
@@ -11821,6 +12002,7 @@ def create_meeting(body: MeetingCreateRequest, session: Session = Depends(get_se
             ("Date/Time", date_time),
             ("Type", mtype),
             ("Location", location),
+            ("Join link", f'<a href="{esc(m.meeting_link)}" style="color:#2563eb">{esc(m.meeting_link)}</a>' if m.meeting_link else "—"),
             ("Duration", duration),
             ("Attendees", attendees),
         ]
@@ -11920,14 +12102,14 @@ def update_meeting(meeting_id: int, body: MeetingUpdateRequest, session: Session
     if not m:
         raise HTTPException(status_code=404, detail="Meeting not found")
     updates = body.model_dump(exclude_unset=True)
+    if updates.get("timezone"):
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(updates["timezone"])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Unknown timezone")
     if "scheduled_at" in updates:
-        if updates["scheduled_at"]:
-            try:
-                updates["scheduled_at"] = datetime.fromisoformat(updates["scheduled_at"])
-            except Exception:
-                updates["scheduled_at"] = None
-        else:
-            updates["scheduled_at"] = None
+        updates["scheduled_at"] = _meeting_to_utc(updates["scheduled_at"], updates.get("timezone", m.timezone))
     for k, v in updates.items():
         setattr(m, k, v)
     m.updated_at = datetime.utcnow()
@@ -12085,6 +12267,7 @@ class QuoteCreateRequest(BaseModel):
     lead_id: Optional[int] = None
     client_id: Optional[int] = None
     contact_id: Optional[int] = None
+    deal_id: Optional[int] = None
     status: str = "Draft"
     currency: str = "USD"
     grand_total: float = 0.0
@@ -12101,6 +12284,7 @@ class QuoteEmailSendRequest(BaseModel):
 
 @app.get("/quotes")
 def list_quotes(status: Optional[str] = None, client_id: Optional[int] = None, lead_id: Optional[int] = None, session: Session = Depends(get_session)):
+    from database import Deal
     q = select(CRMQuote).order_by(CRMQuote.created_at.desc())
     if status:
         q = q.where(CRMQuote.status == status)
@@ -12115,11 +12299,22 @@ def list_quotes(status: Optional[str] = None, client_id: Optional[int] = None, l
     cids  = list({qt.client_id for qt in quotes if qt.client_id})
     lids  = list({qt.lead_id   for qt in quotes if qt.lead_id})
     qids  = [qt.id for qt in quotes]
+    dids  = list({qt.deal_id   for qt in quotes if qt.deal_id})
     cps   = session.exec(select(ClientProfile).where(ClientProfile.id.in_(cids))).all() if cids else []
     leads = session.exec(select(Lead).where(Lead.id.in_(lids))).all() if lids else []
+    deals = session.exec(select(Deal).where(Deal.id.in_(dids))).all() if dids else []
     items = session.exec(select(QuoteItem).where(QuoteItem.quote_id.in_(qids))).all() if qids else []
+
+    deal_owner_ids = [d.assigned_to for d in deals if d.assigned_to]
+    emp_ids = [cp.assignedEmployeeId for cp in cps if cp.assignedEmployeeId]
+    owner_ids = [qt.owner_id for qt in quotes if qt.owner_id]
+    all_uids = list(set(deal_owner_ids + emp_ids + owner_ids))
+    users = session.exec(select(User).where(User.id.in_(all_uids))).all() if all_uids else []
+
     cp_map    = {cp.id: cp for cp in cps}
     lead_map  = {l.id: l   for l in leads}
+    deal_map  = {d.id: d   for d in deals}
+    user_map  = {u.id: u   for u in users}
     items_map: dict = {}
     for it in items:
         items_map.setdefault(it.quote_id, []).append(it)
@@ -12128,32 +12323,50 @@ def list_quotes(status: Optional[str] = None, client_id: Optional[int] = None, l
         d = qt.model_dump()
         cp   = cp_map.get(qt.client_id)
         lead = lead_map.get(qt.lead_id)
+        deal = deal_map.get(qt.deal_id)
+        rep  = user_map.get(deal.assigned_to) if deal and deal.assigned_to else (user_map.get(cp.assignedEmployeeId) if cp and cp.assignedEmployeeId else user_map.get(qt.owner_id))
         d["client_name"] = cp.companyName if cp else None
         d["lead_name"]   = lead.company_name if lead else None
+        d["deal_id"]     = qt.deal_id
+        d["deal_title"]  = deal.title if deal else None
+        d["deal_stage"]  = deal.stage if deal else None
+        d["salesperson_id"] = rep.id if rep else None
+        d["salesperson_name"] = rep.name if rep else None
+        d["public_uuid"] = getattr(qt, "public_uuid", None)
         d["items"] = [i.model_dump() for i in items_map.get(qt.id, [])]
         result.append(d)
     return {"quotes": result}
 
 
 def _quote_dict(qt: CRMQuote, session: Session) -> dict:
+    from database import Deal
     client = session.get(ClientProfile, qt.client_id) if qt.client_id else None
     lead = session.get(Lead, qt.lead_id) if qt.lead_id else None
     items = session.exec(select(QuoteItem).where(QuoteItem.quote_id == qt.id)).all()
+    deal = session.get(Deal, qt.deal_id) if qt.deal_id else None
+    deal_owner = session.get(User, deal.assigned_to) if deal and deal.assigned_to else None
+    emp_rep = session.get(User, client.assignedEmployeeId) if client and client.assignedEmployeeId else None
+    rep = deal_owner or emp_rep or (session.get(User, qt.owner_id) if qt.owner_id else None)
     d = qt.model_dump()
     d["client_name"] = client.companyName if client else None
     d["lead_name"] = lead.company_name if lead else None
+    d["deal_id"] = qt.deal_id
+    d["deal_title"] = deal.title if deal else None
+    d["deal_stage"] = deal.stage if deal else None
+    d["salesperson_id"] = rep.id if rep else None
+    d["salesperson_name"] = rep.name if rep else None
+    d["public_uuid"] = getattr(qt, "public_uuid", None)
     d["items"] = [i.model_dump() for i in items]
     return d
 
 @app.post("/quotes")
 def create_quote(body: QuoteCreateRequest, session: Session = Depends(get_session)):
     import random, string
-    body_data = body.model_dump(exclude={"items"})
+    body_data = body.model_dump(exclude={"items", "send_email"})
     q = CRMQuote(**body_data)
     q.quote_number = "QT-" + "".join(random.choices(string.digits, k=6))
     session.add(q)
-    session.commit()
-    session.refresh(q)
+    session.flush()
     
     for item in body.items:
         qi = QuoteItem(
@@ -12164,7 +12377,12 @@ def create_quote(body: QuoteCreateRequest, session: Session = Depends(get_sessio
             provider=item.get("provider", "Custom")
         )
         session.add(qi)
+        
+    # Automatically map deal to sales person and deals pipeline
+    _sync_proposal_or_quote_to_deal(q, session)
+
     session.commit()
+    session.refresh(q)
 
     # Send a "Quote created" email to the linked lead/client/contact email
     # (best-effort) only when the user explicitly opts in with `send_email`.
@@ -12210,6 +12428,272 @@ def send_quote_email(quote_id: int, body: Optional[QuoteEmailSendRequest] = None
         "quote": _quote_dict(q, session),
     }
 
+
+class ProposalCommentCreateRequest(BaseModel):
+    author_name: str
+    author_type: str = "client"
+    content: str
+
+class ProposalAcceptRequest(BaseModel):
+    signer_name: Optional[str] = None
+
+def _notify_admins_and_salesperson(
+    session: Session,
+    title: str,
+    message: str,
+    link: str,
+    client_id: Optional[int] = None,
+    salesperson_id: Optional[int] = None,
+    notif_type: str = "info"
+):
+    from database import User, Notification, ClientProfile
+    from datetime import datetime
+
+    target_user_ids = set()
+    # 1. All Admin / SuperAdmin / SalesManager users
+    try:
+        admins = session.exec(select(User).where(User.role.in_(["Admin", "SuperAdmin", "SalesManager"]))).all()
+        for a in admins:
+            if a.id:
+                target_user_ids.add(a.id)
+    except Exception as e:
+        print("Warning fetching admins for notification:", e)
+
+    # 2. Assigned salesperson if provided or from client
+    if salesperson_id:
+        target_user_ids.add(salesperson_id)
+    elif client_id:
+        try:
+            cp = session.get(ClientProfile, client_id)
+            if cp and cp.assignedEmployeeId:
+                target_user_ids.add(cp.assignedEmployeeId)
+        except Exception:
+            pass
+
+    # 3. Create Notification records
+    for uid in target_user_ids:
+        try:
+            n = Notification(
+                user_id=uid,
+                title=title,
+                message=message,
+                type=notif_type,
+                link=link,
+                is_read=False,
+                created_at=datetime.utcnow()
+            )
+            session.add(n)
+        except Exception as e:
+            print(f"Warning creating notification for user {uid}:", e)
+
+@app.get("/public/proposals/{uuid}")
+def get_public_proposal(uuid: str, session: Session = Depends(get_session)):
+    q = session.exec(select(CRMQuote).where(CRMQuote.public_uuid == uuid)).first()
+    if q:
+        client = session.get(ClientProfile, q.client_id) if q.client_id else None
+        lead = session.get(Lead, q.lead_id) if q.lead_id else None
+        items = session.exec(select(QuoteItem).where(QuoteItem.quote_id == q.id)).all()
+        from database import ProposalComment, User, Deal
+        comments = session.exec(select(ProposalComment).where(ProposalComment.quote_id == q.id).order_by(ProposalComment.created_at.asc())).all()
+        deal = session.get(Deal, q.deal_id) if q.deal_id else None
+        salesperson = session.get(User, client.assignedEmployeeId) if client and client.assignedEmployeeId else None
+        if not salesperson and deal and deal.assigned_to:
+            salesperson = session.get(User, deal.assigned_to)
+        d = q.model_dump()
+        d["client_name"] = client.companyName if client else (lead.company_name if lead else None)
+        d["lead_name"] = lead.company_name if lead else None
+        d["salesperson_name"] = salesperson.name if salesperson else "Account Executive"
+        d["deal_title"] = deal.title if deal else q.title
+        d["deal_stage"] = deal.stage if deal else ("Closed Won" if q.status == "Accepted" else "Negotiation")
+        d["items"] = [i.model_dump() for i in items]
+        d["comments"] = [c.model_dump() for c in comments]
+        return d
+
+    # Check Proposal model
+    prop = session.exec(select(Proposal).where(Proposal.public_uuid == uuid)).first()
+    if not prop and uuid.isdigit():
+        prop = session.get(Proposal, int(uuid))
+    if prop:
+        client = session.get(ClientProfile, prop.client_id) if prop.client_id else None
+        lead = session.get(Lead, prop.lead_id) if getattr(prop, 'lead_id', None) else None
+        from database import ProposalComment, User, Deal
+        comments = session.exec(select(ProposalComment).where(ProposalComment.proposal_id == prop.id).order_by(ProposalComment.created_at.asc())).all()
+        deal = session.get(Deal, prop.deal_id) if prop.deal_id else None
+        salesperson = session.get(User, client.assignedEmployeeId) if client and client.assignedEmployeeId else None
+        if not salesperson and deal and deal.assigned_to:
+            salesperson = session.get(User, deal.assigned_to)
+        raw_items = prop.line_items or []
+        if isinstance(raw_items, str):
+            import json as _j
+            try: raw_items = _j.loads(raw_items)
+            except Exception: raw_items = []
+        formatted_items = []
+        for it in raw_items:
+            qty = float(it.get("quantity", 1))
+            price = float(it.get("unit_price", 0))
+            formatted_items.append({
+                "description": it.get("product_name") or it.get("description", "Item"),
+                "quantity": qty,
+                "unit_price": price,
+                "total": qty * price,
+            })
+        return {
+            "id": prop.id,
+            "public_uuid": getattr(prop, "public_uuid", str(prop.id)),
+            "quote_number": f"PROP-{prop.id:04d}",
+            "title": prop.title,
+            "status": prop.status,
+            "grand_total": prop.total_value or 0.0,
+            "currency": prop.currency or "USD",
+            "valid_until": prop.valid_until,
+            "notes": prop.content,
+            "terms": "Standard SCM BPO Master Services Terms & Operational SLAs apply.",
+            "client_name": client.companyName if client else (lead.company_name if lead else None),
+            "lead_name": lead.company_name if lead else None,
+            "salesperson_name": salesperson.name if salesperson else "Account Executive",
+            "deal_title": deal.title if deal else prop.title,
+            "deal_stage": deal.stage if deal else ("Closed Won" if prop.status == "Accepted" else "Negotiation"),
+            "signed_at": prop.signed_at.isoformat() if prop.signed_at else None,
+            "signed_by": prop.signature_data or None,
+            "items": formatted_items,
+            "comments": [c.model_dump() for c in comments],
+            "is_proposal": True,
+        }
+
+    raise HTTPException(status_code=404, detail="Proposal not found")
+
+@app.post("/public/proposals/{uuid}/comments")
+def add_proposal_comment(uuid: str, body: ProposalCommentCreateRequest, session: Session = Depends(get_session)):
+    from database import ProposalComment, Deal, ClientProfile
+    from datetime import datetime
+
+    q = session.exec(select(CRMQuote).where(CRMQuote.public_uuid == uuid)).first()
+    if q:
+        author_name = body.author_name.strip() if body.author_name else "Client"
+        comment = ProposalComment(
+            quote_id=q.id,
+            author_name=author_name,
+            author_type=body.author_type or "client",
+            content=body.content.strip()
+        )
+        session.add(comment)
+
+        client = session.get(ClientProfile, q.client_id) if q.client_id else None
+        client_name = client.companyName if client else author_name
+        deal = session.get(Deal, q.deal_id) if q.deal_id else None
+        if deal and deal.stage in ("Lead", "Discovery", "Demo", "Sent"):
+            deal.stage = "Negotiation"
+            deal.updated_at = datetime.utcnow()
+            session.add(deal)
+
+        # Notify admin and assigned salesperson
+        _notify_admins_and_salesperson(
+            session=session,
+            title=f"💬 Proposal Negotiation: {client_name}",
+            message=f"{author_name}: \"{body.content.strip()[:140]}\"",
+            link=f"/p/{uuid}",
+            client_id=q.client_id,
+            notif_type="info"
+        )
+        session.commit()
+        return {"ok": True}
+
+    prop = session.exec(select(Proposal).where(Proposal.public_uuid == uuid)).first()
+    if not prop and uuid.isdigit():
+        prop = session.get(Proposal, int(uuid))
+    if prop:
+        author_name = body.author_name.strip() if body.author_name else "Client"
+        comment = ProposalComment(
+            proposal_id=prop.id,
+            author_name=author_name,
+            author_type=body.author_type or "client",
+            content=body.content.strip()
+        )
+        session.add(comment)
+
+        client = session.get(ClientProfile, prop.client_id) if prop.client_id else None
+        client_name = client.companyName if client else author_name
+        deal = session.get(Deal, prop.deal_id) if prop.deal_id else None
+        if deal and deal.stage in ("Lead", "Discovery", "Demo", "Sent"):
+            deal.stage = "Negotiation"
+            deal.updated_at = datetime.utcnow()
+            session.add(deal)
+
+        # Notify admin and assigned salesperson
+        _notify_admins_and_salesperson(
+            session=session,
+            title=f"💬 Proposal Negotiation: {client_name}",
+            message=f"{author_name}: \"{body.content.strip()[:140]}\"",
+            link=f"/p/{uuid}",
+            client_id=prop.client_id,
+            notif_type="info"
+        )
+        session.commit()
+        return {"ok": True}
+
+    raise HTTPException(status_code=404, detail="Proposal not found")
+
+@app.post("/public/proposals/{uuid}/accept")
+def accept_public_proposal(uuid: str, body: Optional[ProposalAcceptRequest] = None, session: Session = Depends(get_session)):
+    from database import Deal, ClientProfile
+    from datetime import datetime
+
+    signer = body.signer_name.strip() if body and body.signer_name else None
+
+    q = session.exec(select(CRMQuote).where(CRMQuote.public_uuid == uuid)).first()
+    if q:
+        q.status = "Accepted"
+        session.add(q)
+        client = session.get(ClientProfile, q.client_id) if q.client_id else None
+        client_name = client.companyName if client else "Client"
+        if q.deal_id:
+            deal = session.get(Deal, q.deal_id)
+            if deal:
+                deal.stage = "Closed Won"
+                deal.updated_at = datetime.utcnow()
+                session.add(deal)
+
+        _notify_admins_and_salesperson(
+            session=session,
+            title=f"🎉 Deal Accepted & Signed: {client_name}",
+            message=f"{signer or client_name} digitally accepted and signed quote '{q.title}'. Deal advanced to Closed Won!",
+            link="/pipeline",
+            client_id=q.client_id,
+            notif_type="success"
+        )
+        session.commit()
+        return {"ok": True}
+
+    prop = session.exec(select(Proposal).where(Proposal.public_uuid == uuid)).first()
+    if not prop and uuid.isdigit():
+        prop = session.get(Proposal, int(uuid))
+    if prop:
+        prop.status = "Accepted"
+        prop.signed_at = datetime.utcnow()
+        if signer:
+            prop.signature_data = signer
+        session.add(prop)
+        client = session.get(ClientProfile, prop.client_id) if prop.client_id else None
+        client_name = client.companyName if client else "Client"
+        if prop.deal_id:
+            deal = session.get(Deal, prop.deal_id)
+            if deal:
+                deal.stage = "Closed Won"
+                deal.updated_at = datetime.utcnow()
+                session.add(deal)
+
+        _notify_admins_and_salesperson(
+            session=session,
+            title=f"🎉 Deal Accepted & Signed: {client_name}",
+            message=f"{signer or client_name} digitally accepted and signed proposal '{prop.title}'. Deal advanced to Closed Won!",
+            link="/pipeline",
+            client_id=prop.client_id,
+            notif_type="success"
+        )
+        session.commit()
+        return {"ok": True}
+
+    raise HTTPException(status_code=404, detail="Proposal not found")
 
 @app.get("/quotes/{quote_id}/email-preview")
 def quote_email_preview(quote_id: int, session: Session = Depends(get_session)):
@@ -12415,12 +12899,16 @@ def get_quote(quote_id: int, session: Session = Depends(get_session)):
     return {"quote": _quote_dict(q, session)}
 
 @app.get("/quotes/{quote_id}/pdf")
-def quote_pdf(quote_id: int, provider: Optional[str] = None, session: Session = Depends(get_session)):
-    """Generate a professional PDF for a quote."""
+def quote_pdf(quote_id: int, user_id: Optional[int] = None, provider: Optional[str] = None, session: Session = Depends(get_session)):
+    """Generate a professional PDF for a quote or proposal."""
     from fastapi.responses import StreamingResponse
 
-    q = session.get(CRMQuote, quote_id)
+    q = session.exec(select(CRMQuote).where(CRMQuote.id == quote_id).execution_options(skip_tenant=True)).first()
     if not q:
+        # Fallback to proposal if ID belongs to a proposal
+        prop = session.exec(select(Proposal).where(Proposal.id == quote_id).execution_options(skip_tenant=True)).first()
+        if prop:
+            return proposal_pdf(quote_id, user_id=user_id, provider=provider, session=session)
         raise HTTPException(status_code=404, detail="Quote not found")
         
     client_name = ""
@@ -12429,7 +12917,7 @@ def quote_pdf(quote_id: int, provider: Optional[str] = None, session: Session = 
     client_phone = ""
     client_address = ""
     if q.client_id:
-        c = session.get(ClientProfile, q.client_id)
+        c = session.exec(select(ClientProfile).where(ClientProfile.id == q.client_id).execution_options(skip_tenant=True)).first()
         if c: 
             user = session.get(User, c.userId) if c.userId else None
             client_name = c.companyName or (user.name if user else f"Client #{c.id}")
@@ -12438,7 +12926,7 @@ def quote_pdf(quote_id: int, provider: Optional[str] = None, session: Session = 
             client_phone = c.phone or ""
             client_address = c.address or ""
     elif q.lead_id:
-        l = session.get(Lead, q.lead_id)
+        l = session.exec(select(Lead).where(Lead.id == q.lead_id).execution_options(skip_tenant=True)).first()
         if l:
             client_name = l.company_name or l.email or f"Lead #{l.id}"
             client_company = l.company_name or ""
@@ -12446,7 +12934,7 @@ def quote_pdf(quote_id: int, provider: Optional[str] = None, session: Session = 
             client_phone = l.phone or ""
             client_address = l.address or ""
 
-    quote_items = session.exec(select(QuoteItem).where(QuoteItem.quote_id == q.id)).all()
+    quote_items = session.exec(select(QuoteItem).where(QuoteItem.quote_id == q.id).execution_options(skip_tenant=True)).all()
     items = []
     for li in quote_items:
         amt = float(li.unit_price or 0)
@@ -12489,9 +12977,11 @@ def update_quote(quote_id: int, body: QuoteCreateRequest, session: Session = Dep
     q = session.get(CRMQuote, quote_id)
     if not q:
         raise HTTPException(status_code=404, detail="Quote not found")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    for k, v in body.model_dump(exclude_unset=True, exclude={"items", "send_email"}).items():
         setattr(q, k, v)
     q.updated_at = datetime.utcnow()
+    # Automatically sync deal and salesperson
+    _sync_proposal_or_quote_to_deal(q, session, is_status_update=True)
     session.add(q)
     session.commit()
     session.refresh(q)
@@ -12606,7 +13096,7 @@ def export_sales_orders_pdf(body: dict = {}, session: Session = Depends(get_sess
     recipient = (body or {}).get("email") if isinstance(body, dict) else None
     if recipient:
         try:
-            send_pdf_email(recipient, "Sales Orders – SERPHAWK", "Please find the sales orders PDF attached.", pdf_bytes, "sales_orders.pdf")
+            send_pdf_email(recipient, "Sales Orders – SCM BPO", "Please find the sales orders PDF attached.", pdf_bytes, "sales_orders.pdf")
             return {"ok": True, "message": f"PDF sent to {recipient}"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -12687,7 +13177,7 @@ def export_purchase_orders_pdf(body: dict = {}, session: Session = Depends(get_s
     recipient = (body or {}).get("email") if isinstance(body, dict) else None
     if recipient:
         try:
-            send_pdf_email(recipient, "Purchase Orders – SERPHAWK", "Please find the purchase orders PDF attached.", pdf_bytes, "purchase_orders.pdf")
+            send_pdf_email(recipient, "Purchase Orders – SCM BPO", "Please find the purchase orders PDF attached.", pdf_bytes, "purchase_orders.pdf")
             return {"ok": True, "message": f"PDF sent to {recipient}"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -15515,12 +16005,12 @@ def send_supplier_credentials(supplier_id: int, session: Session = Depends(get_s
     if not s.login_password:
         raise HTTPException(status_code=400, detail="No login credentials exist for this supplier")
 
-    login_url = (os.environ.get("FRONTEND_URL") or "https://crm-seo.allytechcourses.com").rstrip("/") + "/login"
-    subject = "Your SERP Hawk Supplier Portal Login"
+    login_url = (os.environ.get("FRONTEND_URL") or "https://app.scmhub.com").rstrip("/") + "/login"
+    subject = "Your ScmHub Supplier Portal Login"
     html = f"""
     <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
       <div style="background:#1e293b;color:#fff;padding:22px 28px">
-        <strong style="font-size:18px">🦅 SERP Hawk Supplier Portal</strong>
+        <strong style="font-size:18px">📦 ScmHub Supplier Portal</strong>
       </div>
       <div style="padding:28px">
         <h2 style="color:#0f172a;font-size:20px;margin:0 0 12px">Your supplier account is ready</h2>
@@ -16540,4 +17030,509 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
         .order_by(SentEmail.sent_at.desc())
     ).all()
     return {"emails": [e.dict() for e in emails]}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — CRM ENHANCEMENTS  (appended)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. Convert Quote → Invoice (one-click) ────────────────────────────────────
+@app.post("/quotes/{quote_id}/convert-to-invoice")
+def convert_quote_to_invoice(quote_id: int, session: Session = Depends(get_session)):
+    """Create an invoice pre-populated from an accepted quote's line items."""
+    qt = session.get(CRMQuote, quote_id)
+    if not qt:
+        raise HTTPException(status_code=404, detail="Quote not found")
+
+    items = session.exec(select(QuoteItem).where(QuoteItem.quote_id == qt.id)).all()
+    line_items = [{"description": i.description, "quantity": i.quantity, "unit_price": i.unit_price} for i in items]
+    subtotal  = sum(i.quantity * i.unit_price for i in items) if items else (qt.grand_total or 0)
+    tax       = round(subtotal * 0.0, 2)   # 0% default – overridable after creation
+
+    inv = Invoice(
+        invoice_number=_generate_invoice_number(session),
+        client_id=qt.client_id or None,
+        amount=round(subtotal, 2),
+        tax=tax,
+        total=round(subtotal + tax, 2),
+        currency=qt.currency or "USD",
+        due_date=(datetime.utcnow() + timedelta(days=30)).date(),
+        notes=f"Auto-generated from Quote {qt.quote_number or qt.id}",
+        line_items=line_items,
+    )
+    # store FK so we can trace back
+    try:
+        inv.quote_id = qt.id  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    session.add(inv)
+    session.commit()
+    session.refresh(inv)
+    return {"invoice": _invoice_dict(inv, session), "message": "Invoice created from quote"}
+
+
+# ── 2. Convert Proposal → Invoice ─────────────────────────────────────────────
+@app.post("/proposals/{proposal_id}/convert-to-invoice")
+def convert_proposal_to_invoice(proposal_id: int, session: Session = Depends(get_session)):
+    """Create an invoice pre-populated from a proposal's line items."""
+    from database import Proposal as ProposalModel
+    prop = session.get(ProposalModel, proposal_id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    raw_items = prop.line_items or []
+    if isinstance(raw_items, str):
+        import json as _json
+        try:
+            raw_items = _json.loads(raw_items)
+        except Exception:
+            raw_items = []
+
+    subtotal = float(prop.total_value or 0)
+    tax      = round(subtotal * 0.0, 2)
+
+    inv = Invoice(
+        invoice_number=_generate_invoice_number(session),
+        client_id=prop.client_id or None,
+        amount=round(subtotal, 2),
+        tax=tax,
+        total=round(subtotal + tax, 2),
+        currency=prop.currency or "USD",
+        due_date=(datetime.utcnow() + timedelta(days=30)).date(),
+        notes=f"Auto-generated from Proposal Q-{str(proposal_id).zfill(4)}",
+        line_items=raw_items,
+    )
+    session.add(inv)
+    session.commit()
+    session.refresh(inv)
+    return {"invoice": _invoice_dict(inv, session), "message": "Invoice created from proposal"}
+
+
+# ── 3. Dropped Clients ────────────────────────────────────────────────────────
+class DroppedClientCreate(BaseModel):
+    client_id: Optional[int] = None
+    company_name: str
+    reason: Optional[str] = None
+    reason_category: Optional[str] = "Other"
+    last_revenue: Optional[float] = 0
+    relationship_months: Optional[int] = 0
+    reactivation_potential: Optional[str] = "Low"
+    notes: Optional[str] = None
+
+
+@app.get("/dropped-clients")
+def list_dropped_clients(session: Session = Depends(get_session)):
+    from database import DroppedClient
+    rows = session.exec(select(DroppedClient).order_by(DroppedClient.dropped_at.desc())).all()
+    result = []
+    for r in rows:
+        d = r.model_dump() if hasattr(r, "model_dump") else dict(r)
+        d["dropped_at"] = r.dropped_at.isoformat() if r.dropped_at else None
+        result.append(d)
+    # analytics summary
+    categories: dict = {}
+    for r in rows:
+        cat = getattr(r, "reason_category", "Other") or "Other"
+        categories[cat] = categories.get(cat, 0) + 1
+    return {"dropped_clients": result, "category_breakdown": categories, "total": len(rows)}
+
+
+@app.post("/dropped-clients")
+def create_dropped_client(body: DroppedClientCreate, session: Session = Depends(get_session)):
+    from database import DroppedClient, ClientProfile, ActivityLog
+    uid = current_salesperson_id.get()
+    
+    # Automatically synchronize ClientProfile status to "Dropped"
+    cp = None
+    if body.client_id:
+        cp = session.get(ClientProfile, body.client_id)
+    if not cp and body.company_name:
+        cp = session.exec(select(ClientProfile).where(ClientProfile.companyName.ilike(body.company_name.strip()))).first()
+
+    raw_tid = current_tenant_id.get()
+    tenant_id = raw_tid if (raw_tid and raw_tid > 0) else (cp.tenant_id if (cp and cp.tenant_id and cp.tenant_id > 0) else 1)
+
+    row = DroppedClient(
+        tenant_id=tenant_id,
+        client_id=body.client_id or (cp.id if cp else None),
+        company_name=body.company_name,
+        reason=body.reason,
+        reason_category=body.reason_category or "Other",
+        dropped_by=uid if (uid and uid > 0) else None,
+        last_revenue=body.last_revenue or 0,
+        relationship_months=body.relationship_months or 0,
+        reactivation_potential=body.reactivation_potential or "Low",
+        notes=body.notes,
+    )
+    session.add(row)
+    session.flush()
+    row_dict = row.model_dump() if hasattr(row, "model_dump") else dict(row)
+
+    if cp:
+        cp.status = "Dropped"
+        session.add(cp)
+        try:
+            act = ActivityLog(
+                tenant_id=tenant_id,
+                clientId=cp.id,
+                action=f"Client marked as Dropped: {body.reason_category or 'Discontinued'}",
+                method="STATUS_UPDATE",
+                content=f"Client status changed to Dropped. Reason: {body.reason or 'No reason specified'}. Category: {body.reason_category or 'Other'}. Reactivation: {body.reactivation_potential or 'Low'}",
+                details=body.notes,
+            )
+            session.add(act)
+        except Exception:
+            pass
+
+    session.commit()
+    return {"dropped_client": row_dict, "message": "Dropped client recorded"}
+
+
+@app.get("/dropped-clients/by-client/{client_id}")
+def get_dropped_client_by_client_id(client_id: int, session: Session = Depends(get_session)):
+    from database import DroppedClient
+    row = session.exec(
+        select(DroppedClient).where(DroppedClient.client_id == client_id).order_by(DroppedClient.dropped_at.desc())
+    ).first()
+    if not row:
+        return {"dropped_client": None}
+    d = row.model_dump() if hasattr(row, "model_dump") else dict(row)
+    d["dropped_at"] = row.dropped_at.isoformat() if row.dropped_at else None
+    return {"dropped_client": d}
+
+
+@app.post("/dropped-clients/by-client/{client_id}/reactivate")
+def reactivate_dropped_client(client_id: int, session: Session = Depends(get_session)):
+    from database import ClientProfile, ActivityLog
+    cp = session.get(ClientProfile, client_id)
+    if not cp:
+        raise HTTPException(status_code=404, detail="Client not found")
+    cp.status = "Active"
+    session.add(cp)
+    try:
+        act = ActivityLog(
+            clientId=cp.id,
+            action="Client Reactivated",
+            method="STATUS_UPDATE",
+            content="Client status changed from Dropped back to Active.",
+        )
+        session.add(act)
+    except Exception:
+        pass
+    session.commit()
+    return {"ok": True, "message": "Client reactivated to Active status"}
+
+
+@app.delete("/dropped-clients/{dc_id}")
+def delete_dropped_client(dc_id: int, session: Session = Depends(get_session)):
+    from database import DroppedClient
+    row = session.get(DroppedClient, dc_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Record not found")
+    session.delete(row)
+    session.commit()
+    return {"ok": True}
+
+
+# ── 4. Salesperson Reassignment & History ──────────────────────────────────────
+class ReassignRequest(BaseModel):
+    client_id: int
+    to_user_id: int
+    reason: Optional[str] = None
+
+
+@app.post("/salesperson/reassign")
+def reassign_salesperson(body: ReassignRequest, session: Session = Depends(get_session)):
+    # SCM2-52: previously wrote to a non-existent `assigned_salesperson_id` column, so the
+    # owner never changed. Delegate to the shared ownership logic (updates assignedEmployeeId
+    # and logs to both ownership_history and salesperson_history).
+    h = reassign_owner(session, "client", body.client_id, body.to_user_id, body.reason)
+    return {"message": f"Client reassigned to {h.to_user_name}", "history_id": h.id}
+
+
+def _legacy_reassign_salesperson_unused(body: ReassignRequest, session: Session = Depends(get_session)):
+    from database import SalespersonHistory
+    uid = current_salesperson_id.get()
+    tenant_id = current_tenant_id.get() or 1
+
+    cp = session.get(ClientProfile, body.client_id)
+    if not cp:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    from_user_id   = cp.assigned_salesperson_id if hasattr(cp, "assigned_salesperson_id") else None
+    from_user_name: Optional[str] = None
+    to_user_name:   Optional[str] = None
+
+    if from_user_id:
+        fu = session.get(User, from_user_id)
+        from_user_name = fu.name if fu else None
+
+    to_user = session.get(User, body.to_user_id)
+    if not to_user:
+        raise HTTPException(status_code=404, detail="Target user not found")
+    to_user_name = to_user.name
+
+    # Log history
+    hist = SalespersonHistory(
+        tenant_id=tenant_id,
+        client_id=body.client_id,
+        from_user_id=from_user_id,
+        to_user_id=body.to_user_id,
+        from_user_name=from_user_name,
+        to_user_name=to_user_name,
+        reason=body.reason,
+        reassigned_by=uid,
+    )
+    session.add(hist)
+
+    # Update client assignment if column exists
+    if hasattr(cp, "assigned_salesperson_id"):
+        cp.assigned_salesperson_id = body.to_user_id  # type: ignore[assignment]
+        session.add(cp)
+
+    session.commit()
+    session.refresh(hist)
+    return {"message": f"Client reassigned to {to_user_name}", "history_id": hist.id}
+
+
+@app.get("/salesperson/history/{client_id}")
+def get_salesperson_history(client_id: int, session: Session = Depends(get_session)):
+    from database import SalespersonHistory
+    rows = session.exec(
+        select(SalespersonHistory)
+        .where(SalespersonHistory.client_id == client_id)
+        .order_by(SalespersonHistory.reassigned_at.desc())
+    ).all()
+    result = []
+    for r in rows:
+        d = r.model_dump() if hasattr(r, "model_dump") else {}
+        d["reassigned_at"] = r.reassigned_at.isoformat() if r.reassigned_at else None
+        result.append(d)
+    return {"history": result}
+
+
+# ── 5. Excel/CSV Campaign Upload ───────────────────────────────────────────────
+@app.post("/email-campaigns/excel-upload")
+async def excel_campaign_upload(
+    background_tasks: BackgroundTasks,
+    campaign_name: str = "Unnamed Campaign",
+    template_subject: str = "Hello from {{company}}",
+    template_body: str = "Hi {{name}},\n\nWe'd love to connect.\n\nBest Regards",
+    file: "UploadFile" = None,  # type: ignore
+    session: Session = Depends(get_session),
+):
+    """
+    Accept an Excel/CSV file with columns: name, email, company.
+    Creates a campaign record and sends personalised emails in the background.
+    """
+    from database import ExcelCampaign, ExcelCampaignRecord
+    from fastapi import UploadFile
+    import io
+
+    uid = current_salesperson_id.get()
+    tenant_id = current_tenant_id.get() or 1
+
+    if file is None:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    contents = await file.read()
+    records_data = []
+
+    filename_lower = (file.filename or "").lower()
+    if filename_lower.endswith(".csv"):
+        import csv
+        reader = csv.DictReader(io.StringIO(contents.decode("utf-8-sig", errors="replace")))
+        for row in reader:
+            records_data.append({"name": row.get("name",""), "email": row.get("email",""), "company": row.get("company","")})
+    else:
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(contents))
+            ws = wb.active
+            headers = [str(c.value or "").lower().strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                rowdict = dict(zip(headers, row))
+                records_data.append({"name": str(rowdict.get("name","") or ""), "email": str(rowdict.get("email","") or ""), "company": str(rowdict.get("company","") or "")})
+        except ImportError:
+            raise HTTPException(status_code=400, detail="openpyxl not installed. Use CSV format or install openpyxl.")
+
+    records_data = [r for r in records_data if r.get("email","").strip()]
+
+    campaign = ExcelCampaign(
+        tenant_id=tenant_id,
+        campaign_name=campaign_name,
+        template_subject=template_subject,
+        template_body=template_body,
+        total_records=len(records_data),
+        status="Queued",
+        created_by=uid,
+    )
+    session.add(campaign)
+    session.commit()
+    session.refresh(campaign)
+
+    for rd in records_data:
+        rec = ExcelCampaignRecord(
+            campaign_id=campaign.id,
+            email=rd["email"],
+            name=rd["name"],
+            company=rd["company"],
+            status="Pending",
+        )
+        session.add(rec)
+    session.commit()
+
+    def _send_campaign(campaign_id: int, records: list, subj_tpl: str, body_tpl: str):
+        from modules.email_sender import send_email
+        import re
+        sent = 0
+        failed = 0
+        with Session(engine) as s:
+            cam = s.get(ExcelCampaign, campaign_id)
+            if not cam:
+                return
+            cam.status = "Sending"
+            s.add(cam)
+            s.commit()
+            for rec in records:
+                db_rec = s.exec(select(ExcelCampaignRecord).where(
+                    ExcelCampaignRecord.campaign_id == campaign_id,
+                    ExcelCampaignRecord.email == rec["email"],
+                    ExcelCampaignRecord.status == "Pending",
+                )).first()
+                if not db_rec:
+                    continue
+                try:
+                    def _fill(tpl: str, r: dict) -> str:
+                        for k, v in r.items():
+                            tpl = tpl.replace(f"{{{{{k}}}}}", v or "")
+                        return tpl
+                    subj = _fill(subj_tpl, rec)
+                    body = _fill(body_tpl, rec)
+                    ok = send_email(rec["email"], subj, f"<pre>{body}</pre>")
+                    db_rec.status = "Sent" if ok else "Failed"
+                    db_rec.sent_at = datetime.utcnow()
+                    if not ok:
+                        db_rec.error_message = "Email delivery failed"
+                        failed += 1
+                    else:
+                        sent += 1
+                except Exception as ex:
+                    db_rec.status = "Failed"
+                    db_rec.error_message = str(ex)
+                    failed += 1
+                s.add(db_rec)
+                s.commit()
+            cam.sent_count = sent
+            cam.failed_count = failed
+            cam.status = "Completed"
+            cam.completed_at = datetime.utcnow()
+            s.add(cam)
+            s.commit()
+
+    background_tasks.add_task(_send_campaign, campaign.id, records_data, template_subject, template_body)
+    return {"campaign_id": campaign.id, "total_records": len(records_data), "status": "Queued", "message": "Campaign started in background"}
+
+
+@app.get("/email-campaigns")
+def list_email_campaigns(session: Session = Depends(get_session)):
+    from database import ExcelCampaign
+    rows = session.exec(select(ExcelCampaign).order_by(ExcelCampaign.created_at.desc())).all()
+    result = []
+    for r in rows:
+        d = r.model_dump() if hasattr(r, "model_dump") else {}
+        d["created_at"] = r.created_at.isoformat() if r.created_at else None
+        d["completed_at"] = r.completed_at.isoformat() if r.completed_at else None
+        result.append(d)
+    return {"campaigns": result}
+
+
+@app.get("/email-campaigns/{campaign_id}/records")
+def get_campaign_records(campaign_id: int, session: Session = Depends(get_session)):
+    from database import ExcelCampaignRecord
+    rows = session.exec(
+        select(ExcelCampaignRecord)
+        .where(ExcelCampaignRecord.campaign_id == campaign_id)
+        .order_by(ExcelCampaignRecord.created_at.asc())
+    ).all()
+    return {"records": [r.model_dump() for r in rows]}
+
+
+# ── 6. Management Dashboard ────────────────────────────────────────────────────
+@app.get("/management/dashboard")
+def management_dashboard(session: Session = Depends(get_session)):
+    """
+    Consolidated management stats: lead source breakdown, sentiment,
+    pipeline summary, dropped clients count, salesperson performance.
+    """
+    from sqlalchemy import func, text
+
+    # Lead source breakdown
+    lead_source_rows = session.exec(
+        select(Lead.lead_source, func.count(Lead.id).label("count"))
+        .group_by(Lead.lead_source)
+    ).all() if hasattr(Lead, "lead_source") else []
+    lead_sources = [{"source": r[0] or "Unknown", "count": r[1]} for r in lead_source_rows]
+
+    # Sentiment breakdown
+    sentiment_rows = session.exec(
+        select(Lead.sentiment, func.count(Lead.id).label("count"))
+        .group_by(Lead.sentiment)
+    ).all() if hasattr(Lead, "sentiment") else []
+    sentiments = [{"sentiment": r[0] or "Neutral", "count": r[1]} for r in sentiment_rows]
+
+    # Pipeline summary
+    deal_rows = session.exec(
+        select(Deal.stage, func.count(Deal.id).label("count"), func.sum(Deal.value).label("total_value"))
+        .group_by(Deal.stage)
+    ).all() if True else []
+    pipeline = [{"stage": r[0], "count": r[1], "total_value": float(r[2] or 0)} for r in deal_rows]
+
+    # Dropped clients count
+    dropped_count = 0
+    try:
+        from database import DroppedClient
+        dropped_count = session.exec(select(func.count(DroppedClient.id))).first() or 0
+    except Exception:
+        pass
+
+    # Salesperson performance (from deals)
+    sp_rows = session.exec(
+        select(
+            Deal.assigned_to,
+            func.count(Deal.id).label("deals"),
+            func.sum(Deal.value).label("pipeline_value"),
+        ).group_by(Deal.assigned_to)
+    ).all()
+    salesperson_perf = []
+    for r in sp_rows:
+        u = session.get(User, r[0]) if r[0] else None
+        salesperson_perf.append({
+            "user_id": r[0],
+            "salesperson": u.name if u else "Unassigned",
+            "deals": r[1],
+            "pipeline_value": float(r[2] or 0),
+        })
+
+    # Monthly leads (last 6 months)
+    from sqlalchemy import extract
+    monthly = []
+    for i in range(5, -1, -1):
+        target = datetime.utcnow().replace(day=1) - timedelta(days=i * 30)
+        count = session.exec(
+            select(func.count(Lead.id)).where(
+                extract("year", Lead.created_at) == target.year,
+                extract("month", Lead.created_at) == target.month,
+            )
+        ).first() or 0
+        monthly.append({"month": target.strftime("%b %Y"), "leads": count})
+
+    return {
+        "lead_sources": lead_sources,
+        "sentiments": sentiments,
+        "pipeline": pipeline,
+        "dropped_clients": dropped_count,
+        "salesperson_performance": salesperson_perf,
+        "monthly_leads": monthly,
+    }
 

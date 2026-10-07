@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Plus, X, Search, Loader2, Trash2, Building2,
@@ -47,12 +47,24 @@ const STATUS_COLORS: Record<string, string> = {
   Cancelled: "bg-slate-100 text-slate-400",
 };
 
-function currSymbol(c: string) { return c === "INR" ? "₹" : "$"; }
+function currSymbol(c: string) {
+  if (c === "INR") return "₹";
+  if (c === "EUR") return "€";
+  if (c === "GBP") return "£";
+  return "$";
+}
 function fmtMoney(v: number, c: string) {
   return `${currSymbol(c)}${v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export default function Invoices({ embedded = false }: { embedded?: boolean }) {
+export interface InvoicesHandle {
+  openCreate: () => void;
+}
+
+const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Invoices(
+  { embedded = false },
+  ref
+) {
   // List state
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,7 +107,9 @@ export default function Invoices({ embedded = false }: { embedded?: boolean }) {
       .finally(() => setLoading(false));
   };
 
-  useEffect(loadInvoices, []);
+  useEffect(() => {
+    loadInvoices();
+  }, []);
 
   const filtered = invoices.filter(inv => {
     if (statusFilter !== "All" && inv.status !== statusFilter) return false;
@@ -162,6 +176,8 @@ export default function Invoices({ embedded = false }: { embedded?: boolean }) {
     }).catch(() => {});
     setShowCreate(true);
   }
+
+  useImperativeHandle(ref, () => ({ openCreate }));
 
   function addLineItem() {
     setLineItems(prev => [...prev, { description: "", amount: 0, provider: "Internal" }]);
@@ -367,9 +383,11 @@ export default function Invoices({ embedded = false }: { embedded?: boolean }) {
                     <label className="text-xs font-semibold text-slate-500 mb-1 block">Currency</label>
                     <select value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm">
-                      <option value="MXN">MXN ($)</option>
                       <option value="USD">USD ($)</option>
+                      <option value="EUR">EUR (€)</option>
+                      <option value="GBP">GBP (£)</option>
                       <option value="INR">INR (₹)</option>
+                      <option value="MXN">MXN ($)</option>
                     </select>
                   </div>
                   <div>
@@ -534,4 +552,6 @@ export default function Invoices({ embedded = false }: { embedded?: boolean }) {
       </AnimatePresence>
     </div>
   );
-}
+});
+
+export default Invoices;

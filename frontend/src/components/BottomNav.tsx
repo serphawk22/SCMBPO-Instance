@@ -42,6 +42,10 @@ export function BottomNav() {
   ];
 
   const moreItems = [
+    { name: 'Revenue Dashboard', href: '/revenue', roles: ['Admin'] },
+    { name: 'Business Costs', href: '/business-costs', roles: ['Admin'] },
+    { name: 'Lead Sources', href: '/lead-sources', roles: ['Admin'] },
+    { name: 'Ownership Report', href: '/ownership', roles: ['Admin', 'SalesManager'] },
     { name: t('bottom_nav.services_overview'), href: '/admin/services-overview', roles: ['Admin', 'Employee'] },
     { name: t('bottom_nav.request_board'), href: '/admin/requests', roles: ['Admin', 'Employee'] },
     { name: t('bottom_nav.interns'), href: '/interns', roles: ['Admin', 'Employee'] },

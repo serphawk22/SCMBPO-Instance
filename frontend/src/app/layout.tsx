@@ -111,8 +111,8 @@ function AppContent({ children }: { children: React.ReactNode }) {
     return <GlobalLoader />;
   }
 
-  if (pathname === "/login" || pathname === "/signup" || pathname === "/demo_showcase" || pathname === "/reset-password" || pathname?.startsWith("/demo_showcase")) {
-    return <main className="h-screen w-full">{children}</main>;
+  if (pathname === "/login" || pathname === "/signup" || pathname === "/demo_showcase" || pathname === "/reset-password" || pathname?.startsWith("/demo_showcase") || pathname?.startsWith("/p/")) {
+    return <main className="min-h-screen w-full">{children}</main>;
   }
 
   // ── Client layout ──

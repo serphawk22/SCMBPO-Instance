@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Plus, X, Search, Loader2, Trash2, Building2,
   ShoppingCart, Package, Minus, CheckCircle, IndianRupee,
-  BadgeDollarSign, User2, Download, Eye
+  BadgeDollarSign, User2, Download, Eye, FilePlus2, Link2, ArrowUpRight,
+  Briefcase, TrendingUp
 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 
@@ -19,9 +20,16 @@ interface Quote {
   grand_total: number; currency: string; lead_name?: string;
   client_name?: string; valid_until?: string; created_at: string;
   notes?: string; terms?: string; items?: QuoteItem[];
+  is_proposal?: boolean;
+  deal_id?: number;
+  deal_title?: string;
+  deal_stage?: string;
+  salesperson_id?: number;
+  salesperson_name?: string;
+  public_uuid?: string;
 }
 interface Lead   { id: number; company_name?: string; contact_name?: string; email?: string; }
-interface Client { id: number; companyName?: string; }
+interface Client { id: number; companyName?: string; assignedEmployeeId?: number; assignedEmployeeName?: string; }
 interface CatalogItem {
   id: number; name: string; sku: string; category: string;
   unit_price: number; description?: string;
@@ -38,7 +46,12 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const INR_RATE = 4.5;
-function currSymbol(c: string) { return c === "INR" ? "₹" : "$"; }
+function currSymbol(c: string) {
+  if (c === "INR") return "₹";
+  if (c === "EUR") return "€";
+  if (c === "GBP") return "£";
+  return "$";
+}
 function fmtMoney(v: number, c: string) {
   return `${currSymbol(c)}${v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -85,6 +98,7 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyInitializedIdRef = useRef<number | null>(null);
   const [downloadingQuote, setDownloadingQuote] = useState<Quote | null>(null);
+  const [convertingQuoteId, setConvertingQuoteId] = useState<number | null>(null);
 
   // Preview state (click a row to preview details, like proposals)
   const [previewQuote, setPreviewQuote] = useState<Quote | null>(null);
@@ -112,16 +126,51 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
   const [catalogCategory, setCatalogCategory] = useState("All");
 
   // ── Data loading ─────────────────────────────────────────────────────────
-  const loadQuotes = () => {
+  const loadQuotes = async () => {
     setLoading(true);
-    fetch(`${API_BASE_URL}/quotes`)
-      .then(r => r.json())
-      .then(d => setQuotes(Array.isArray(d.quotes) ? d.quotes : []))
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    try {
+      const [qRes, pRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/quotes`).then(r => r.json()).catch(() => ({ quotes: [] })),
+        fetch(`${API_BASE_URL}/proposals`).then(r => r.json()).catch(() => ({ proposals: [] })),
+      ]);
+      const qList: Quote[] = Array.isArray(qRes.quotes) ? qRes.quotes : [];
+      const pList: Quote[] = Array.isArray(pRes.proposals) ? pRes.proposals.map((p: any) => ({
+        id: p.id,
+        quote_number: `PROP-${String(p.id).padStart(4, "0")}`,
+        title: p.title,
+        status: p.status,
+        grand_total: p.total_value || 0,
+        currency: p.currency || "USD",
+        client_name: p.client_name,
+        created_at: p.created_at,
+        notes: p.content,
+        valid_until: p.valid_until,
+        deal_id: p.deal_id,
+        deal_title: p.deal_title,
+        deal_stage: p.deal_stage,
+        salesperson_id: p.salesperson_id,
+        salesperson_name: p.salesperson_name,
+        public_uuid: p.public_uuid,
+        is_proposal: true,
+        items: (p.line_items || []).map((li: any) => ({
+          description: li.product_name || li.description || "Item",
+          quantity: li.quantity || 1,
+          unit_price: li.unit_price || 0,
+          provider: li.unit || "Custom",
+          total: (li.quantity || 1) * (li.unit_price || 0),
+        })),
+      })) : [];
+      setQuotes([...qList, ...pList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(loadQuotes, []);
+  useEffect(() => {
+    loadQuotes();
+  }, []);
 
   // When the "Send Email" confirmation modal opens, load the email details so
   // the user can review exactly what will be sent (recipient, subject, items)
@@ -273,24 +322,49 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm("Delete quote?")) return;
-    await fetch(`${API_BASE_URL}/quotes/${id}`, { method: "DELETE" });
-    setQuotes(prev => prev.filter(q => q.id !== id));
-    setPreviewQuote(prev => prev && prev.id === id ? null : prev);
+  const handleDelete = async (q: Quote) => {
+    const docLabel = q.is_proposal ? "Proposal" : "Quote";
+    if (!confirm(`Delete ${docLabel} ${q.quote_number || `#${q.id}`}?`)) return;
+    const url = q.is_proposal ? `${API_BASE_URL}/proposals/${q.id}` : `${API_BASE_URL}/quotes/${q.id}`;
+    await fetch(url, { method: "DELETE" });
+    setQuotes(prev => prev.filter(item => !(item.id === q.id && item.is_proposal === q.is_proposal)));
+    setPreviewQuote(prev => prev && prev.id === q.id && prev.is_proposal === q.is_proposal ? null : prev);
+  };
+
+  const handleConvertToInvoice = async (q: Quote) => {
+    const docLabel = q.is_proposal ? "Proposal" : "Quote";
+    if (!confirm(`Convert ${docLabel} ${q.quote_number || `#${q.id}`} to Invoice?`)) return;
+    setConvertingQuoteId(q.id);
+    try {
+      const url = q.is_proposal
+        ? `${API_BASE_URL}/proposals/${q.id}/convert-to-invoice`
+        : `${API_BASE_URL}/quotes/${q.id}/convert-to-invoice`;
+      const res = await fetch(url, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setToast({ ok: true, msg: `Invoice created from ${docLabel} ${q.quote_number || `#${q.id}`}! Go to Billing → Invoices to view it.` });
+      } else {
+        setToast({ ok: false, msg: data.detail || "Failed to convert to invoice." });
+      }
+    } catch {
+      setToast({ ok: false, msg: "Failed to convert to invoice." });
+    } finally {
+      setConvertingQuoteId(null);
+    }
   };
 
   const setQuoteStatusLocal = (q: Quote, status: string) => {
-    setQuotes(prev => prev.map(qt => qt.id === q.id ? { ...qt, status } : qt));
-    setPreviewQuote(prev => prev && prev.id === q.id ? { ...prev, status } : prev);
+    setQuotes(prev => prev.map(qt => (qt.id === q.id && qt.is_proposal === q.is_proposal) ? { ...qt, status } : qt));
+    setPreviewQuote(prev => prev && prev.id === q.id && prev.is_proposal === q.is_proposal ? { ...prev, status } : prev);
   };
 
   const handleStatus = async (q: Quote, status: string) => {
-    if (status === "Sent") {
+    if (status === "Sent" && !q.is_proposal) {
       setPendingSend(q);
       return;
     }
-    await fetch(`${API_BASE_URL}/quotes/${q.id}`, {
+    const url = q.is_proposal ? `${API_BASE_URL}/proposals/${q.id}` : `${API_BASE_URL}/quotes/${q.id}`;
+    await fetch(url, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: q.title, status }),
     });
@@ -344,10 +418,30 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
     setPreviewQuote(q);
     setPreviewLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/quotes/${q.id}`);
+      const url = q.is_proposal ? `${API_BASE_URL}/proposals/${q.id}` : `${API_BASE_URL}/quotes/${q.id}`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        setPreviewQuote(data.quote || q);
+        if (q.is_proposal && data.proposal) {
+          setPreviewQuote({
+            ...q,
+            notes: data.proposal.content || q.notes,
+            valid_until: data.proposal.valid_until || q.valid_until,
+            salesperson_name: data.proposal.salesperson_name || q.salesperson_name,
+            deal_title: data.proposal.deal_title || q.deal_title,
+            deal_stage: data.proposal.deal_stage || q.deal_stage,
+            public_uuid: data.proposal.public_uuid || q.public_uuid,
+            items: (data.proposal.line_items || []).map((li: any) => ({
+              description: li.product_name || li.description || "Item",
+              quantity: li.quantity || 1,
+              unit_price: li.unit_price || 0,
+              provider: li.unit || "Custom",
+              total: (li.quantity || 1) * (li.unit_price || 0),
+            })),
+          });
+        } else if (data.quote) {
+          setPreviewQuote(data.quote);
+        }
       }
     } catch (e) { console.error(e); }
     finally { setPreviewLoading(false); }
@@ -380,28 +474,34 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
     return "";
   }
 
-  function handleDownloadSelect(provider: 'SERP_HAWK' | 'DAPROS') {
+  function handleDownloadSelect(provider: 'SERP_HAWK' | 'DAPROS' | 'SCM_BPO') {
     if (!downloadingQuote) return;
     const q = downloadingQuote;
     setDownloadingQuote(null);
-    // Use authenticated fetch (injects X-User-ID / X-Tenant-ID) so the backend
-    // can resolve the correct tenant for the quote, then trigger a file download.
-    fetch(`${API_BASE_URL}/quotes/${q.id}/pdf?provider=${provider}`)
+    const url = q.is_proposal
+      ? `${API_BASE_URL}/proposals/${q.id}/pdf?provider=${provider}`
+      : `${API_BASE_URL}/quotes/${q.id}/pdf?provider=${provider}`;
+
+    fetch(url)
       .then(res => {
         if (!res.ok) throw new Error(`PDF download failed (${res.status})`);
         return res.blob();
       })
       .then(blob => {
-        const url = URL.createObjectURL(blob);
+        const fileUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
-        a.download = `${q.quote_number || `quote-${q.id}`}.pdf`;
+        a.href = fileUrl;
+        a.download = `${q.quote_number || (q.is_proposal ? `proposal-${q.id}` : `quote-${q.id}`)}.pdf`;
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(url);
+        URL.revokeObjectURL(fileUrl);
+        setToast({ ok: true, msg: `${q.is_proposal ? "Proposal" : "Quote"} PDF downloaded successfully.` });
       })
-      .catch(err => console.error(err));
+      .catch(err => {
+        console.error(err);
+        setToast({ ok: false, msg: "Failed to download PDF. Please try again." });
+      });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -460,8 +560,8 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
 
       {/* Table */}
       <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl shadow-sm overflow-hidden">
-        <div className="hidden md:grid grid-cols-[auto_2fr_1.5fr_1fr_1fr_auto] gap-4 px-6 py-3 border-b border-slate-100 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-800/50">
-          {["#", "Title", "Lead / Client", "Amount", "Status", ""].map(h => (
+        <div className="hidden md:grid grid-cols-[auto_2fr_1.5fr_1.5fr_1fr_1fr_auto] gap-4 px-6 py-3 border-b border-slate-100 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-800/50">
+          {["#", "Title", "Lead / Client", "Sales Rep / Pipeline", "Amount", "Status", ""].map(h => (
             <p key={h} className="text-[10px] font-black uppercase tracking-widest text-slate-400">{h}</p>
           ))}
         </div>
@@ -476,16 +576,45 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
             </button>
           </div>
         ) : filtered.map((q, i) => (
-          <motion.div key={q.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}
+          <motion.div key={`${q.is_proposal ? 'p' : 'q'}-${q.id}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}
             onClick={() => openPreview(q)}
-            className="grid grid-cols-1 md:grid-cols-[auto_2fr_1.5fr_1fr_1fr_auto] gap-3 md:gap-4 items-center px-6 py-4 border-b border-slate-100 dark:border-zinc-800 last:border-0 hover:bg-slate-50 dark:hover:bg-zinc-800/40 group transition-colors cursor-pointer">
-            <span className="text-xs font-mono text-slate-400">{q.quote_number || `#${q.id}`}</span>
-            <p className="text-sm font-semibold text-slate-800 dark:text-zinc-100">{q.title}</p>
+            className="grid grid-cols-1 md:grid-cols-[auto_2fr_1.5fr_1.5fr_1fr_1fr_auto] gap-3 md:gap-4 items-center px-6 py-4 border-b border-slate-100 dark:border-zinc-800 last:border-0 hover:bg-slate-50 dark:hover:bg-zinc-800/40 group transition-colors cursor-pointer">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-mono text-slate-400">{q.quote_number || `#${q.id}`}</span>
+              <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full w-fit ${q.is_proposal ? "bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300" : "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300"}`}>
+                {q.is_proposal ? "Proposal" : "Quote"}
+              </span>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800 dark:text-zinc-100">{q.title}</p>
+              {q.public_uuid && (
+                <a
+                  href={`/p/${q.public_uuid}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 text-[11px] text-amber-600 hover:text-amber-700 font-medium hover:underline mt-0.5"
+                >
+                  <Link2 className="w-2.5 h-2.5" /> Live Proposal Link <ArrowUpRight className="w-2.5 h-2.5" />
+                </a>
+              )}
+            </div>
             <div className="flex items-center gap-1.5">
               <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
               <span className="text-xs text-slate-600 dark:text-zinc-300 truncate">
                 {q.client_name || q.lead_name || <span className="text-slate-400 italic">No contact</span>}
               </span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-1 text-xs text-slate-700 dark:text-zinc-200">
+                <Briefcase className="w-3 h-3 text-slate-400 shrink-0" />
+                <span className="truncate">{q.salesperson_name || "Auto-mapped"}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300">
+                  <TrendingUp className="w-2.5 h-2.5" /> {q.deal_stage || "Negotiation"}
+                </span>
+              </div>
             </div>
             <span className="text-sm font-black text-slate-800 dark:text-zinc-100">
               {currSymbol(q.currency || "MXN")}{(q.grand_total || 0).toFixed(2)}
@@ -496,15 +625,37 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
               {STATUSES.map(s => <option key={s}>{s}</option>)}
             </select>
             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all">
+              {q.public_uuid && (
+                <a
+                  href={`/p/${q.public_uuid}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  title="Open Live Public Link"
+                  className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                </a>
+              )}
               <button onClick={e => { e.stopPropagation(); openPreview(q); }} title="Preview Quote"
                 className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20">
                 <Eye className="w-3.5 h-3.5" />
               </button>
+              {q.status === 'Accepted' && (
+                <button
+                  onClick={e => { e.stopPropagation(); handleConvertToInvoice(q); }}
+                  disabled={convertingQuoteId === q.id}
+                  title="Convert to Invoice"
+                  className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 disabled:opacity-50"
+                >
+                  {convertingQuoteId === q.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FilePlus2 className="w-3.5 h-3.5" />}
+                </button>
+              )}
               <button onClick={e => { e.stopPropagation(); setDownloadingQuote(q); }} title="Download PDF"
                 className="p-1.5 rounded-lg bg-blue-500/10 text-blue-500 hover:bg-blue-500/20">
                 <Download className="w-3.5 h-3.5" />
               </button>
-              <button onClick={e => { e.stopPropagation(); handleDelete(q.id); }} title="Delete Quote"
+              <button onClick={e => { e.stopPropagation(); handleDelete(q); }} title="Delete Quote"
                 className="p-1.5 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20">
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -558,12 +709,15 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Currency</p>
                     <div className="flex bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl gap-1">
                       {[
-                        { code: "MXN", icon: BadgeDollarSign, label: "MXN ($)" },
-                        { code: "INR", icon: IndianRupee,     label: "INR (₹)" },
+                        { code: "USD", label: "USD ($)" },
+                        { code: "EUR", label: "EUR (€)" },
+                        { code: "GBP", label: "GBP (£)" },
+                        { code: "INR", label: "INR (₹)" },
+                        { code: "MXN", label: "MXN ($)" },
                       ].map(c => (
                         <button key={c.code} onClick={() => switchCurrency(c.code)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${form.currency === c.code ? "bg-white dark:bg-zinc-700 shadow text-amber-600" : "text-slate-500"}`}>
-                          <c.icon className="w-3.5 h-3.5" />{c.label}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${form.currency === c.code ? "bg-white dark:bg-zinc-700 shadow text-amber-600" : "text-slate-500 hover:text-slate-700"}`}>
+                          {c.label}
                         </button>
                       ))}
                     </div>
@@ -615,6 +769,21 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
                             </option>
                           ))}
                         </select>
+                        {(() => {
+                          const c = clients.find(cl => String(cl.id) === String(form.client_id));
+                          if (!c) return null;
+                          return (
+                            <div className="mt-2 p-2.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <Briefcase className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span>Sales Rep: <strong>{c.assignedEmployeeName || "Auto-assigned (Account Owner)"}</strong></span>
+                              </div>
+                              <span className="text-[10px] font-semibold px-2 py-0.5 bg-amber-200/60 dark:bg-amber-800/40 rounded-full text-amber-800 dark:text-amber-200">
+                                ⚡ Deals Pipeline: Auto-mapped to Negotiation
+                              </span>
+                            </div>
+                          );
+                        })()}
                         {clients.length === 0 && (
                           <p className="text-xs text-amber-600 mt-1">No clients found in database.</p>
                         )}
@@ -849,12 +1018,18 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
           <div className="bg-white dark:bg-zinc-900 rounded-2xl w-full max-w-sm shadow-2xl p-6 relative overflow-hidden border border-zinc-200 dark:border-zinc-800">
             <button onClick={() => setDownloadingQuote(null)} className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 bg-zinc-100 dark:bg-zinc-800/50 rounded-full transition-colors"><X className="w-5 h-5"/></button>
             <h3 className="text-xl font-black text-zinc-900 dark:text-white mb-2 tracking-tight">Download Quote</h3>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6 font-medium">Select the agency provider format for this PDF.</p>
             <div className="space-y-3">
+              <button onClick={() => handleDownloadSelect('SCM_BPO')} className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-900/10 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:border-amber-300 dark:hover:border-amber-700 transition-all text-left group">
+                <div>
+                  <div className="font-bold text-amber-900 dark:text-amber-300">SCM BPO Official Format</div>
+                  <div className="text-xs font-semibold text-amber-600/80 dark:text-amber-400/80">Corporate Executive Quotation (SCM Shipping Services)</div>
+                </div>
+                <Download className="w-5 h-5 text-amber-500 group-hover:text-amber-600 transition-colors" />
+              </button>
               <button onClick={() => handleDownloadSelect('SERP_HAWK')} className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-indigo-100 dark:border-indigo-900/30 bg-indigo-50/50 dark:bg-indigo-900/10 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:border-indigo-200 dark:hover:border-indigo-800 transition-all text-left group">
                 <div>
-                  <div className="font-bold text-indigo-900 dark:text-indigo-300">SERP Hawk</div>
-                  <div className="text-xs font-semibold text-indigo-600/70 dark:text-indigo-400/70">Formal Proforma (INR)</div>
+                  <div className="font-bold text-indigo-900 dark:text-indigo-300">SERP Hawk Format</div>
+                  <div className="text-xs font-semibold text-indigo-600/70 dark:text-indigo-400/70">Formal Proforma</div>
                 </div>
                 <Download className="w-5 h-5 text-indigo-400 group-hover:text-indigo-600 transition-colors" />
               </button>
@@ -979,6 +1154,8 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
                 {/* Meta */}
                 <div className="grid grid-cols-2 gap-3">
                   {[
+                    { label: "Sales Representative", value: previewQuote.salesperson_name || "Account Owner" },
+                    { label: "Deals Pipeline", value: previewQuote.deal_stage || "Negotiation" },
                     { label: "Valid Until", value: previewQuote.valid_until || "—" },
                     { label: "Currency", value: previewQuote.currency || "MXN" },
                     { label: "Created", value: new Date(previewQuote.created_at).toLocaleDateString("en-IN") },
@@ -991,13 +1168,31 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
                   ))}
                 </div>
 
+                {/* Live Public Link */}
+                {previewQuote.public_uuid && (
+                  <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-zinc-800/80 dark:to-zinc-800/80 border border-amber-200 dark:border-amber-900/40 flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-amber-950 dark:text-amber-200">Interactive Web Proposal / Quote</p>
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400">Clients can view, approve, and sign digitally</p>
+                    </div>
+                    <a
+                      href={`/p/${previewQuote.public_uuid}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold shadow-sm transition-colors"
+                    >
+                      <Link2 className="w-3.5 h-3.5" /> View Live <ArrowUpRight className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+
                 {/* Actions */}
                 <div className="flex gap-3 pt-2">
                   <button onClick={() => setDownloadingQuote(previewQuote)}
                     className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 text-white rounded-xl font-semibold text-sm hover:bg-amber-600 transition-colors">
                     <Download className="w-4 h-4" /> Download PDF
                   </button>
-                  <button onClick={() => handleDelete(previewQuote.id)}
+                  <button onClick={() => handleDelete(previewQuote)}
                     className="px-4 py-2.5 bg-red-50 text-red-600 rounded-xl font-semibold text-sm hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors">
                     <Trash2 className="w-4 h-4" />
                   </button>

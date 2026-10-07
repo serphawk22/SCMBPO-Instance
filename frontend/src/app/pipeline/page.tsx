@@ -7,8 +7,10 @@ import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
 import { Sidebar } from "@/components/Sidebar";
 import { 
-  Kanban, Plus, MoreVertical, DollarSign, Calendar, Clock, MapPin, Search, Pencil
+  Kanban, Plus, MoreVertical, DollarSign, Calendar, Clock, MapPin, Search, Pencil, FileText, X, ArrowUpRight,
+  Handshake, Check, Tag, Percent
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface Deal {
   id: number;
@@ -42,6 +44,15 @@ export default function PipelinePage() {
   const [newDeal, setNewDeal] = useState({ title: "", value: "", client_id: "", assigned_to: "", stage: "Lead", expected_close_date: "" });
   const [clients, setClients] = useState<{ id: number; email: string; companyName?: string }[]>([]);
   const [salesUsers, setSalesUsers] = useState<{ id: number; name: string; email: string }[]>([]);
+
+  const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
+  const [dealProposals, setDealProposals] = useState<any[]>([]);
+  const [loadingProposals, setLoadingProposals] = useState(false);
+  const [negotiations, setNegotiations] = useState<any[]>([]);
+  const [loadingNegotiations, setLoadingNegotiations] = useState(false);
+  const [activeDrawerTab, setActiveDrawerTab] = useState<"proposals" | "negotiations">("negotiations");
+  const [negForm, setNegForm] = useState({ party: "us", price: "", discount_pct: "", notes: "" });
+  const [savingNeg, setSavingNeg] = useState(false);
 
   useEffect(() => {
     if (role === "Client") {
@@ -155,6 +166,89 @@ export default function PipelinePage() {
     setShowAddModal(true);
   };
 
+  const openDealPanel = async (deal: Deal) => {
+    setSelectedDeal(deal);
+    setLoadingProposals(true);
+    setLoadingNegotiations(true);
+    try {
+      const token = localStorage.getItem("token");
+      const [propRes, negRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/deals/${deal.id}/proposals`),
+        fetch(`${API_BASE_URL}/deals/${deal.id}/negotiations`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (propRes.ok) {
+        const data = await propRes.json();
+        setDealProposals(data.proposals || []);
+      }
+      if (negRes.ok) {
+        const negData = await negRes.json();
+        setNegotiations(negData.negotiations || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingProposals(false);
+      setLoadingNegotiations(false);
+    }
+  };
+
+  const handleCreateNegotiation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDeal || !negForm.price) return;
+    setSavingNeg(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE_URL}/deals/${selectedDeal.id}/negotiations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          party: negForm.party,
+          price: parseFloat(negForm.price),
+          discount_pct: parseFloat(negForm.discount_pct || "0"),
+          notes: negForm.notes || null,
+        }),
+      });
+      if (res.ok) {
+        setNegForm({ party: "us", price: "", discount_pct: "", notes: "" });
+        const r = await fetch(`${API_BASE_URL}/deals/${selectedDeal.id}/negotiations`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const d = await r.json();
+          setNegotiations(d.negotiations || []);
+        }
+        fetchDeals();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSavingNeg(false);
+    }
+  };
+
+  const handleNegotiationAction = async (negId: number, action: "accept" | "reject") => {
+    if (!selectedDeal) return;
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE_URL}/deals/${selectedDeal.id}/negotiations/${negId}/${action}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const r = await fetch(`${API_BASE_URL}/deals/${selectedDeal.id}/negotiations`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const d = await r.json();
+          setNegotiations(d.negotiations || []);
+        }
+        fetchDeals();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const sortedDeals = [...deals].sort((a, b) => {
     if (sortBy === "highest_value") return (b.value || 0) - (a.value || 0);
     if (sortBy === "lowest_value") return (a.value || 0) - (b.value || 0);
@@ -242,11 +336,12 @@ export default function PipelinePage() {
                       key={deal.id}
                       draggable
                       onDragStart={(e) => handleDragStart(e, deal)}
+                      onClick={() => openDealPanel(deal)}
                       className="bg-white dark:bg-zinc-900 p-4 rounded-xl border border-slate-200 dark:border-zinc-700 shadow-sm cursor-grab active:cursor-grabbing hover:border-indigo-300 hover:shadow-md transition-all group"
                     >
                       <div className="flex justify-between items-start mb-2">
                         <h4 className="min-w-0 flex-1 break-words whitespace-normal pr-2 font-semibold leading-5 text-slate-800 dark:text-zinc-100" title={deal.title}>{deal.title}</h4>
-                        <button type="button" onClick={() => openEditDeal(deal)} title="Edit deal" className="text-slate-400 hover:text-indigo-600 dark:text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button type="button" onClick={(e) => { e.stopPropagation(); openEditDeal(deal); }} title="Edit deal" className="text-slate-400 hover:text-indigo-600 dark:text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Pencil className="w-4 h-4" />
                         </button>
                         <button type="button" className="hidden text-slate-400 hover:text-slate-600 dark:text-zinc-300">
@@ -335,6 +430,202 @@ export default function PipelinePage() {
             </div>
           </div>
         )}
+        {/* SIDE PANEL */}
+        <AnimatePresence>
+          {selectedDeal && (
+            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="absolute top-0 right-0 h-full w-full max-w-md bg-white dark:bg-zinc-900 shadow-2xl border-l border-slate-200 dark:border-zinc-800 flex flex-col z-40">
+              <div className="p-6 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between bg-slate-50 dark:bg-zinc-800/50">
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-zinc-100">{selectedDeal.title}</h2>
+                  <p className="text-sm font-medium text-slate-500 flex items-center gap-1 mt-1"><MapPin className="w-3.5 h-3.5"/> {selectedDeal.client_name}</p>
+                </div>
+                <button onClick={() => setSelectedDeal(null)} className="p-2 hover:bg-slate-200 dark:hover:bg-zinc-700 rounded-full transition-colors"><X className="w-5 h-5 text-slate-500" /></button>
+              </div>
+
+              <div className="p-6 flex-1 overflow-y-auto">
+                <div className="grid grid-cols-2 gap-4 mb-8">
+                  <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-800">
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-1">Deal Value</p>
+                    <p className="text-xl font-black text-emerald-700 dark:text-emerald-400">${selectedDeal.value.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-xl border border-indigo-100 dark:border-indigo-800">
+                    <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1">Sales Owner</p>
+                    <p className="text-sm font-bold text-indigo-700 dark:text-indigo-400">{selectedDeal.assigned_name || "Unassigned"}</p>
+                  </div>
+                </div>
+
+                {/* Drawer Tabs */}
+                <div className="flex border-b border-slate-200 dark:border-zinc-800 mb-6">
+                  <button
+                    onClick={() => setActiveDrawerTab("negotiations")}
+                    className={`flex-1 pb-3 text-xs font-bold border-b-2 transition-all flex items-center justify-center gap-1.5 ${activeDrawerTab === "negotiations" ? "border-indigo-600 text-indigo-600 dark:text-indigo-400" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+                  >
+                    <Handshake className="w-4 h-4" /> Negotiations ({negotiations.length})
+                  </button>
+                  <button
+                    onClick={() => setActiveDrawerTab("proposals")}
+                    className={`flex-1 pb-3 text-xs font-bold border-b-2 transition-all flex items-center justify-center gap-1.5 ${activeDrawerTab === "proposals" ? "border-indigo-600 text-indigo-600 dark:text-indigo-400" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+                  >
+                    <FileText className="w-4 h-4" /> Proposals ({dealProposals.length})
+                  </button>
+                </div>
+
+                {activeDrawerTab === "negotiations" ? (
+                  <div className="space-y-6">
+                    {/* Add Round Form */}
+                    <form onSubmit={handleCreateNegotiation} className="bg-slate-50 dark:bg-zinc-800/60 p-4 rounded-xl border border-slate-200 dark:border-zinc-700 space-y-3">
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-zinc-400">Offer / Counter-Offer</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Party</label>
+                          <select
+                            value={negForm.party}
+                            onChange={e => setNegForm({ ...negForm, party: e.target.value })}
+                            className="w-full text-xs px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg outline-none"
+                          >
+                            <option value="us">Our Offer</option>
+                            <option value="client">Client Counter</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Offer Price ($) *</label>
+                          <input
+                            type="number"
+                            required
+                            placeholder="0"
+                            value={negForm.price}
+                            onChange={e => setNegForm({ ...negForm, price: e.target.value })}
+                            className="w-full text-xs px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg outline-none"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Discount %</label>
+                          <input
+                            type="number"
+                            placeholder="0"
+                            value={negForm.discount_pct}
+                            onChange={e => setNegForm({ ...negForm, discount_pct: e.target.value })}
+                            className="w-full text-xs px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Notes</label>
+                          <input
+                            type="text"
+                            placeholder="Reason / Terms..."
+                            value={negForm.notes}
+                            onChange={e => setNegForm({ ...negForm, notes: e.target.value })}
+                            className="w-full text-xs px-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-lg outline-none"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={savingNeg || !negForm.price}
+                        className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors"
+                      >
+                        {savingNeg ? "Submitting..." : "Record Pricing Round"}
+                      </button>
+                    </form>
+
+                    {/* Negotiation Rounds History */}
+                    <div className="space-y-3">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Negotiation History</p>
+                      {loadingNegotiations ? (
+                        <p className="text-xs text-slate-400 text-center py-4">Loading rounds...</p>
+                      ) : negotiations.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-6 border border-dashed rounded-xl">No pricing rounds recorded yet.</p>
+                      ) : (
+                        negotiations.map((n: any) => (
+                          <div key={n.id} className="border border-slate-200 dark:border-zinc-700 rounded-xl p-3 bg-white dark:bg-zinc-900 shadow-sm space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300">
+                                Round {n.round_no} • {n.party === "us" ? "Our Offer" : "Client Counter"}
+                              </span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${n.status === "Accepted" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : n.status === "Rejected" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400" : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"}`}>
+                                {n.status}
+                              </span>
+                            </div>
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-base font-black text-slate-900 dark:text-white">${Number(n.price).toLocaleString()}</span>
+                              {n.discount_pct > 0 && (
+                                <span className="text-xs font-bold text-rose-500">-{n.discount_pct}% off</span>
+                              )}
+                            </div>
+                            {n.notes && <p className="text-xs text-slate-500 dark:text-zinc-400 italic">"{n.notes}"</p>}
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-zinc-800 text-[10px] text-slate-400">
+                              <span>By: {n.author_name || "Sales Rep"}</span>
+                              {n.status !== "Accepted" && n.status !== "Rejected" && (
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    onClick={() => handleNegotiationAction(n.id, "accept")}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold transition-colors"
+                                  >
+                                    Accept
+                                  </button>
+                                  <button
+                                    onClick={() => handleNegotiationAction(n.id, "reject")}
+                                    className="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[10px] font-bold transition-colors"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    {loadingProposals ? (
+                      <div className="py-10 text-center text-slate-400">Loading...</div>
+                    ) : dealProposals.length === 0 ? (
+                      <div className="py-10 text-center border-2 border-dashed border-slate-200 dark:border-zinc-700 rounded-xl">
+                        <p className="text-sm text-slate-500 font-medium">No proposals linked yet.</p>
+                        <p className="text-xs text-slate-400 mt-1">Create one from the Proposals module.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {dealProposals.map(p => (
+                          <div key={p.id} className="border border-slate-200 dark:border-zinc-700 rounded-xl p-4 hover:border-indigo-300 transition-colors bg-slate-50 dark:bg-zinc-800/50">
+                            <div className="flex justify-between items-start mb-2">
+                              <div>
+                                <p className="font-bold text-slate-800 dark:text-zinc-100">{p.title}</p>
+                                <p className="text-xs text-slate-500 font-mono mt-0.5">{p.quote_number}</p>
+                              </div>
+                              <span className={`text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-wider ${p.status === "Accepted" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                                {p.status}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between mt-4">
+                              <p className="text-lg font-black text-slate-700 dark:text-zinc-300">
+                                {p.currency === "INR" ? "₹" : p.currency === "EUR" ? "€" : p.currency === "GBP" ? "£" : "$"}{p.grand_total.toLocaleString()}
+                              </p>
+                              <a
+                                href={p.is_proposal ? `/proposals` : `/p/${p.public_uuid}`}
+                                target={p.is_proposal ? "_self" : "_blank"}
+                                rel="noopener noreferrer"
+                                className="text-xs font-bold text-indigo-600 flex items-center gap-1 hover:underline"
+                              >
+                                {p.is_proposal ? "View Proposal" : "View Web Proposal"} <ArrowUpRight className="w-3 h-3" />
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
       </div>
     </div>
   );

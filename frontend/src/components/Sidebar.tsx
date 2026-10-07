@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star
+  Trophy, Star, UserX, TrendingDown, TrendingUp, DollarSign
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -41,7 +41,8 @@ const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star,
+  UserX, TrendingDown, TrendingUp, DollarSign
 };
 
 interface SidebarProps {
@@ -66,6 +67,7 @@ const defaultSidebarSections = [
       { id: "item-contacts", name: "Contacts", icon: "Users", href: "/contacts", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-clients", name: "Clients", icon: "CheckCircle", href: "/clients", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-deals", name: "Deals", icon: "Briefcase", href: "/pipeline", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-dropped-clients", name: "Dropped Clients", icon: "UserX", href: "/dropped-clients", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
     ],
   },
   {
@@ -85,6 +87,7 @@ const defaultSidebarSections = [
     items: [
       { id: "item-teams", name: "Team Directory", icon: "Users", href: "/teams", roles: ["Admin", "Demo"] },
       { id: "item-leaderboard", name: "Leaderboard", icon: "Trophy", href: "/admin/leaderboard", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-ownership", name: "Ownership Report", icon: "Users", href: "/ownership", roles: ["Admin", "SalesManager", "Demo"] },
     ],
   },
   {
@@ -95,6 +98,28 @@ const defaultSidebarSections = [
     ],
   },
   {
+    id: "section-inventory",
+    heading: "INVENTORY",
+    items: [
+      { id: "item-inventory", name: "Inventory", icon: "Package", href: "/inventory", roles: ["Admin", "SalesManager", "Demo"] },
+    ],
+  },
+  {
+    id: "section-orders-billing",
+    heading: "ORDERS & BILLING",
+    items: [
+      { id: "item-orders", name: "Orders", icon: "ShoppingCart", href: "/orders", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-billing", name: "Billing", icon: "FileText", href: "/billing", roles: ["Admin", "SalesManager", "Demo"] },
+    ],
+  },
+  {
+    id: "section-proposals",
+    heading: "COMMERCIAL",
+    items: [
+      { id: "item-proposals", name: "Proposals & Quotes", icon: "FileEdit", href: "/proposals", roles: ["Admin", "SalesManager", "Demo", "Client"] },
+    ],
+  },
+  {
     id: "section-support",
     heading: "SUPPORT",
     items: [
@@ -102,10 +127,19 @@ const defaultSidebarSections = [
       { id: "item-solutions", name: "Solutions", icon: "BookOpen", href: "/support/solutions", roles: ["Admin", "SalesManager", "Demo"] },
     ],
   },
+  {
+    id: "section-finance",
+    heading: "FINANCE",
+    items: [
+      { id: "item-revenue", name: "Revenue Dashboard", icon: "TrendingUp", href: "/revenue", roles: ["Admin"] },
+      { id: "item-business-costs", name: "Business Costs", icon: "DollarSign", href: "/business-costs", roles: ["Admin"] },
+      { id: "item-lead-sources", name: "Lead Sources", icon: "Zap", href: "/lead-sources", roles: ["Admin"] },
+    ],
+  },
 ];
 
 // --- Sortable Section Component ---
-const DEFAULT_HEADINGS = ["CRM", "PROJECTS & ACTIVITIES", "TEAMS", "AI AGENTS", "SUPPORT"];
+const DEFAULT_HEADINGS = ["CRM", "PROJECTS & ACTIVITIES", "TEAMS", "AI AGENTS", "INVENTORY", "ORDERS & BILLING", "PROPOSALS", "SUPPORT"];
 const ITEM_KEY_OVERRIDES: Record<string, string> = {
   "item-teams": "team_directory",
   "item-products": "catalog",

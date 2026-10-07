@@ -11,7 +11,7 @@ export default function QuickAddFab() {
   const pathname = usePathname();
 
   // Hide on public pages or for Client/Supplier
-  if (!role || role === 'Client' || role === 'Supplier' || pathname?.startsWith('/login') || pathname?.startsWith('/demo_showcase')) {
+  if (!role || role === 'Client' || role === 'Supplier' || pathname?.startsWith('/login') || pathname?.startsWith('/demo_showcase') || pathname?.startsWith('/p/')) {
     return null;
   }
 

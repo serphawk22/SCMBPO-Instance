@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, User, Briefcase, CheckSquare, Target, X, Command } from 'lucide-react';
 import { API_BASE_URL } from '@/config';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useRole } from '@/context/RoleContext';
 import { useLanguage } from "@/context/LanguageContext";
 
@@ -14,7 +14,12 @@ export default function OmniSearch() {
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const { isAuthenticated } = useRole();
+
+  if (pathname?.startsWith('/p/')) {
+    return null;
+  }
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

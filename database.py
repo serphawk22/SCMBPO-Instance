@@ -13,35 +13,41 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Database URL from environment
-# Database URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///database.db")
 
-# Windows compatibility fix for psycopg2 and Neon SSL DLLs
-if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
-    # Use the direct compute host (no "-pooler."): the Neon pooler rejects
-    # startup options (statement_timeout) and cold-wake connections can hang
-    # indefinitely, whereas the direct endpoint wakes predictably in seconds.
-    DATABASE_URL = DATABASE_URL.replace("-pooler.", ".")
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+try:
+    import psycopg2
+    HAS_PSYCOPG2 = True
+except ImportError:
+    HAS_PSYCOPG2 = False
 
-# Create engine with SSL mode for Neon PostgreSQL
 connect_args = {}
 if DATABASE_URL and DATABASE_URL.startswith("postgresql"):
-    connect_args = {
-        "connect_timeout": 10,
-        "keepalives": 1,
-        "keepalives_idle": 30,
-        "keepalives_interval": 10,
-        "keepalives_count": 5,
-        "options": "-c statement_timeout=90000 -c lock_timeout=20000",
-    }
+    DATABASE_URL = DATABASE_URL.replace("-pooler.", ".")
+    if not HAS_PSYCOPG2:
+        # Windows compatibility fallback: use pg8000 if psycopg2 is blocked or not installed
+        import re
+        DATABASE_URL = re.sub(r'[?&]sslmode=[^&]*', '', DATABASE_URL)
+        DATABASE_URL = re.sub(r'[?&]channel_binding=[^&]*', '', DATABASE_URL)
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1)
+        DATABASE_URL = DATABASE_URL.replace("postgresql+psycopg2://", "postgresql+pg8000://", 1)
+        import ssl
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        connect_args = {"ssl_context": ssl_ctx}
+    else:
+        # Use standard psycopg2 driver
+        if DATABASE_URL.startswith("postgresql+pg8000://"):
+            DATABASE_URL = DATABASE_URL.replace("postgresql+pg8000://", "postgresql://", 1)
+
 engine = create_engine(
     DATABASE_URL,
     echo=False,
-    pool_pre_ping=False,          # disable: was causing 1 extra RTT per request
+    pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
-    pool_recycle=300,             # recycle connections every 5 min to keep them fresh
+    pool_recycle=300,
     connect_args=connect_args
 )
 
@@ -111,6 +117,7 @@ class User(SQLModel, table=True):
     is_active: bool = Field(default=True)
     status: str = Field(default="Active")
     sidebar_preferences: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))
+    timezone: Optional[str] = Field(default=None, max_length=64)  # SCM2-74: IANA tz, e.g. 'Asia/Kolkata'
     createdAt: datetime = Field(default_factory=datetime.utcnow, sa_column=Column("created_at", DateTime))
     updatedAt: datetime = Field(default_factory=datetime.utcnow, sa_column=Column("updated_at", DateTime))
     
@@ -421,6 +428,7 @@ class ClientProfile(SQLModel, table=True):
     # CRM Sales Intelligence Fields
     lead_score: Optional[int] = Field(default=None)  # 0-100
     lead_source: Optional[str] = Field(default=None, max_length=100)  # Cold Email, Referral, Inbound, etc.
+    lead_source_id: Optional[int] = Field(default=None)  # SCM2-62: FK-like link to lead_sources.id
     deal_value: Optional[float] = Field(default=None)
     industry: Optional[str] = Field(default=None, max_length=200)
     employee_count: Optional[str] = Field(default=None, max_length=100)
@@ -866,6 +874,8 @@ class Invoice(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     invoice_number: str = Field(max_length=50, index=True)
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
+    quote_id: Optional[int] = Field(default=None, foreign_key="quotes.id")
+    deal_id: Optional[int] = Field(default=None, foreign_key="deals.id")
     service_request_id: Optional[int] = Field(default=None, foreign_key="service_requests.id")
     amount: float = Field(default=0.0)
     tax: float = Field(default=0.0)
@@ -934,6 +944,8 @@ class Proposal(SQLModel, table=True):
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
     lead_id: Optional[int] = Field(default=None, foreign_key="leads.id")
     recipient_type: str = Field(default="client")  # "client" or "lead"
+    deal_id: Optional[int] = Field(default=None, foreign_key="deals.id")
+    public_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True, max_length=50)
     service_request_id: Optional[int] = Field(default=None, foreign_key="service_requests.id")
     content: Optional[str] = Field(default=None, sa_column=Column(Text))
     line_items: Optional[List] = Field(default_factory=list, sa_column=Column(JSON))
@@ -1009,6 +1021,10 @@ class Deal(SQLModel, table=True):
     assigned_to: Optional[int] = Field(default=None, foreign_key="users.id")
     stage: str = Field(default="Lead") # Lead, Discovery, Demo, Negotiation, Closed Won, Closed Lost
     expected_close_date: Optional[str] = Field(default=None, max_length=50)
+    # SCM2-56/58: negotiation + won-deal revenue tracking
+    final_value: Optional[float] = Field(default=None)   # agreed price after negotiation
+    currency: Optional[str] = Field(default="USD", max_length=10)
+    won_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -1104,6 +1120,7 @@ class Lead(SQLModel, table=True):
     phone: Optional[str] = Field(default=None, max_length=100)
     address: Optional[str] = Field(default=None, sa_column=Column(Text))
     source: Optional[str] = Field(default=None, max_length=100)
+    lead_source_id: Optional[int] = Field(default=None)  # SCM2-62: link to lead_sources.id
     owner_id: Optional[int] = Field(default=None, foreign_key="users.id")
     status: str = Field(default="New")
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -1175,6 +1192,8 @@ class Meeting(SQLModel, table=True):
     status: str = Field(default="Scheduled", max_length=50)  # Scheduled, Completed, Cancelled, No-show
     scheduled_at: Optional[datetime] = Field(default=None)
     duration_minutes: Optional[int] = Field(default=None)
+    meeting_link: Optional[str] = Field(default=None, max_length=1000)  # SCM2-72: video call URL
+    timezone: Optional[str] = Field(default=None, max_length=64)        # SCM2-74: organiser's IANA tz; scheduled_at stored in UTC
     host_id: Optional[int] = Field(default=None, foreign_key="users.id")
     lead_id: Optional[int] = Field(default=None, foreign_key="leads.id")
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
@@ -1234,6 +1253,8 @@ class CRMQuote(SQLModel, table=True):
     lead_id: Optional[int] = Field(default=None, foreign_key="leads.id")
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
     contact_id: Optional[int] = Field(default=None, foreign_key="contacts.id")
+    deal_id: Optional[int] = Field(default=None, foreign_key="deals.id")
+    public_uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), index=True, max_length=50)
     status: str = Field(default="Draft", max_length=50)  # Draft, Sent, Accepted, Rejected, Expired
     subtotal: float = Field(default=0.0)
     tax_total: float = Field(default=0.0)
@@ -1246,6 +1267,18 @@ class CRMQuote(SQLModel, table=True):
     owner_id: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProposalComment(SQLModel, table=True):
+    """Chat messages/negotiations for a specific quote/proposal"""
+    __tablename__ = "proposal_comments"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    quote_id: Optional[int] = Field(default=None, foreign_key="quotes.id", index=True)
+    proposal_id: Optional[int] = Field(default=None, foreign_key="proposals.id", index=True)
+    author_name: str = Field(max_length=255)
+    author_type: str = Field(default="client", max_length=50) # 'client' or 'internal'
+    content: str = Field(sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class SalesOrder(SQLModel, table=True):
@@ -1368,6 +1401,8 @@ def create_db_and_tables():
     """
     Create all database tables (drops existing tables first to ensure schema matches)
     """
+    if os.path.exists(".migration_done"):
+        return
     # Create all tables if they don't exist
     SQLModel.metadata.create_all(engine)
     
@@ -1750,3 +1785,156 @@ class APIUsageLog(SQLModel, table=True):
     user_agent: Optional[str] = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CRM Enhancement Models  (Phase 2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DroppedClient(SQLModel, table=True):
+    """Records of clients who have discontinued their relationship."""
+    __tablename__ = "dropped_clients"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int
+    client_id: Optional[int] = Field(default=None)
+    company_name: str = Field(max_length=255)
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    reason_category: Optional[str] = Field(default="Other", max_length=100)
+    dropped_by: Optional[int] = Field(default=None)
+    last_revenue: Optional[float] = Field(default=0)
+    relationship_months: Optional[int] = Field(default=0)
+    reactivation_potential: Optional[str] = Field(default="Low", max_length=50)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    dropped_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
+class SalespersonHistory(SQLModel, table=True):
+    """Tracks salesperson reassignments for clients."""
+    __tablename__ = "salesperson_history"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int
+    client_id: int
+    from_user_id: Optional[int] = Field(default=None)
+    to_user_id: Optional[int] = Field(default=None)
+    from_user_name: Optional[str] = Field(default=None, max_length=200)
+    to_user_name: Optional[str] = Field(default=None, max_length=200)
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    reassigned_by: Optional[int] = Field(default=None)
+    reassigned_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
+class ExcelCampaign(SQLModel, table=True):
+    """Email campaigns created from uploaded Excel/CSV files."""
+    __tablename__ = "excel_campaigns"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: int
+    campaign_name: str = Field(max_length=255)
+    template_subject: Optional[str] = Field(default=None, max_length=500)
+    template_body: Optional[str] = Field(default=None, sa_column=Column(Text))
+    total_records: Optional[int] = Field(default=0)
+    sent_count: Optional[int] = Field(default=0)
+    failed_count: Optional[int] = Field(default=0)
+    status: Optional[str] = Field(default="Pending", max_length=50)
+    created_by: Optional[int] = Field(default=None)
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = Field(default=None)
+
+
+class ExcelCampaignRecord(SQLModel, table=True):
+    """Individual recipient records within an excel campaign."""
+    __tablename__ = "excel_campaign_records"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    campaign_id: int
+    email: str = Field(max_length=255)
+    name: Optional[str] = Field(default=None, max_length=255)
+    company: Optional[str] = Field(default=None, max_length=255)
+    status: Optional[str] = Field(default="Pending", max_length=50)
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    sent_at: Optional[datetime] = Field(default=None)
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCM2 Feature Models (Lead Sources, Revenue & Costs, Negotiation, Ownership)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LeadSource(SQLModel, table=True):
+    """SCM2-62/63: Configurable lead sources (Facebook, Google, LinkedIn, Referral, Conference...)."""
+    __tablename__ = "lead_sources"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=120)
+    channel: str = Field(default="Other", max_length=50)  # Social, Paid, Referral, Event, Organic, Direct, Other
+    utm_key: Optional[str] = Field(default=None, max_length=120)  # matched against utm_source (lower-case)
+    color: Optional[str] = Field(default="#6366f1", max_length=20)
+    monthly_cost: float = Field(default=0.0)  # marketing spend, used for cost-per-lead / ROI
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BusinessCost(SQLModel, table=True):
+    """SCM2-59: Salaries and other business costs."""
+    __tablename__ = "business_costs"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=255)
+    category: str = Field(default="Other", max_length=50)  # Salary, Rent, Software, Marketing, Utilities, Travel, Other
+    amount: float = Field(default=0.0)
+    currency: str = Field(default="USD", max_length=10)
+    cost_date: str = Field(max_length=10, index=True)  # YYYY-MM-DD (month the cost applies to)
+    is_recurring: bool = Field(default=False)  # monthly recurring: counted every month from cost_date (until end_date)
+    end_date: Optional[str] = Field(default=None, max_length=10)
+    employee_id: Optional[int] = Field(default=None)  # for salary rows
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_by: Optional[int] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DealNegotiation(SQLModel, table=True):
+    """SCM2-56: Negotiation rounds / pricing changes for a deal."""
+    __tablename__ = "deal_negotiations"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    deal_id: int = Field(index=True)
+    round_no: int = Field(default=1)
+    party: str = Field(default="us", max_length=20)  # us (our offer) | client (counter-offer)
+    price: float = Field(default=0.0)
+    discount_pct: float = Field(default=0.0)
+    status: str = Field(default="Proposed", max_length=30)  # Proposed, Countered, Accepted, Rejected
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    author_id: Optional[int] = Field(default=None)
+    author_name: Optional[str] = Field(default=None, max_length=200)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OwnershipHistory(SQLModel, table=True):
+    """SCM2-52/53: Ownership changes for leads and clients."""
+    __tablename__ = "ownership_history"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    entity_type: str = Field(max_length=20, index=True)  # lead | client
+    entity_id: int = Field(index=True)
+    entity_name: Optional[str] = Field(default=None, max_length=255)
+    from_user_id: Optional[int] = Field(default=None)
+    to_user_id: Optional[int] = Field(default=None)
+    from_user_name: Optional[str] = Field(default=None, max_length=200)
+    to_user_name: Optional[str] = Field(default=None, max_length=200)
+    reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    changed_by: Optional[int] = Field(default=None)
+    changed_by_name: Optional[str] = Field(default=None, max_length=200)
+    changed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StockMovement(SQLModel, table=True):
+    """SCM2-54: Stock in/out log for inventory items."""
+    __tablename__ = "stock_movements"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    item_id: int = Field(index=True)
+    change: float = Field(default=0.0)  # +in / -out
+    reason: str = Field(default="Adjustment", max_length=50)  # Purchase, Sale, Adjustment, Return, Damage
+    reference: Optional[str] = Field(default=None, max_length=255)
+    balance_after: Optional[float] = Field(default=None)
+    author_id: Optional[int] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

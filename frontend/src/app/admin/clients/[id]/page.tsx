@@ -6,11 +6,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Activity, MessageSquare, StickyNote, Building2, ChevronDown,
   Target, HeartPulse, LayoutDashboard, Users,
-  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar
+  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, UserX
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ResultCard } from '@/components/email-agent/ResultCard';
+import DropClientModal from '@/components/DropClientModal';
 
 import { API_BASE_URL } from '@/config';
 import { useRole } from '@/context/RoleContext';
@@ -95,7 +96,7 @@ function CollapsibleSection({ title, icon: Icon, count, defaultOpen = false, acc
 }
 
 // ─── Overview Tab — premium light ──────────────────────────────────────────
-function OverviewTab({ client, employees, serviceRequests, activities, timeline, research, notes, conversations, clientId, onNotesRefresh, onConversationsRefresh, emails, onRefresh, onActivitySelect }: any) {
+function OverviewTab({ client, employees, serviceRequests, activities, timeline, research, notes, conversations, clientId, onNotesRefresh, onConversationsRefresh, emails, onRefresh, onActivitySelect, onDropClient, onViewDropDetails }: any) {
   const { t, language } = useLanguage();
   const recentActivities = (activities || []).slice(0, 8);
 
@@ -155,6 +156,67 @@ function OverviewTab({ client, employees, serviceRequests, activities, timeline,
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 14, background: 'var(--bg-secondary)', minHeight: '100%' }}>
+
+      {/* Dropped Client Banner */}
+      {client?.status === 'Dropped' ? (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-rose-50 to-red-50 dark:from-rose-950/40 dark:to-red-950/20 border border-rose-200 dark:border-rose-900/50 shadow-sm flex items-start gap-4">
+          <div className="p-3 rounded-xl bg-rose-500 text-white shadow-md shadow-rose-500/20 shrink-0 mt-0.5">
+            <UserX size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-900/50 px-2 py-0.5 rounded-md">
+                  Discontinued Relationship
+                </span>
+                <h3 className="text-base font-bold text-slate-900 dark:text-zinc-100 mt-1">
+                  This client is currently marked as Dropped
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {onViewDropDetails && (
+                  <button
+                    type="button"
+                    onClick={onViewDropDetails}
+                    className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-zinc-800 border border-rose-200 dark:border-rose-900/40 text-rose-700 dark:text-rose-300 text-xs font-bold hover:bg-rose-50 dark:hover:bg-zinc-700 transition-all shadow-sm"
+                  >
+                    View Drop Reason & Details
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-zinc-400 mt-1.5 leading-relaxed">
+              Loss retention records are preserved for historical reporting and reactivation targeting. You can view recorded reasons or reactivate this client anytime.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="p-4 rounded-2xl bg-white dark:bg-zinc-900 border border-slate-200/80 dark:border-zinc-800 flex items-center justify-between gap-4 flex-wrap shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center font-black text-xs">
+              ✓
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                Relationship Status: <span className="text-emerald-600 font-black">Active Client</span>
+              </p>
+              <p className="text-[11px] text-slate-400">
+                If this client cancels or discontinues services, mark them as dropped to record reasons.
+              </p>
+            </div>
+          </div>
+          {onDropClient && (
+            <button
+              type="button"
+              onClick={onDropClient}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/50 text-xs font-bold transition-all shadow-sm active:scale-95"
+            >
+              <UserX size={14} className="text-rose-500" />
+              <span>Client is Dropped</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Company Overview */}
       {research?.company_overview && (
@@ -720,6 +782,8 @@ export default function AdminClientDetailPage() {
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
   const [newUserForm, setNewUserForm] = useState({ name: '', email: '', role: 'SalesManager', password: 'password123' });
   const [selectedActivity, setSelectedActivity] = useState<any>(null);
+  const [isDropModalOpen, setIsDropModalOpen] = useState(false);
+  const [dropModalMode, setDropModalMode] = useState<'drop' | 'view'>('drop');
 
   // Force light theme always — no dark mode on this page
   useEffect(() => {
@@ -903,6 +967,8 @@ export default function AdminClientDetailPage() {
         onScheduleMeeting={() => router.push('/meetings')}
         onSendEmail={() => client?.email ? window.location.href = `mailto:${client.email}` : alert(language === 'es' ? 'No hay correo' : 'No email found for this client')}
         onCreateOpportunity={() => {}}
+        onDropClient={() => { setDropModalMode('drop'); setIsDropModalOpen(true); }}
+        onViewDropDetails={() => { setDropModalMode('view'); setIsDropModalOpen(true); }}
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
       />
@@ -966,6 +1032,8 @@ export default function AdminClientDetailPage() {
                     onConversationsRefresh={() => fetch(`${API_BASE_URL}/clients/${id}/conversations`).then(async r => { if (!r.ok) throw new Error(); return r.json(); }).then(d => setConversations(d.conversations || []))}
                     onActivitySelect={setSelectedActivity}
                     onRefresh={fetchClient}
+                    onDropClient={() => { setDropModalMode('drop'); setIsDropModalOpen(true); }}
+                    onViewDropDetails={() => { setDropModalMode('view'); setIsDropModalOpen(true); }}
                   />
                 )}
                 {activeTab === 'ai_data' && (
@@ -1152,6 +1220,20 @@ export default function AdminClientDetailPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── Drop Client Modal ────────────────────────────────────────── */}
+      {client && (
+        <DropClientModal
+          isOpen={isDropModalOpen}
+          onClose={() => setIsDropModalOpen(false)}
+          client={client}
+          mode={dropModalMode}
+          onSuccess={() => {
+            fetchAll();
+            setIsDropModalOpen(false);
+          }}
+        />
+      )}
 
     </div>
   );

@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import {
   Building2, Star, User, ArrowLeft, Plus, MessageSquare,
   Calendar, Mail, Target, Zap,
-  TrendingUp, Phone, Globe, Sun, Moon, MapPin, Linkedin
+  TrendingUp, Phone, Globe, Sun, Moon, MapPin, Linkedin, UserX
 } from 'lucide-react';
 import { useLanguage } from '@/context/LanguageContext';
 
@@ -18,6 +18,8 @@ interface ClientHeaderProps {
   onScheduleMeeting: () => void;
   onSendEmail: () => void;
   onCreateOpportunity: () => void;
+  onDropClient?: () => void;
+  onViewDropDetails?: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
 }
@@ -26,6 +28,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; dot: string }> =
   Active:   { bg: 'bg-emerald-100 ', text: 'text-emerald-700 ', dot: 'bg-emerald-500' },
   Hold:     { bg: 'bg-amber-100 ',   text: 'text-amber-700 ',   dot: 'bg-amber-500'   },
   Pending:  { bg: 'bg-blue-100 ',    text: 'text-blue-700 ',    dot: 'bg-blue-500'    },
+  Dropped:  { bg: 'bg-rose-100 dark:bg-rose-950/40 ', text: 'text-rose-700 dark:text-rose-300 ', dot: 'bg-rose-500' },
   Inactive: { bg: 'bg-slate-100 dark:bg-zinc-800 ',     text: 'text-slate-600 dark:text-zinc-300 ',  dot: 'bg-slate-400'   },
 };
 
@@ -51,7 +54,7 @@ function LeadScoreRing({ score }: { score: number }) {
 export default function ClientHeader({
   client, employees, onBack, onAddNote, onAddConversation,
   onScheduleMeeting, onSendEmail,
-  onCreateOpportunity, darkMode, onToggleDarkMode
+  onCreateOpportunity, onDropClient, onViewDropDetails, darkMode, onToggleDarkMode
 }: ClientHeaderProps) {
   const { language } = useLanguage();
   const statusCfg = STATUS_CONFIG[client?.status] || STATUS_CONFIG.Inactive;
@@ -81,13 +84,45 @@ export default function ClientHeader({
       <div className="w-full px-6 py-4">
 
         {/* Row 1: Breadcrumb + Controls */}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <button
             onClick={onBack}
             className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-zinc-400 hover:text-indigo-600 transition-colors font-bold tracking-tight"
           >
             <ArrowLeft size={16} className="text-slate-400" /> {language === 'es' ? 'Volver a Clientes' : 'Back to Clients'}
           </button>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-2">
+            {client?.status === 'Dropped' ? (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold shadow-sm shadow-rose-500/20">
+                  <UserX size={14} /> Client Dropped
+                </span>
+                {onViewDropDetails && (
+                  <button
+                    type="button"
+                    onClick={onViewDropDetails}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40 text-xs font-bold transition-all shadow-sm"
+                  >
+                    View Drop Details
+                  </button>
+                )}
+              </div>
+            ) : (
+              onDropClient && (
+                <button
+                  type="button"
+                  onClick={onDropClient}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 text-xs font-bold transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer"
+                  title="Mark client as dropped and record drop reasons"
+                >
+                  <UserX size={14} className="text-rose-500" />
+                  <span>Client is Dropped</span>
+                </button>
+              )
+            )}
+          </div>
         </div>
 
         {/* Row 2: Main header - Company identity + Contact Info + Score */}

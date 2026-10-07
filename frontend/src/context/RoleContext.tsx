@@ -143,7 +143,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!loading) {
-      if (!isAuthenticated && pathname !== '/login' && pathname !== '/signup' && pathname !== '/' && !pathname?.startsWith('/demo_showcase') && pathname !== '/reset-password') {
+      if (!isAuthenticated && pathname !== '/login' && pathname !== '/signup' && pathname !== '/' && !pathname?.startsWith('/demo_showcase') && pathname !== '/reset-password' && !pathname?.startsWith('/p/')) {
         router.replace('/login');
       } else if (isAuthenticated && (pathname === '/login' || pathname === '/signup')) {
         if (user?.role === 'Supplier') {
