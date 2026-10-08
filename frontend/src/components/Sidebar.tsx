@@ -102,20 +102,8 @@ const defaultSidebarSections = [
     heading: "INVENTORY",
     items: [
       { id: "item-inventory", name: "Inventory", icon: "Package", href: "/inventory", roles: ["Admin", "SalesManager", "Demo"] },
-    ],
-  },
-  {
-    id: "section-orders-billing",
-    heading: "ORDERS & BILLING",
-    items: [
       { id: "item-orders", name: "Orders", icon: "ShoppingCart", href: "/orders", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-billing", name: "Billing", icon: "FileText", href: "/billing", roles: ["Admin", "SalesManager", "Demo"] },
-    ],
-  },
-  {
-    id: "section-proposals",
-    heading: "COMMERCIAL",
-    items: [
       { id: "item-proposals", name: "Proposals & Quotes", icon: "FileEdit", href: "/proposals", roles: ["Admin", "SalesManager", "Demo", "Client"] },
     ],
   },
@@ -139,7 +127,7 @@ const defaultSidebarSections = [
 ];
 
 // --- Sortable Section Component ---
-const DEFAULT_HEADINGS = ["CRM", "PROJECTS & ACTIVITIES", "TEAMS", "AI AGENTS", "INVENTORY", "ORDERS & BILLING", "PROPOSALS", "SUPPORT"];
+const DEFAULT_HEADINGS = ["CRM", "PROJECTS & ACTIVITIES", "TEAMS", "AI AGENTS", "INVENTORY", "SUPPORT"];
 const ITEM_KEY_OVERRIDES: Record<string, string> = {
   "item-teams": "team_directory",
   "item-products": "catalog",
@@ -396,7 +384,9 @@ export function Sidebar({ role }: SidebarProps) {
         const data = await res.json();
         if (data.ok && data.sidebar_preferences) {
           if (data.sidebar_preferences.sections) {
-            const savedSections = data.sidebar_preferences.sections;
+            const defaultSectionIds = new Set(defaultSidebarSections.map(s => s.id));
+            // Drop sections that no longer exist in defaults (e.g. removed/merged groups)
+            const savedSections = data.sidebar_preferences.sections.filter((s: any) => defaultSectionIds.has(s.id));
             const savedSectionIds = new Set(savedSections.map((s: any) => s.id));
             const missingSections = defaultSidebarSections.filter(s => !savedSectionIds.has(s.id));
             

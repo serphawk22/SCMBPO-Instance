@@ -22,6 +22,7 @@ interface ProposalComment {
 }
 
 interface Proposal {
+  id?: number;
   quote_number: string;
   title: string;
   status: string;
@@ -57,6 +58,30 @@ export default function PublicProposalPage() {
   const [sendingComment, setSendingComment] = useState(false);
   
   const [authorName, setAuthorName] = useState("");
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadPDF = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/public/proposals/${uuid}/pdf`);
+      if (!res.ok) throw new Error("PDF unavailable");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${proposal?.quote_number || "proposal"}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    } catch (err) {
+      console.error(err);
+      alert("Could not download the PDF. Please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  };
   
   const fetchProposal = async () => {
     try {
@@ -235,8 +260,12 @@ export default function PublicProposalPage() {
               </div>
             )}
             
-            <button className="w-full mt-3 flex items-center justify-center gap-2 bg-white dark:bg-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 font-bold py-3 px-4 rounded-xl border border-slate-200 dark:border-zinc-700 shadow-sm transition-all active:scale-95">
-              <Download className="w-4 h-4" /> Download PDF
+            <button
+              onClick={handleDownloadPDF}
+              disabled={downloading || !proposal?.id}
+              className="w-full mt-3 flex items-center justify-center gap-2 bg-white dark:bg-zinc-800 hover:bg-slate-50 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-200 font-bold py-3 px-4 rounded-xl border border-slate-200 dark:border-zinc-700 shadow-sm transition-all active:scale-95 disabled:opacity-60 disabled:active:scale-100"
+            >
+              {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download PDF
             </button>
           </div>
 

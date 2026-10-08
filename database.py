@@ -40,11 +40,26 @@ if DATABASE_URL and DATABASE_URL.startswith("postgresql"):
         # Use standard psycopg2 driver
         if DATABASE_URL.startswith("postgresql+pg8000://"):
             DATABASE_URL = DATABASE_URL.replace("postgresql+pg8000://", "postgresql://", 1)
+        # Fail fast instead of hanging the app: bound new connection attempts and
+        # detect dead peers via TCP keepalive (a stale connection otherwise blocks
+        # pool_pre_ping for many minutes and stalls every request).
+        connect_args = {
+            "connect_timeout": 10,
+            "keepalives": 1,
+            "keepalives_idle": 20,
+            "keepalives_interval": 5,
+            "keepalives_count": 3,
+        }
 
 engine = create_engine(
     DATABASE_URL,
     echo=False,
-    pool_pre_ping=True,
+    # pool_pre_ping costs a full DB round trip on every checkout (~0.3s over the
+    # high-latency link to Neon) and could block for minutes on a dead peer.
+    # TCP keepalives (connect_args above) + pool_recycle detect dead connections
+    # instead, so pre-ping is off and connections are reused LIFO (hottest first).
+    pool_pre_ping=False,
+    pool_use_lifo=True,
     pool_size=5,
     max_overflow=10,
     pool_recycle=300,
@@ -875,6 +890,7 @@ class Invoice(SQLModel, table=True):
     invoice_number: str = Field(max_length=50, index=True)
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
     quote_id: Optional[int] = Field(default=None, foreign_key="quotes.id")
+    proposal_id: Optional[int] = Field(default=None, foreign_key="proposals.id", index=True)
     deal_id: Optional[int] = Field(default=None, foreign_key="deals.id")
     service_request_id: Optional[int] = Field(default=None, foreign_key="service_requests.id")
     amount: float = Field(default=0.0)

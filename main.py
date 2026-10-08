@@ -165,7 +165,13 @@ def _add_tenant_filter(execute_state):
         # A simple check: if it's a Select, we can filter. 
         # For simplicity and safety without breaking complex joins, we can traverse the entities
         if execute_state.is_select:
-            for entity in execute_state.statement.column_descriptions:
+            stmt = execute_state.statement
+            if not hasattr(stmt, "column_descriptions"):
+                # CompoundSelect (UNION / UNION ALL) has no column_descriptions;
+                # callers issuing compound queries must apply tenant scoping
+                # explicitly in their WHERE clauses.
+                return
+            for entity in stmt.column_descriptions:
                 model = entity.get("type") or entity.get("entity")
                 if hasattr(model, "__tablename__") and model.__tablename__ not in global_tables:
                     if hasattr(model, "tenant_id"):
@@ -378,6 +384,11 @@ from modules.api_tracker import current_client_id, current_salesperson_id, curre
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+# Short-lived cache of user -> (role, tenant_id) lookups used by the middleware
+# below. Values: user_id -> (monotonic_ts, found, role, tenant_id).
+_USER_TENANT_CACHE: Dict[int, tuple] = {}
+
+
 class APIIntelligenceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Reset context for this request
@@ -407,23 +418,44 @@ class APIIntelligenceMiddleware(BaseHTTPMiddleware):
                     
         # Now securely resolve tenant_id based on the authenticated user.
         # This prevents malicious spoofing of X-Tenant-ID and fixes legacy missing headers.
+        # NOTE: the DB lookup runs in a worker thread — doing sync DB I/O directly in
+        # this async middleware would block the event loop and stall the whole server
+        # whenever the database is slow to respond. Results are cached briefly so the
+        # per-request cost over a high-latency DB link is ~0 instead of 2 round trips.
         user_id_val = current_salesperson_id.get()
         tenant_header = request.headers.get("X-Tenant-ID")
-        
+
         if user_id_val:
-            with Session(engine) as session:
-                user_obj = session.get(User, user_id_val)
-                if user_obj and user_obj.role != "SuperAdmin":
-                    # Force tenant_id to be the user's actual tenant in the DB
-                    current_tenant_id.set(user_obj.tenant_id)
-                elif user_obj and user_obj.role == "SuperAdmin":
-                    # SuperAdmins can optionally impersonate a tenant via header
-                    if tenant_header and tenant_header.isdigit():
-                        current_tenant_id.set(int(tenant_header))
-                    else:
-                        current_tenant_id.set(None)
+            import time as _time
+            _now = _time.monotonic()
+            _cached = _USER_TENANT_CACHE.get(user_id_val)
+            if _cached and _now - _cached[0] < 60.0:
+                found, role, user_tenant = _cached[1], _cached[2], _cached[3]
+            else:
+                def _load_user_role_tenant(uid: int):
+                    with Session(engine) as session:
+                        u = session.get(User, uid)
+                        if u is None:
+                            return (False, None, None)
+                        return (True, u.role, u.tenant_id)
+
+                from anyio import to_thread as _to_thread
+                found, role, user_tenant = await _to_thread.run_sync(_load_user_role_tenant, user_id_val)
+                if len(_USER_TENANT_CACHE) > 1024:
+                    _USER_TENANT_CACHE.clear()
+                _USER_TENANT_CACHE[user_id_val] = (_now, found, role, user_tenant)
+
+            if found and role != "SuperAdmin":
+                # Force tenant_id to be the user's actual tenant in the DB
+                current_tenant_id.set(user_tenant)
+            elif found and role == "SuperAdmin":
+                # SuperAdmins can optionally impersonate a tenant via header
+                if tenant_header and tenant_header.isdigit():
+                    current_tenant_id.set(int(tenant_header))
                 else:
                     current_tenant_id.set(None)
+            else:
+                current_tenant_id.set(None)
         else:
             # Unauthenticated requests CANNOT be given SuperAdmin access (None).
             # Force to an invalid tenant ID so they see nothing instead of everything.
@@ -617,6 +649,17 @@ def _run_startup_migrations():
 def on_startup():
     patch_openai()
     import os
+    # Unconditional, idempotent migration (safe to run on every boot — the
+    # .migration_done flag below gates the one-time migration block only).
+    try:
+        from sqlalchemy import text as _text
+        from database import engine as _engine
+        with _engine.connect() as conn:
+            conn.execute(_text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id);"))
+            conn.execute(_text("CREATE INDEX IF NOT EXISTS ix_invoices_proposal_id ON invoices (proposal_id);"))
+            conn.commit()
+    except Exception as e:
+        print(f"Invoices proposal_id migration error: {e}")
     if not os.path.exists(".migration_done"):
         try:
             create_db_and_tables()
@@ -1908,9 +1951,15 @@ def _user_dict(u: User) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "phone": getattr(u, "phone", None), "role": _normalize_role(u.role), "tenant_id": u.tenant_id}
 
 
-def _client_dict(cp: ClientProfile, session: Session) -> dict:
-    user = session.get(User, cp.userId) if cp.userId else None
-    employee = session.get(User, cp.assignedEmployeeId) if cp.assignedEmployeeId else None
+def _client_dict(cp: ClientProfile, session: Session, users: Optional[Dict[int, User]] = None, last_activities: Optional[Dict[int, ActivityLog]] = None) -> dict:
+    # Batch lookups: callers rendering many clients (e.g. /clients list) pass in
+    # prefetched maps; single-object callers get one combined query instead of
+    # one round trip per relationship (each round trip costs ~0.3s to Neon).
+    if users is None:
+        _uids = [u for u in (cp.userId, cp.assignedEmployeeId) if u]
+        users = {u.id: u for u in session.exec(select(User).where(User.id.in_(_uids))).all()} if _uids else {}
+    user = users.get(cp.userId) if cp.userId else None
+    employee = users.get(cp.assignedEmployeeId) if cp.assignedEmployeeId else None
     cf = cp.customFields or {}
     sd = cf.get("sheet_data", {})
 
@@ -1943,7 +1992,10 @@ def _client_dict(cp: ClientProfile, session: Session) -> dict:
     phone           = _get(cp.phone, "Contact", "Phone", "Phone Number", "phone_number", "phone")
     country         = _get(cp.address, "Country", "country", "Region")
 
-    last_act_log = session.exec(select(ActivityLog).where(ActivityLog.clientId == cp.id).order_by(ActivityLog.createdAt.desc())).first()
+    if last_activities is not None:
+        last_act_log = last_activities.get(cp.id)
+    else:
+        last_act_log = session.exec(select(ActivityLog).where(ActivityLog.clientId == cp.id).order_by(ActivityLog.createdAt.desc())).first()
 
     return {
         "id": cp.id,
@@ -2941,8 +2993,21 @@ def list_clients(
 
     total = session.exec(count_q).one()
     clients = session.exec(q.order_by(ClientProfile.id.desc()).offset((page - 1) * per_page).limit(per_page)).all()
+    # Prefetch users and last-activity in 2 queries instead of 3 per client
+    # (was 3N round trips to a ~300ms-latency DB = tens of seconds for a page).
+    _uids = set()
+    for c in clients:
+        if c.userId: _uids.add(c.userId)
+        if c.assignedEmployeeId: _uids.add(c.assignedEmployeeId)
+    _users = {u.id: u for u in session.exec(select(User).where(User.id.in_(_uids))).all()} if _uids else {}
+    _last_act: Dict[int, ActivityLog] = {}
+    _cids = [c.id for c in clients]
+    if _cids:
+        for a in session.exec(select(ActivityLog).where(ActivityLog.clientId.in_(_cids)).order_by(ActivityLog.createdAt.desc())).all():
+            if a.clientId not in _last_act:
+                _last_act[a.clientId] = a
     return {
-        "clients": [_client_dict(c, session) for c in clients],
+        "clients": [_client_dict(c, session, users=_users, last_activities=_last_act) for c in clients],
         "total": total,
         "page": page,
         "per_page": per_page,
@@ -6792,65 +6857,111 @@ def dashboard_stats(
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/clients/{client_id}/timeline")
 def client_timeline(client_id: int, session: Session = Depends(get_session)):
-    """Unified timeline: activities, emails, calls, invoices, milestones, files."""
+    """Unified timeline: activities, emails, calls, invoices, milestones, files.
+
+    All six sources come back in ONE UNION ALL query — six separate round trips
+    to the high-latency DB (~0.3s each) made every client page load take ~3s.
+    """
+    from sqlalchemy import literal, cast, String, union_all
+
     cp = session.get(ClientProfile, client_id)
     if not cp:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    # The ORM tenant-filter listener can't rewrite compound (UNION) statements,
+    # so scope every branch explicitly — same semantics as the listener
+    # (None = SuperAdmin/no filter, -1 = unauthenticated/hide everything).
+    _tenant_id = current_tenant_id.get()
+
+    def _tenant_scope(model, q):
+        if _tenant_id is not None and hasattr(model, "tenant_id"):
+            return q.where(model.tenant_id == _tenant_id)
+        return q
+
+    q_activity = (
+        select(
+            literal("activity").label("type"), ActivityLog.id.label("eid"),
+            cast(ActivityLog.action, String).label("f1"),
+            cast(ActivityLog.method, String).label("f2"),
+            cast(ActivityLog.content, String).label("f3"),
+            ActivityLog.createdAt.label("when"),
+        ).where(ActivityLog.clientId == client_id)
+    )
+    q_email = (
+        select(
+            literal("email").label("type"), SentEmail.id.label("eid"),
+            cast(SentEmail.subject, String).label("f1"),
+            cast(SentEmail.to_email, String).label("f2"),
+            literal(None, type_=String).label("f3"),
+            SentEmail.sent_at.label("when"),
+        ).where(SentEmail.client_id == client_id)
+    )
+    q_call = (
+        select(
+            literal("call").label("type"), CallLog.id.label("eid"),
+            cast(CallLog.phone_number, String).label("f1"),
+            cast(CallLog.description, String).label("f2"),
+            literal(None, type_=String).label("f3"),
+            CallLog.createdAt.label("when"),
+        ).where(CallLog.client_id == client_id)
+    )
+    q_invoice = (
+        select(
+            literal("invoice").label("type"), Invoice.id.label("eid"),
+            cast(Invoice.invoice_number, String).label("f1"),
+            cast(Invoice.total, String).label("f2"),
+            cast(Invoice.status, String).label("f3"),
+            Invoice.created_at.label("when"),
+        ).where(Invoice.client_id == client_id)
+    )
+    q_milestone = (
+        select(
+            literal("milestone").label("type"), Milestone.id.label("eid"),
+            cast(Milestone.title, String).label("f1"),
+            literal(None, type_=String).label("f2"),
+            cast(Milestone.status, String).label("f3"),
+            Milestone.created_at.label("when"),
+        ).where(Milestone.client_id == client_id)
+    )
+    q_file = (
+        select(
+            literal("file").label("type"), ClientFileUpload.id.label("eid"),
+            cast(ClientFileUpload.filename, String).label("f1"),
+            cast(ClientFileUpload.description, String).label("f2"),
+            literal(None, type_=String).label("f3"),
+            ClientFileUpload.created_at.label("when"),
+        ).where(ClientFileUpload.client_id == client_id)
+    )
+
+    q_activity = _tenant_scope(ActivityLog, q_activity)
+    q_email = _tenant_scope(SentEmail, q_email)
+    q_call = _tenant_scope(CallLog, q_call)
+    q_invoice = _tenant_scope(Invoice, q_invoice)
+    q_milestone = _tenant_scope(Milestone, q_milestone)
+    q_file = _tenant_scope(ClientFileUpload, q_file)
+
+    rows = session.execute(
+        union_all(q_activity, q_email, q_call, q_invoice, q_milestone, q_file)
+    ).all()
+
     events: list[dict] = []
-
-    # Activities
-    for a in session.exec(select(ActivityLog).where(ActivityLog.clientId == client_id)).all():
+    for type_, eid, f1, f2, f3, when in rows:
+        d = when.isoformat() if when else None
+        if type_ == "activity":
+            title, detail = (f1 or f2 or "Activity"), (f3 or "")
+        elif type_ == "email":
+            title, detail = f"Email: {f1 or 'No subject'}", (f2 or "")
+        elif type_ == "call":
+            title, detail = f"Call: {f1 or 'Unknown'}", (f2 or "")
+        elif type_ == "invoice":
+            title, detail = f"Invoice #{f1} — ${f2}", f"Status: {f3}"
+        elif type_ == "milestone":
+            title, detail = f"Milestone: {f1}", f"Status: {f3}"
+        else:
+            title, detail = f"File: {f1}", (f2 or "")
         events.append({
-            "type": "activity", "id": a.id,
-            "title": a.action or a.method or "Activity",
-            "detail": a.content or "",
-            "date": a.createdAt.isoformat() if a.createdAt else None,
-        })
-
-    # Emails
-    for e in session.exec(select(SentEmail).where(SentEmail.client_id == client_id)).all():
-        events.append({
-            "type": "email", "id": e.id,
-            "title": f"Email: {e.subject or 'No subject'}",
-            "detail": e.to_email or "",
-            "date": e.sent_at.isoformat() if e.sent_at else None,
-        })
-
-    # Calls
-    for c in session.exec(select(CallLog).where(CallLog.client_id == client_id)).all():
-        events.append({
-            "type": "call", "id": c.id,
-            "title": f"Call: {c.phone_number or 'Unknown'}",
-            "detail": c.description or "",
-            "date": c.createdAt.isoformat() if c.createdAt else None,
-        })
-
-    # Invoices
-    for inv in session.exec(select(Invoice).where(Invoice.client_id == client_id)).all():
-        events.append({
-            "type": "invoice", "id": inv.id,
-            "title": f"Invoice #{inv.invoice_number} — ${inv.total}",
-            "detail": f"Status: {inv.status}",
-            "date": inv.created_at.isoformat() if inv.created_at else None,
-        })
-
-    # Milestones
-    for m in session.exec(select(Milestone).where(Milestone.client_id == client_id)).all():
-        events.append({
-            "type": "milestone", "id": m.id,
-            "title": f"Milestone: {m.title}",
-            "detail": f"Status: {m.status}",
-            "date": m.created_at.isoformat() if m.created_at else None,
-        })
-
-    # Files
-    for f in session.exec(select(ClientFileUpload).where(ClientFileUpload.client_id == client_id)).all():
-        events.append({
-            "type": "file", "id": f.id,
-            "title": f"File: {f.filename}",
-            "detail": f.description or "",
-            "date": f.created_at.isoformat() if f.created_at else None,
+            "type": type_, "id": eid,
+            "title": title, "detail": detail, "date": d,
         })
 
     # Sort newest first
@@ -7450,9 +7561,11 @@ def _invoice_dict(inv: Invoice, session: Session) -> dict:
         "client_name": u.name if u else (cp.companyName if cp else None),
         "client_email": u.email if u else None,
         "service_request_id": inv.service_request_id,
+        "proposal_id": inv.proposal_id,
         "amount": inv.amount,
         "tax": inv.tax,
         "total": inv.total,
+        "currency": inv.currency,
         "status": inv.status,
         "due_date": inv.due_date,
         "notes": inv.notes,
@@ -7466,6 +7579,68 @@ def _invoice_dict(inv: Invoice, session: Session) -> dict:
 def _generate_invoice_number(session: Session) -> str:
     count = len(session.exec(select(Invoice)).all())
     return f"INV-{datetime.utcnow().year}-{str(count + 1).zfill(4)}"
+
+
+def _find_invoice_for_proposal(prop, session: Session):
+    """Return an existing invoice linked to this proposal (idempotency check)."""
+    if prop.id is None:
+        return None
+    inv = session.exec(select(Invoice).where(Invoice.proposal_id == prop.id)).first()
+    if inv:
+        return inv
+    # Fallback: invoices created by the older manual "Convert to Invoice" button
+    # only carry a notes marker, not proposal_id.
+    marker = f"Proposal Q-{prop.id:04d}"
+    return session.exec(
+        select(Invoice).where(Invoice.notes.is_not(None), Invoice.notes.contains(marker))
+    ).first()
+
+
+def _auto_invoice_for_proposal(prop):
+    """Create an invoice for an accepted proposal (idempotent, never raises).
+
+    Runs on its own session so a billing failure can never roll back the
+    proposal's acceptance. Returns the Invoice row or None.
+    """
+    import json as _json
+    try:
+        with Session(engine) as s:
+            existing = _find_invoice_for_proposal(prop, s)
+            if existing:
+                return existing
+
+            raw_items = prop.line_items or []
+            if isinstance(raw_items, str):
+                try:
+                    raw_items = _json.loads(raw_items)
+                except Exception:
+                    raw_items = []
+            if not isinstance(raw_items, list):
+                raw_items = []
+
+            subtotal = float(prop.total_value or 0)
+            inv = Invoice(
+                invoice_number=_generate_invoice_number(s),
+                client_id=prop.client_id or None,
+                amount=round(subtotal, 2),
+                tax=0.0,
+                total=round(subtotal, 2),
+                currency=prop.currency or "USD",
+                due_date=(datetime.utcnow() + timedelta(days=30)).date().isoformat(),
+                notes=f"Auto-generated from accepted Proposal Q-{prop.id:04d}",
+                line_items=raw_items,
+                status="Draft",
+            )
+            inv.proposal_id = prop.id
+            inv.tenant_id = getattr(prop, "tenant_id", None)
+            s.add(inv)
+            s.commit()
+            s.refresh(inv)
+            print(f"[billing] Auto-created invoice {inv.invoice_number} for accepted proposal {prop.id}")
+            return inv
+    except Exception as e:
+        print(f"[billing] Auto invoice failed for proposal {getattr(prop, 'id', '?')}: {e}")
+        return None
 
 
 @app.get("/invoices")
@@ -8396,6 +8571,7 @@ def update_proposal(
         setattr(p, field, val)
     if body.status == "Accepted":
         p.signed_at = datetime.utcnow()
+        _auto_invoice_for_proposal(p)
     p.updated_at = datetime.utcnow()
     
     # Automatically sync deal and salesperson
@@ -8453,6 +8629,7 @@ def sign_proposal(proposal_id: int, request: Request, session: Session = Depends
     p.signed_at = datetime.utcnow()
     p.status = "Accepted"
     p.signed_by_ip = request.client.host if request.client else "Unknown IP"
+    _auto_invoice_for_proposal(p)
     
     # Automatically sync deal to Won
     _sync_proposal_or_quote_to_deal(p, session, is_status_update=True)
@@ -8718,6 +8895,79 @@ def delete_ranking(entry_id: int, session: Session = Depends(get_session)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _plain_text(html_str) -> str:
+    """Strip HTML/markdown noise down to readable plain text for PDF notes."""
+    if not html_str:
+        return ""
+    import html as _html
+    t = str(html_str)
+    t = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", t, flags=re.S | re.I)
+    t = re.sub(r"<br\s*/?>|</p>|</div>|</li>|</h[1-6]>", "\n", t, flags=re.I)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = _html.unescape(t)
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r"\n\s*\n+", "\n", t)
+    return t.strip()
+
+
+def _accepted_proposal_pdf(prop, recipient_name, items, currency):
+    """Clean invoice-style PDF for an accepted proposal (same layout as invoices)."""
+    from modules.pdf_export import invoice_pdf as _invoice_pdf
+
+    raw_items = prop.line_items or []
+    if isinstance(raw_items, str):
+        try:
+            import json as _json
+            raw_items = _json.loads(raw_items)
+        except Exception:
+            raw_items = []
+
+    line_items = [
+        {
+            "description": it.get("description") or "Service Deliverable",
+            "provider": f"{float(it.get('quantity') or 1):g} {it.get('unit') or ''}".strip(),
+            "amount": float(it.get("total") or 0),
+        }
+        for it in items
+    ]
+    if not line_items and float(prop.total_value or 0) > 0:
+        line_items = [{
+            "description": prop.title or "Commercial proposal",
+            "provider": "",
+            "amount": float(prop.total_value),
+        }]
+
+    amount = float(prop.total_value or 0) or sum(li["amount"] for li in line_items)
+
+    signed_at = getattr(prop, "signed_at", None)
+    accepted_at = signed_at.strftime("%d %b %Y") if hasattr(signed_at, "strftime") else None
+    signer = getattr(prop, "signature_data", None) or None
+    if isinstance(signer, str) and (signer.startswith("data:") or len(signer) > 120):
+        signer = None
+    valid_until = getattr(prop, "valid_until", None)
+    due = (datetime.utcnow() + timedelta(days=30)).strftime("%d %b %Y")
+
+    return _invoice_pdf({
+        "invoice_number": f"Q-{prop.id:04d}",
+        "label": "Proposal",
+        "subtitle": "Accepted Proposal",
+        "client_name": recipient_name if recipient_name and recipient_name != "—" else "Client",
+        "status": "Accepted",
+        "accepted_at": accepted_at,
+        "accepted_by": signer,
+        "due_date": due,
+        "currency": currency,
+        "amount": round(amount, 2),
+        "tax": 0.0,
+        "total": round(amount, 2),
+        "line_items": line_items,
+        "headers": ["#", "Description", "Qty", "Amount"],
+        "created_at": prop.created_at,
+        "notes": _plain_text(getattr(prop, "content", None))
+                 + (f"\n\nValid until: {valid_until}" if valid_until else ""),
+    })
+
+
 @app.get("/proposals/{proposal_id}/pdf")
 def proposal_pdf(proposal_id: int, user_id: Optional[int] = None, provider: Optional[str] = None, session: Session = Depends(get_session)):
     """Generate an executive-grade commercial proposal / quotation PDF for SCM BPO."""
@@ -8769,30 +9019,36 @@ def proposal_pdf(proposal_id: int, user_id: Optional[int] = None, provider: Opti
                 "total": qty * up,
             })
 
-    pdf = _quote_pdf({
-        "id": prop.id,
-        "quote_number": f"Q-{prop.id:04d}",
-        "title": prop.title or f"Commercial Proposal #{prop.id}",
-        "status": prop.status or "Draft",
-        "client_name": recipient_name,
-        "client_company": recipient_company or recipient_name,
-        "client_email": recipient_email,
-        "client_phone": recipient_phone,
-        "client_address": recipient_address,
-        "currency": currency,
-        "items": items,
-        "subtotal": float(prop.total_value) if prop.total_value else None,
-        "grand_total": float(prop.total_value or 0.0),
-        "valid_until": prop.valid_until,
-        "created_at": prop.created_at,
-        "notes": prop.content,
-        "signed_at": getattr(prop, "signed_at", None),
-        "public_uuid": getattr(prop, "public_uuid", None),
-        "is_proposal": True,
-    })
+    status = (prop.status or "").strip()
+    if status in ("Accepted", "Signed"):
+        pdf = _accepted_proposal_pdf(prop, recipient_name, items, currency)
+        filename = f"proposal-Q{prop.id:04d}-accepted.pdf"
+    else:
+        pdf = _quote_pdf({
+            "id": prop.id,
+            "quote_number": f"Q-{prop.id:04d}",
+            "title": prop.title or f"Commercial Proposal #{prop.id}",
+            "status": prop.status or "Draft",
+            "client_name": recipient_name,
+            "client_company": recipient_company or recipient_name,
+            "client_email": recipient_email,
+            "client_phone": recipient_phone,
+            "client_address": recipient_address,
+            "currency": currency,
+            "items": items,
+            "subtotal": float(prop.total_value) if prop.total_value else None,
+            "grand_total": float(prop.total_value or 0.0),
+            "valid_until": prop.valid_until,
+            "created_at": prop.created_at,
+            "notes": prop.content,
+            "signed_at": getattr(prop, "signed_at", None),
+            "public_uuid": getattr(prop, "public_uuid", None),
+            "is_proposal": True,
+        })
+        filename = f"quotation-Q{prop.id:04d}.pdf"
 
     return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf", headers={
-        "Content-Disposition": f'attachment; filename="quotation-Q{prop.id:04d}.pdf"'
+        "Content-Disposition": f'attachment; filename="{filename}"'
     })
 
 
@@ -9321,7 +9577,7 @@ class SidebarPrefsRequest(BaseModel):
     sidebar_preferences: dict
 
 @app.get("/users/me/sidebar-preferences")
-async def get_sidebar_preferences(user_id: Optional[int] = Query(None), session: Session = Depends(get_session)):
+def get_sidebar_preferences(user_id: Optional[int] = Query(None), session: Session = Depends(get_session)):
     from modules.api_tracker import current_salesperson_id
     uid = user_id or current_salesperson_id.get()
     if not uid:
@@ -9333,7 +9589,7 @@ async def get_sidebar_preferences(user_id: Optional[int] = Query(None), session:
     return {"ok": True, "sidebar_preferences": {}}
 
 @app.post("/users/me/sidebar-preferences")
-async def update_sidebar_preferences(req: SidebarPrefsRequest, user_id: Optional[int] = Query(None), session: Session = Depends(get_session)):
+def update_sidebar_preferences(req: SidebarPrefsRequest, user_id: Optional[int] = Query(None), session: Session = Depends(get_session)):
     from modules.api_tracker import current_salesperson_id
     uid = user_id or current_salesperson_id.get()
     if not uid:
@@ -9367,7 +9623,7 @@ async def auto_fill_client(request: AutoFillRequest):
         return {"ok": False, "error": str(e)}
 
 @app.get("/chatbot/history/{session_id}")
-async def get_chatbot_history(session_id: str, session: Session = Depends(get_session)):
+def get_chatbot_history(session_id: str, session: Session = Depends(get_session)):
     from database import ChatbotMessage
     messages = session.exec(select(ChatbotMessage).where(ChatbotMessage.session_id == session_id).order_by(ChatbotMessage.created_at.asc())).all()
     history = []
@@ -11142,7 +11398,7 @@ class LeadAIAnalyzeRequest(BaseModel):
     agent_type: str
 
 @app.post("/leads/{lead_id}/ai/analyze")
-async def analyze_lead_ai(lead_id: int, body: LeadAIAnalyzeRequest, session: Session = Depends(get_session)):
+def analyze_lead_ai(lead_id: int, body: LeadAIAnalyzeRequest, session: Session = Depends(get_session)):
     from database import Lead
     lead = session.get(Lead, lead_id)
     if not lead:
@@ -12562,6 +12818,19 @@ def get_public_proposal(uuid: str, session: Session = Depends(get_session)):
 
     raise HTTPException(status_code=404, detail="Proposal not found")
 
+@app.get("/public/proposals/{uuid}/pdf")
+def public_proposal_pdf(uuid: str, session: Session = Depends(get_session)):
+    """Download the PDF behind a public proposal link (resolved by uuid)."""
+    q = session.exec(select(CRMQuote).where(CRMQuote.public_uuid == uuid)).first()
+    if q:
+        return quote_pdf(q.id, session=session)
+    prop = session.exec(select(Proposal).where(Proposal.public_uuid == uuid)).first()
+    if not prop and uuid.isdigit():
+        prop = session.get(Proposal, int(uuid))
+    if prop:
+        return proposal_pdf(prop.id, session=session)
+    raise HTTPException(status_code=404, detail="Proposal not found")
+
 @app.post("/public/proposals/{uuid}/comments")
 def add_proposal_comment(uuid: str, body: ProposalCommentCreateRequest, session: Session = Depends(get_session)):
     from database import ProposalComment, Deal, ClientProfile
@@ -12673,6 +12942,7 @@ def accept_public_proposal(uuid: str, body: Optional[ProposalAcceptRequest] = No
         if signer:
             prop.signature_data = signer
         session.add(prop)
+        _auto_invoice_for_proposal(prop)
         client = session.get(ClientProfile, prop.client_id) if prop.client_id else None
         client_name = client.companyName if client else "Client"
         if prop.deal_id:
@@ -17074,37 +17344,23 @@ def convert_quote_to_invoice(quote_id: int, session: Session = Depends(get_sessi
 # ── 2. Convert Proposal → Invoice ─────────────────────────────────────────────
 @app.post("/proposals/{proposal_id}/convert-to-invoice")
 def convert_proposal_to_invoice(proposal_id: int, session: Session = Depends(get_session)):
-    """Create an invoice pre-populated from a proposal's line items."""
+    """Create an invoice pre-populated from a proposal's line items (idempotent)."""
     from database import Proposal as ProposalModel
     prop = session.get(ProposalModel, proposal_id)
     if not prop:
         raise HTTPException(status_code=404, detail="Proposal not found")
 
-    raw_items = prop.line_items or []
-    if isinstance(raw_items, str):
-        import json as _json
-        try:
-            raw_items = _json.loads(raw_items)
-        except Exception:
-            raw_items = []
+    existing = _find_invoice_for_proposal(prop, session)
+    if existing:
+        return {
+            "invoice": _invoice_dict(existing, session),
+            "message": "Invoice already exists for this proposal",
+        }
 
-    subtotal = float(prop.total_value or 0)
-    tax      = round(subtotal * 0.0, 2)
-
-    inv = Invoice(
-        invoice_number=_generate_invoice_number(session),
-        client_id=prop.client_id or None,
-        amount=round(subtotal, 2),
-        tax=tax,
-        total=round(subtotal + tax, 2),
-        currency=prop.currency or "USD",
-        due_date=(datetime.utcnow() + timedelta(days=30)).date(),
-        notes=f"Auto-generated from Proposal Q-{str(proposal_id).zfill(4)}",
-        line_items=raw_items,
-    )
-    session.add(inv)
-    session.commit()
-    session.refresh(inv)
+    inv = _auto_invoice_for_proposal(prop)
+    if not inv:
+        raise HTTPException(status_code=500, detail="Failed to create invoice from proposal")
+    inv = session.get(Invoice, inv.id) or inv
     return {"invoice": _invoice_dict(inv, session), "message": "Invoice created from proposal"}
 
 

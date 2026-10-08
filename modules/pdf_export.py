@@ -766,7 +766,7 @@ _RECEIPT_LINE = colors.HexColor("#e2e8f0")     # thin light-gray dividers
 
 _CURRENCY_SYMBOLS = {
     "USD": "$", "MXN": "$", "COP": "$", "BRL": "R$", "EUR": "€",
-    "GBP": "£", "INR": "₹", "PEN": "S/", "ARS": "$", "CLP": "$",
+    "GBP": "£", "INR": "Rs. ", "PEN": "S/", "ARS": "$", "CLP": "$",
 }
 
 
@@ -1369,7 +1369,8 @@ def quote_pdf(data):
     website = "www.scmbpo.com"
 
     currency = str(data.get("currency") or "MXN").upper()
-    curr_sym = "₹" if currency == "INR" else ("$" if currency in ("USD", "MXN", "CAD", "AUD") else f"{currency} ")
+    # Base-14 Helvetica has no ₹ glyph (it would render as a broken "I"), so use "Rs."
+    curr_sym = "Rs. " if currency == "INR" else ("$" if currency in ("USD", "MXN", "CAD", "AUD") else f"{currency} ")
     qn = data.get("quote_number") or str(data.get("id") or "")
     if qn and not qn.startswith("Q-") and not qn.startswith("PROP-") and qn.isdigit():
         qn = f"Q-{int(qn):04d}"
@@ -1404,14 +1405,21 @@ def quote_pdf(data):
     c_card_bg = colors.HexColor("#f8fafc")
     c_card_border = colors.HexColor("#e2e8f0")
     c_accent_border = colors.HexColor("#93c5fd")
+    c_meta_bg = colors.HexColor("#0f172a")
+    c_meta_label = colors.HexColor("#94a3b8")
+    c_meta_value = colors.HexColor("#f1f5f9")
+    c_meta_accent = colors.HexColor("#93c5fd")
 
     st_upper = status.upper()
     if st_upper in ("ACCEPTED", "PAID", "APPROVED"):
         badge_fg = colors.HexColor("#15803d")
+        badge_bg = colors.HexColor("#16a34a")
     elif st_upper in ("SENT", "PENDING", "IN REVIEW"):
         badge_fg = colors.HexColor("#1d4ed8")
+        badge_bg = colors.HexColor("#2563eb")
     else:
         badge_fg = colors.HexColor("#b45309")
+        badge_bg = colors.HexColor("#d97706")
 
     def S(name, font="Helvetica", size=8.5, leading=11, color=c_text, bold=False, align=TA_LEFT):
         return ParagraphStyle(
@@ -1470,25 +1478,46 @@ def quote_pdf(data):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
 
+    status_pill = Table(
+        [[Paragraph(f"<b>{st_upper}</b>", S("qPill", font="Helvetica-Bold", size=7.5, leading=9, color=colors.white, bold=True, align=TA_CENTER))]],
+        colWidths=[34 * mm],
+    )
+    status_pill.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), badge_bg),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 1 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.1 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.1 * mm),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+
     meta_box = [
-        Paragraph("COMMERCIAL QUOTATION", S("qHead", font="Helvetica-Bold", size=12, leading=14, color=c_navy, bold=True, align=TA_RIGHT)),
-        Paragraph(f"<font color='#0284c7'><b>#{qn}</b></font>", S("qNum", font="Helvetica-Bold", size=10, leading=12, align=TA_RIGHT)),
-        Spacer(1, 1 * mm),
-        Paragraph(f"<b>Date:</b> {created_str}", S("qD1", size=7.5, leading=9.5, color=c_text, align=TA_RIGHT)),
-        Paragraph(f"<b>Valid Until:</b> {valid_str}", S("qD2", size=7.5, leading=9.5, color=c_text, align=TA_RIGHT)),
-        Paragraph(f"<b>Currency:</b> {currency}", S("qD3", size=7.5, leading=9.5, color=c_text, align=TA_RIGHT)),
-        Spacer(1, 1 * mm),
-        Paragraph(f"<font color='{badge_fg.hexval()}'><b>[ STATUS: {st_upper} ]</b></font>", S("qSt", size=7.5, leading=9.5, bold=True, align=TA_RIGHT)),
+        Paragraph("COMMERCIAL QUOTATION", S("qHead", font="Helvetica-Bold", size=12, leading=14, color=colors.white, bold=True, align=TA_RIGHT)),
+        Paragraph(f"<b>#{qn}</b>", S("qNum", font="Helvetica-Bold", size=10, leading=12, color=c_meta_accent, align=TA_RIGHT)),
+        Spacer(1, 1.2 * mm),
+        Paragraph(f"<font color='{c_meta_label.hexval()}'><b>Date:</b></font> <font color='{c_meta_value.hexval()}'>{created_str}</font>", S("qD1", size=7.5, leading=9.5, align=TA_RIGHT)),
+        Paragraph(f"<font color='{c_meta_label.hexval()}'><b>Valid Until:</b></font> <font color='{c_meta_value.hexval()}'>{valid_str}</font>", S("qD2", size=7.5, leading=9.5, align=TA_RIGHT)),
+        Paragraph(f"<font color='{c_meta_label.hexval()}'><b>Currency:</b></font> <font color='{c_meta_value.hexval()}'>{currency}</font>", S("qD3", size=7.5, leading=9.5, align=TA_RIGHT)),
+        Spacer(1, 1.5 * mm),
+        Table([[status_pill]], colWidths=[67 * mm], style=TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ])),
     ]
     right_meta_table = Table([[p] for p in meta_box], colWidths=[72 * mm])
     right_meta_table.setStyle(TableStyle([
         ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 2.5 * mm),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2.5 * mm),
-        ("TOPPADDING", (0, 0), (-1, -1), 2 * mm),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2 * mm),
-        ("BACKGROUND", (0, 0), (-1, -1), c_card_bg),
-        ("BOX", (0, 0), (-1, -1), 0.5, c_card_border),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
+        ("TOPPADDING", (0, 0), (-1, 0), 2.5 * mm),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 2.5 * mm),
+        ("TOPPADDING", (0, 1), (-1, -1), 0.6 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -2), 0.6 * mm),
+        ("BACKGROUND", (0, 0), (-1, -1), c_meta_bg),
     ]))
 
     header_table = Table([[left_header, right_meta_table]], colWidths=[108 * mm, 74 * mm])
@@ -1500,7 +1529,7 @@ def quote_pdf(data):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
     story.append(header_table)
-    story.append(Spacer(1, 2.5 * mm))
+    story.append(Spacer(1, 1.8 * mm))
 
     story.append(HRFlowable(width="100%", thickness=1.5, color=c_blue, spaceBefore=0, spaceAfter=1.5))
     story.append(HRFlowable(width="100%", thickness=0.5, color=c_card_border, spaceBefore=0, spaceAfter=2.5 * mm))
@@ -1556,7 +1585,7 @@ def quote_pdf(data):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
     story.append(parties_table)
-    story.append(Spacer(1, 2.5 * mm))
+    story.append(Spacer(1, 1.8 * mm))
 
     # ── ITEMS TABLE ──────────────────────────────────────────────────────────
     items = data.get("items") or []
@@ -1618,10 +1647,10 @@ def quote_pdf(data):
     item_table_style = [
         ("BACKGROUND", (0, 0), (-1, 0), c_dark),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, 0), 2 * mm),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 2 * mm),
-        ("TOPPADDING", (0, 1), (-1, -1), 2 * mm),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 2 * mm),
+        ("TOPPADDING", (0, 0), (-1, 0), 1.7 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 1.7 * mm),
+        ("TOPPADDING", (0, 1), (-1, -1), 1.5 * mm),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 1.5 * mm),
         ("LEFTPADDING", (0, 0), (-1, -1), 1.5 * mm),
         ("RIGHTPADDING", (0, 0), (-1, -1), 1.5 * mm),
         ("LINEBELOW", (0, 0), (-1, 0), 1, c_blue),
@@ -1671,8 +1700,8 @@ def quote_pdf(data):
         Paragraph(f"{curr_sym}0.00", S("tV0", size=7, leading=9, color=c_muted, align=TA_RIGHT))
     ])
     tot_rows.append([
-        Paragraph("<b>TOTAL CONTRACT VALUE</b>", S("gL", font="Helvetica-Bold", size=8.5, leading=10.5, color=c_navy, bold=True, align=TA_RIGHT)),
-        Paragraph(f"<b>{curr_sym}{final_grand:,.2f} {currency}</b>", S("gV", font="Helvetica-Bold", size=9.5, leading=11.5, color=c_blue, bold=True, align=TA_RIGHT))
+        Paragraph("<b>TOTAL CONTRACT VALUE</b>", S("gL", font="Helvetica-Bold", size=8.5, leading=10.5, color=colors.white, bold=True, align=TA_RIGHT)),
+        Paragraph(f"<b>{curr_sym}{final_grand:,.2f} {currency}</b>", S("gV", font="Helvetica-Bold", size=10, leading=12, color=colors.white, bold=True, align=TA_RIGHT))
     ])
 
     tot_table = Table(tot_rows, colWidths=[46 * mm, 36 * mm])
@@ -1682,9 +1711,12 @@ def quote_pdf(data):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1 * mm),
         ("LEFTPADDING", (0, 0), (-1, -1), 1 * mm),
         ("RIGHTPADDING", (0, 0), (-1, -1), 1 * mm),
-        ("LINEABOVE", (0, -1), (-1, -1), 1, c_blue),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#eff6ff")),
-        ("BOX", (0, -1), (-1, -1), 0.75, c_accent_border),
+        ("LINEABOVE", (0, -1), (-1, -1), 1, c_navy),
+        ("BACKGROUND", (0, -1), (-1, -1), c_navy),
+        ("LEFTPADDING", (0, -1), (-1, -1), 2 * mm),
+        ("RIGHTPADDING", (0, -1), (-1, -1), 2 * mm),
+        ("TOPPADDING", (0, -1), (-1, -1), 1.6 * mm),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 1.6 * mm),
     ]))
 
     calc_wrapper = Table([[words_table, tot_table]], colWidths=[98 * mm, 84 * mm])
@@ -1696,14 +1728,14 @@ def quote_pdf(data):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
     story.append(calc_wrapper)
-    story.append(Spacer(1, 2.5 * mm))
+    story.append(Spacer(1, 1.8 * mm))
 
     # ── CAPABILITIES ─────────────────────────────────────────────────────────
     cap_data = [
         [
-            Paragraph("<b>⚡ 99.8% On-Time Turnaround</b><br/><font color='#64748b' size='6.5'>Rigorous SLA adherence for shipment manifests, billing audits & customs data entries.</font>", S("cap1", size=7, leading=8.5)),
-            Paragraph("<b>🔒 Enterprise Data Security</b><br/><font color='#64748b' size='6.5'>Strict NDA, ISO 27001 data security compliance and encrypted client portal infrastructure.</font>", S("cap2", size=7, leading=8.5)),
-            Paragraph("<b>👥 Dedicated Operations Pod</b><br/><font color='#64748b' size='6.5'>Fully trained logistics specialists and account supervisors dedicated to your pipeline.</font>", S("cap3", size=7, leading=8.5)),
+            Paragraph("<font color='#1d4ed8'><b>&#8226;</b></font> <b>99.8% On-Time Turnaround</b><br/><font color='#64748b' size='6.5'>Rigorous SLA adherence for shipment manifests, billing audits & customs data entries.</font>", S("cap1", size=7, leading=8.5)),
+            Paragraph("<font color='#1d4ed8'><b>&#8226;</b></font> <b>Enterprise Data Security</b><br/><font color='#64748b' size='6.5'>Strict NDA, ISO 27001 data security compliance and encrypted client portal infrastructure.</font>", S("cap2", size=7, leading=8.5)),
+            Paragraph("<font color='#1d4ed8'><b>&#8226;</b></font> <b>Dedicated Operations Pod</b><br/><font color='#64748b' size='6.5'>Fully trained logistics specialists and account supervisors dedicated to your pipeline.</font>", S("cap3", size=7, leading=8.5)),
         ]
     ]
     cap_table = Table(cap_data, colWidths=[60 * mm, 61 * mm, 61 * mm])
@@ -1713,13 +1745,13 @@ def quote_pdf(data):
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 2 * mm),
         ("RIGHTPADDING", (0, 0), (-1, -1), 2 * mm),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.5 * mm),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.2 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2 * mm),
         ("LINEBEFORE", (1, 0), (1, -1), 0.5, c_card_border),
         ("LINEBEFORE", (2, 0), (2, -1), 0.5, c_card_border),
     ]))
     story.append(cap_table)
-    story.append(Spacer(1, 2.5 * mm))
+    story.append(Spacer(1, 1.8 * mm))
 
     # ── TERMS & BANKING ──────────────────────────────────────────────────────
     p_terms = data.get("payment_terms") or "Net 30 days upon formal invoice issuance via Bank Wire Transfer."
@@ -1746,7 +1778,7 @@ def quote_pdf(data):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5 * mm),
     ]))
     story.append(terms_box)
-    story.append(Spacer(1, 2.5 * mm))
+    story.append(Spacer(1, 1.8 * mm))
 
     # ── SIGNATURES ───────────────────────────────────────────────────────────
     signed_at = data.get("signed_at")
@@ -1758,7 +1790,7 @@ def quote_pdf(data):
         Paragraph("Founder & Managing Director", S("sRoleL", size=7, leading=8.5, color=c_muted)),
         Paragraph(legal_name, S("sLegL", size=7, leading=8.5, color=c_muted)),
         Spacer(1, 1 * mm),
-        Paragraph("<font color='#059669'><b>[ SEALED & DIGITALLY VERIFIED BY SCM BPO ]</b></font>", S("sSeal", size=6.5, leading=8.5, bold=True)),
+            Paragraph("<font color='#059669'><b>[ SEALED &amp; DIGITALLY VERIFIED BY SCM BPO ]</b></font>", S("sSeal", size=6.5, leading=8.5, bold=True)),
     ]
     sign_box_left = Table([[p] for p in left_sign], colWidths=[88 * mm])
     sign_box_left.setStyle(TableStyle([
@@ -1775,7 +1807,7 @@ def quote_pdf(data):
         right_sign = [
             Paragraph("<b>CLIENT ACCEPTANCE & APPROVAL</b>", S("sHeadR", size=7.5, leading=9.5, color=colors.HexColor("#15803d"), bold=True)),
             Spacer(1, 1 * mm),
-            Paragraph("<b>✓ DIGITALLY ACCEPTED & CONFIRMED</b>", S("sAccR", font="Helvetica-Bold", size=8.5, leading=10.5, color=colors.HexColor("#15803d"), bold=True)),
+            Paragraph("<b>DIGITALLY ACCEPTED &amp; CONFIRMED</b>", S("sAccR", font="Helvetica-Bold", size=8.5, leading=10.5, color=colors.HexColor("#15803d"), bold=True)),
             Paragraph(f"<b>Authorized For:</b> {client_company}", S("sCliR", size=7, leading=8.5, color=c_navy)),
             Paragraph(f"<b>Execution Timestamp:</b> {signed_date_str}", S("sDateR", size=7, leading=8.5, color=c_muted)),
             Paragraph("<b>Verification:</b> Authenticated via SCM BPO Secure Client Portal", S("sVerR", size=6.5, leading=8.5, color=c_muted)),
@@ -1816,7 +1848,7 @@ def quote_pdf(data):
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
-    story.append(sign_wrapper)
+    story.append(KeepTogether(sign_wrapper))
 
     doc.build(story, canvasmaker=_QuoteCanvas)
     return buf.getvalue()
@@ -1834,7 +1866,8 @@ def invoice_pdf(data):
 
     company = "SCM BPO"
     currency = str(data.get("currency") or "$")
-    subtitle = "Invoice"
+    subtitle = data.get("subtitle") or "Invoice"
+    label = data.get("label") or "Invoice"
     inv_num = data.get("invoice_number") or str(data.get("id") or "")
     created = data.get("created_at") or ""
     if hasattr(created, "strftime"):
@@ -1851,7 +1884,7 @@ def invoice_pdf(data):
         buf, pagesize=A4,
         leftMargin=15 * mm, rightMargin=15 * mm,
         topMargin=14 * mm, bottomMargin=16 * mm,
-        title=f"{company} — Invoice {inv_num}",
+        title=f"{company} — {label} {inv_num}",
         author=company,
     )
 
@@ -1867,9 +1900,11 @@ def invoice_pdf(data):
     # ── Header ───────────────────────────────────────────────────────────
     meta_lines = []
     if inv_num:
-        meta_lines.append(("Invoice:", inv_num))
+        meta_lines.append((f"{label}:", inv_num))
     if created:
         meta_lines.append(("Date:", str(created)))
+    if data.get("accepted_at"):
+        meta_lines.append(("Accepted:", str(data["accepted_at"])))
     if data.get("due_date"):
         meta_lines.append(("Due:", data["due_date"]))
     if data.get("client_name"):
@@ -1893,6 +1928,8 @@ def invoice_pdf(data):
         bill_lines.append(P(data["client_name"], cell(11, 14, _RECEIPT_INK, bold=True, wrap=True)))
     if data.get("status"):
         bill_lines.append(P(f"<b>Status:</b> {data['status']}", cell(9, 12, _RECEIPT_INK)))
+    if data.get("accepted_by"):
+        bill_lines.append(P(f"<b>Accepted By:</b> {data['accepted_by']}", cell(9, 12, _RECEIPT_INK)))
     if data.get("due_date"):
         bill_lines.append(P(f"<b>Due Date:</b> {data['due_date']}", cell(9, 12, _RECEIPT_INK)))
 
@@ -1935,7 +1972,7 @@ def invoice_pdf(data):
     story.append(Spacer(1, 5 * mm))
 
     # ── Line items table ─────────────────────────────────────────────────
-    headers = ["#", "Description", "Provider", "Amount"]
+    headers = data.get("headers") or ["#", "Description", "Provider", "Amount"]
     col_w = [12 * mm, 112 * mm, 28 * mm, 28 * mm]
     data_rows = [
         [Paragraph(h, cell(7.5, 10, _RECEIPT_SUBTLE, TA_LEFT, bold=True)) for h in headers]
@@ -1948,7 +1985,7 @@ def invoice_pdf(data):
             Paragraph(str(idx), cell(8.5, 11, _RECEIPT_FAINT, TA_CENTER)),
             Paragraph(str(desc), cell(9, 12, _RECEIPT_INK, TA_LEFT)),
             Paragraph(str(prov), cell(8.5, 11, _RECEIPT_SUBTLE, TA_LEFT)),
-            Paragraph(f"{currency}{amt:.2f}", cell(8.5, 11, _RECEIPT_INK, TA_RIGHT)),
+            Paragraph(_receipt_money(amt, currency), cell(8.5, 11, _RECEIPT_INK, TA_RIGHT)),
         ])
 
     if not line_items:
@@ -2025,7 +2062,7 @@ def invoice_pdf(data):
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(_RECEIPT_FAINT)
-        canvas.drawRightString(A4[0] - 15 * mm, 9 * mm, f"Invoice {inv_num} · Página {_doc.page}")
+        canvas.drawRightString(A4[0] - 15 * mm, 9 * mm, f"{label} {inv_num} · Página {_doc.page}")
         canvas.restoreState()
 
     doc.build(story, onFirstPage=lambda c, d: None, onLaterPages=_i_footer)

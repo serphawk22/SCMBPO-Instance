@@ -95,10 +95,102 @@ function CollapsibleSection({ title, icon: Icon, count, defaultOpen = false, acc
   );
 }
 
+// ─── Deal / proposal badges (client overview) ────────────────────────────────
+type OverviewDeal = {
+  id: number;
+  title?: string | null;
+  value?: number | null;
+  final_value?: number | null;
+  currency?: string | null;
+  stage?: string | null;
+  expected_close_date?: string | null;
+  assigned_name?: string | null;
+};
+
+type OverviewProposal = {
+  id: number;
+  title?: string | null;
+  status?: string | null;
+  deal_id?: number | null;
+  total_value?: number | null;
+  currency?: string | null;
+};
+
+const STAGE_BADGE: Record<string, { bg: string; color: string }> = {
+  'Lead':        { bg: '#eef2ff', color: '#4f46e5' },
+  'Discovery':   { bg: '#e0f2fe', color: '#0284c7' },
+  'Demo':        { bg: '#f5f3ff', color: '#7c3aed' },
+  'Negotiation': { bg: '#fffbeb', color: '#d97706' },
+  'Closed Won':  { bg: '#d1fae5', color: '#059669' },
+  'Closed Lost': { bg: '#fee2e2', color: '#dc2626' },
+};
+
+const PROPOSAL_STATUS_BADGE: Record<string, { bg: string; color: string }> = {
+  'Draft':           { bg: '#f1f5f9', color: '#475569' },
+  'Sent':            { bg: '#e0f2fe', color: '#0284c7' },
+  'In Review':       { bg: '#e0f2fe', color: '#0284c7' },
+  'Demo Requested':  { bg: '#fffbeb', color: '#d97706' },
+  'Negotiation':     { bg: '#fffbeb', color: '#d97706' },
+  'Accepted':        { bg: '#d1fae5', color: '#059669' },
+  'Signed':          { bg: '#d1fae5', color: '#059669' },
+  'Rejected':        { bg: '#fee2e2', color: '#dc2626' },
+};
+
+const CUR_SYMBOLS: Record<string, string> = { USD: '$', MXN: '$', COP: '$', EUR: '€', GBP: '£', INR: '₹', BRL: 'R$' };
+
+function overviewMoney(value: number | null | undefined, currency?: string | null) {
+  const n = Number(value || 0);
+  const code = String(currency || '').toUpperCase();
+  const sym = CUR_SYMBOLS[code] || (code ? `${code} ` : '$');
+  return `${sym}${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+}
+
+function Badge({ label, bg, color }: { label: string; bg: string; color: string }) {
+  return (
+    <span style={{ background: bg, color, borderRadius: 999, padding: '2px 9px', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase' as const, whiteSpace: 'nowrap' }}>
+      {label}
+    </span>
+  );
+}
+
 // ─── Overview Tab — premium light ──────────────────────────────────────────
 function OverviewTab({ client, employees, serviceRequests, activities, timeline, research, notes, conversations, clientId, onNotesRefresh, onConversationsRefresh, emails, onRefresh, onActivitySelect, onDropClient, onViewDropDetails }: any) {
   const { t, language } = useLanguage();
   const recentActivities = (activities || []).slice(0, 8);
+
+  // ── Deals & Proposals (client overview) ─────────────────────────────────
+  const [deals, setDeals] = useState<OverviewDeal[]>([]);
+  const [clientProposals, setClientProposals] = useState<OverviewProposal[]>([]);
+  const [dealsLoaded, setDealsLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    const fetchJson = <T,>(url: string, timeoutMs = 12000): Promise<T> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      return fetch(url, { signal: ctrl.signal })
+        .then(r => (r.ok ? r.json() : ({} as T)))
+        .catch(() => ({} as T))
+        .finally(() => clearTimeout(timer));
+    };
+    (async () => {
+      try {
+        const [dd, pp] = await Promise.all([
+          fetchJson<{ deals?: OverviewDeal[] }>(`${API_BASE_URL}/deals?client_id=${clientId}`),
+          fetchJson<{ proposals?: OverviewProposal[] }>(`${API_BASE_URL}/proposals?client_id=${clientId}`),
+        ]);
+        if (cancelled) return;
+        setDeals(Array.isArray(dd.deals) ? dd.deals : []);
+        setClientProposals(Array.isArray(pp.proposals) ? pp.proposals : []);
+      } catch {
+        /* ignore — section simply stays empty */
+      } finally {
+        if (!cancelled) setDealsLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clientId]);
 
   // ── Add Note ────────────────────────────────────────────────────────────
   const [noteText, setNoteText] = useState('');
@@ -284,6 +376,91 @@ function OverviewTab({ client, employees, serviceRequests, activities, timeline,
           );
         }
         return null;
+      })()}
+
+      {/* ── Deals & Proposals ─────────────────────────────────────────── */}
+      {dealsLoaded && (deals.length > 0 || clientProposals.length > 0) && (() => {
+        const dealIds = new Set(deals.map((d: OverviewDeal) => d.id));
+        const directProposals = clientProposals.filter((p: OverviewProposal) => !p.deal_id || !dealIds.has(p.deal_id));
+        return (
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 18, padding: '16px 20px', backdropFilter: 'blur(16px)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <div style={{ background: 'var(--accent)', borderRadius: 8, padding: '4px 7px', display: 'flex' }}><Target size={13} color="#fff" /></div>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--text-primary)' }}>Deals &amp; Proposals</span>
+              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', fontWeight: 700 }}>
+                {deals.length} {deals.length === 1 ? 'deal' : 'deals'} · {clientProposals.length} {clientProposals.length === 1 ? 'proposal' : 'proposals'}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {deals.map((d: OverviewDeal) => {
+                const dealProposals = clientProposals.filter((p: OverviewProposal) => p.deal_id === d.id);
+                const stage = STAGE_BADGE[d.stage || ''] || { bg: 'var(--bg-hover)', color: 'var(--text-secondary)' };
+                return (
+                  <div key={`deal-${d.id}`} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--text-primary)' }}>{d.title || `Deal #${d.id}`}</span>
+                      <Badge label={d.stage || 'Lead'} bg={stage.bg} color={stage.color} />
+                      <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'var(--text-primary)' }}>
+                        {overviewMoney(d.final_value ?? d.value, d.currency)}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 6, fontSize: 11, color: 'var(--text-muted)', fontWeight: 600 }}>
+                      {d.expected_close_date && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Calendar size={11} /> Close {d.expected_close_date}</span>}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><FileText size={11} /> {dealProposals.length} {dealProposals.length === 1 ? 'proposal' : 'proposals'}</span>
+                      {d.assigned_name && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Users size={11} /> {d.assigned_name}</span>}
+                    </div>
+
+                    {dealProposals.length > 0 && (
+                      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed var(--border)', display: 'flex', flexDirection: 'column', gap: 7 }}>
+                        {dealProposals.map((p: OverviewProposal) => {
+                          const st = PROPOSAL_STATUS_BADGE[p.status || ''] || { bg: 'var(--bg-hover)', color: 'var(--text-secondary)' };
+                          return (
+                            <div key={`prop-${p.id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                              <FileText size={13} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+                              <span style={{ color: 'var(--text-primary)', fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title || `Proposal #${p.id}`}</span>
+                              <Badge label={p.status || 'Draft'} bg={st.bg} color={st.color} />
+                              <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                                {overviewMoney(p.total_value, p.currency)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {dealProposals.length === 0 && (
+                      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>No proposals linked to this deal yet</div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {directProposals.length > 0 && (
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.07em', textTransform: 'uppercase' as const, color: 'var(--text-muted)' }}>Direct Proposals</span>
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', fontWeight: 700 }}>{directProposals.length}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                    {directProposals.map((p: OverviewProposal) => {
+                      const st = PROPOSAL_STATUS_BADGE[p.status || ''] || { bg: 'var(--bg-hover)', color: 'var(--text-secondary)' };
+                      return (
+                        <div key={`direct-${p.id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                          <FileText size={13} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+                          <span style={{ color: 'var(--text-primary)', fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title || `Proposal #${p.id}`}</span>
+                          <Badge label={p.status || 'Draft'} bg={st.bg} color={st.color} />
+                          <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {overviewMoney(p.total_value, p.currency)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
       })()}
 
       {/* ── Services Offered ──────────────────────────────────────────── */}
@@ -809,10 +986,24 @@ export default function AdminClientDetailPage() {
 
   const fetchAll = useCallback(async () => {
     if (!id) return;
+    const fetchJson = (url: string, timeoutMs = 15000) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      return fetch(url, { signal: ctrl.signal })
+        .then(r => { if (!r.ok) throw new Error(`Fetch failed for ${url}`); return r.json(); })
+        .finally(() => clearTimeout(timer));
+    };
+
+    // Core record first so the page shell renders immediately; remaining
+    // sections fill in behind it instead of blocking on one slow request.
     try {
-      const fetchJson = (url: string) => fetch(url).then(r => { if (!r.ok) throw new Error(`Fetch failed for ${url}`); return r.json(); });
-      const [clientRes, empRes, actRes, emailRes, svcRes, tlRes, notesRes, convRes, researchRes] = await Promise.allSettled([
-        fetchJson(`${API_BASE_URL}/clients/${id}`),
+      const clientRes = await fetchJson(`${API_BASE_URL}/clients/${id}`);
+      setClient(clientRes.client || clientRes);
+    } catch (e) { console.error(e); }
+    setPageLoading(false);
+
+    try {
+      const [empRes, actRes, emailRes, svcRes, tlRes, notesRes, convRes, researchRes] = await Promise.allSettled([
         fetchJson(`${API_BASE_URL}/users`),
         fetchJson(`${API_BASE_URL}/clients/${id}/activities`),
         fetchJson(`${API_BASE_URL}/clients/${id}/emails`),
@@ -823,7 +1014,6 @@ export default function AdminClientDetailPage() {
         fetchJson(`${API_BASE_URL}/clients/${id}/research`),
       ]);
 
-      if (clientRes.status === 'fulfilled') setClient(clientRes.value.client || clientRes.value);
       if (empRes.status === 'fulfilled') setEmployees(empRes.value.users || []);
       if (actRes.status === 'fulfilled') setActivities(actRes.value.activities || []);
       if (emailRes.status === 'fulfilled') setEmails(emailRes.value.emails || []);
@@ -833,7 +1023,6 @@ export default function AdminClientDetailPage() {
       if (convRes.status === 'fulfilled') setConversations(convRes.value.conversations || []);
       if (researchRes.status === 'fulfilled') setResearch(researchRes.value.research || null);
     } catch (e) { console.error(e); }
-    finally { setPageLoading(false); }
   }, [id]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
