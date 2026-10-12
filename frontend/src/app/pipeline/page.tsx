@@ -54,6 +54,8 @@ export default function PipelinePage() {
   const [negForm, setNegForm] = useState({ party: "us", price: "", discount_pct: "", notes: "" });
   const [savingNeg, setSavingNeg] = useState(false);
 
+  const isAdmin = role === "Admin" || role === "SuperAdmin";
+
   useEffect(() => {
     if (role === "Client") {
       router.push("/login");
@@ -61,12 +63,14 @@ export default function PipelinePage() {
     }
     fetchDeals();
     fetchClients();
-    fetch(`${API_BASE_URL}/users?role=SalesManager,Employee`).then(r => r.json()).then(data => setSalesUsers(data.users || [])).catch(() => {});
-  }, [role, router]);
+    if (isAdmin) {
+      fetch(`${API_BASE_URL}/users?role=SalesManager,Employee`).then(r => r.json()).then(data => setSalesUsers(data.users || [])).catch(() => {});
+    }
+  }, [role, router, user?.id]);
 
   const fetchDeals = async () => {
     try {
-      const url = role === "SalesManager" ? `${API_BASE_URL}/deals?user_id=${user?.id || ""}` : `${API_BASE_URL}/deals`;
+      const url = (!isAdmin && user?.id) ? `${API_BASE_URL}/deals?user_id=${user.id}` : `${API_BASE_URL}/deals`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch deals");
       const data = await res.json();
@@ -81,7 +85,8 @@ export default function PipelinePage() {
 
   const fetchClients = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/clients`);
+      const url = (!isAdmin && user?.id) ? `${API_BASE_URL}/clients?assigned_employee_id=${user.id}` : `${API_BASE_URL}/clients`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setClients(data.clients || []);
@@ -137,7 +142,7 @@ export default function PipelinePage() {
           title: newDeal.title,
           value: parseFloat(newDeal.value) || 0.0,
           client_id: parseInt(newDeal.client_id),
-          assigned_to: role === "SalesManager" ? user?.id || null : (newDeal.assigned_to ? Number(newDeal.assigned_to) : null),
+          assigned_to: !isAdmin ? (user?.id || null) : (newDeal.assigned_to ? Number(newDeal.assigned_to) : null),
           stage: newDeal.stage,
           expected_close_date: newDeal.expected_close_date || null
         })
@@ -389,7 +394,7 @@ export default function PipelinePage() {
                   <label className="block text-sm font-medium text-slate-700 dark:text-zinc-200 mb-1">{t("pipeline.deal_title")}</label>
                   <input required type="text" value={newDeal.title} onChange={e => setNewDeal({...newDeal, title: e.target.value})} className="w-full px-4 py-2 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none" placeholder="e.g. Website Redesign" />
                 </div>
-                {role !== "SalesManager" && <div>
+                {isAdmin && <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-zinc-200 mb-1">Assign Sales Owner</label>
                   <select required value={newDeal.assigned_to} onChange={e => setNewDeal({...newDeal, assigned_to: e.target.value})} className="w-full px-4 py-2 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-xl outline-none">
                     <option value="">Select salesperson</option>

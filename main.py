@@ -7901,15 +7901,35 @@ def _auto_invoice_for_proposal(prop):
 def list_invoices(
     client_id: Optional[int] = None,
     status: Optional[str] = None,
+    user_id: Optional[int] = None,
     session: Session = Depends(get_session),
 ):
+    from database import Deal
+    caller = session.get(User, current_salesperson_id.get()) if current_salesperson_id.get() else None
+    target_user_id = user_id or (caller.id if caller and caller.role in ["SalesManager", "Employee"] else None)
+
     q = select(Invoice).order_by(Invoice.created_at.desc())
     if client_id:
         q = q.where(Invoice.client_id == client_id)
     if status:
         q = q.where(Invoice.status == status)
+
+    if target_user_id:
+        my_client_ids = session.exec(select(ClientProfile.id).where(ClientProfile.assignedEmployeeId == target_user_id)).all()
+        my_deal_ids = session.exec(select(Deal.id).where(Deal.assigned_to == target_user_id)).all()
+
+        conditions = []
+        if my_client_ids:
+            conditions.append(Invoice.client_id.in_(my_client_ids))
+        if my_deal_ids:
+            conditions.append(Invoice.deal_id.in_(my_deal_ids))
+        if conditions:
+            q = q.where(or_(*conditions))
+        else:
+            return {"invoices": []}
+
     invoices = session.exec(q).all()
-    if not invoices and not client_id and not status:
+    if not invoices and not client_id and not status and not target_user_id:
         invoices = session.exec(q.execution_options(skip_tenant=True)).all()
     return {"invoices": [_invoice_dict(i, session) for i in invoices]}
 
@@ -8776,14 +8796,33 @@ def get_proposals_catalog(session: Session = Depends(get_session)):
 def list_proposals(
     client_id: Optional[int] = None,
     status: Optional[str] = None,
+    user_id: Optional[int] = None,
     session: Session = Depends(get_session),
 ):
     from database import Deal
+    caller = session.get(User, current_salesperson_id.get()) if current_salesperson_id.get() else None
+    target_user_id = user_id or (caller.id if caller and caller.role in ["SalesManager", "Employee"] else None)
+
     q = select(Proposal).order_by(Proposal.created_at.desc())
     if client_id:
         q = q.where(Proposal.client_id == client_id)
     if status:
         q = q.where(Proposal.status == status)
+
+    if target_user_id:
+        my_client_ids = session.exec(select(ClientProfile.id).where(ClientProfile.assignedEmployeeId == target_user_id)).all()
+        my_lead_ids = session.exec(select(Lead.id).where(Lead.owner_id == target_user_id)).all()
+        my_deal_ids = session.exec(select(Deal.id).where(Deal.assigned_to == target_user_id)).all()
+
+        conditions = [Proposal.created_by == target_user_id]
+        if my_client_ids:
+            conditions.append(Proposal.client_id.in_(my_client_ids))
+        if my_lead_ids:
+            conditions.append(Proposal.lead_id.in_(my_lead_ids))
+        if my_deal_ids:
+            conditions.append(Proposal.deal_id.in_(my_deal_ids))
+        q = q.where(or_(*conditions))
+
     proposals = session.exec(q).all()
     if not proposals:
         return {"proposals": []}
@@ -8816,6 +8855,10 @@ def list_proposals(
 def create_proposal(body: ProposalCreateRequest, session: Session = Depends(get_session)):
     import uuid as _uuid_mod
     p = Proposal(**body.model_dump())
+    if not getattr(p, "created_by", None):
+        caller_id = current_salesperson_id.get()
+        if caller_id:
+            p.created_by = caller_id
     if not getattr(p, "public_uuid", None):
         p.public_uuid = _uuid_mod.uuid4().hex[:12]
     session.add(p)
@@ -9689,10 +9732,13 @@ from database import Deal
 def get_deals(user_id: Optional[int] = None, client_id: Optional[int] = None, session: Session = Depends(get_session)):
     q = select(Deal).order_by(Deal.created_at.desc())
     caller = session.get(User, current_salesperson_id.get()) if current_salesperson_id.get() else None
-    if caller and caller.role == "SalesManager":
-        q = q.where(Deal.assigned_to == caller.id)
-    elif user_id:
-        q = q.where(Deal.assigned_to == user_id)
+    target_user_id = user_id or (caller.id if caller and caller.role in ["SalesManager", "Employee"] else None)
+    if target_user_id:
+        my_client_ids = session.exec(select(ClientProfile.id).where(ClientProfile.assignedEmployeeId == target_user_id)).all()
+        conditions = [Deal.assigned_to == target_user_id]
+        if my_client_ids:
+            conditions.append(Deal.client_id.in_(my_client_ids))
+        q = q.where(or_(*conditions))
     if client_id:
         q = q.where(Deal.client_id == client_id)
     deals = session.exec(q).all()
@@ -13804,12 +13850,27 @@ class SalesOrderCreateRequest(BaseModel):
     owner_id: Optional[int] = None
 
 @app.get("/sales-orders")
-def list_sales_orders(status: Optional[str] = None, client_id: Optional[int] = None, session: Session = Depends(get_session)):
+def list_sales_orders(status: Optional[str] = None, client_id: Optional[int] = None, user_id: Optional[int] = None, session: Session = Depends(get_session)):
+    caller = session.get(User, current_salesperson_id.get()) if current_salesperson_id.get() else None
+    target_user_id = user_id or (caller.id if caller and caller.role in ["SalesManager", "Employee"] else None)
+
     q = select(SalesOrder).order_by(SalesOrder.created_at.desc())
     if status:
         q = q.where(SalesOrder.status == status)
     if client_id:
         q = q.where(SalesOrder.client_id == client_id)
+
+    if target_user_id:
+        my_client_ids = session.exec(select(ClientProfile.id).where(ClientProfile.assignedEmployeeId == target_user_id)).all()
+        my_lead_ids = session.exec(select(Lead.id).where(Lead.owner_id == target_user_id)).all()
+
+        conditions = [SalesOrder.owner_id == target_user_id]
+        if my_client_ids:
+            conditions.append(SalesOrder.client_id.in_(my_client_ids))
+        if my_lead_ids:
+            conditions.append(SalesOrder.lead_id.in_(my_lead_ids))
+        q = q.where(or_(*conditions))
+
     orders = session.exec(q).all()
     return {"orders": [_so_dict(o, session) for o in orders]}
 
@@ -13898,6 +13959,8 @@ def export_sales_orders_pdf(body: dict = {}, session: Session = Depends(get_sess
 def create_sales_order(body: SalesOrderCreateRequest, session: Session = Depends(get_session)):
     import random, string
     o = SalesOrder(**body.model_dump())
+    if not o.owner_id and current_salesperson_id.get():
+        o.owner_id = current_salesperson_id.get()
     o.order_number = "SO-" + "".join(random.choices(string.digits, k=6))
     session.add(o)
     session.commit()

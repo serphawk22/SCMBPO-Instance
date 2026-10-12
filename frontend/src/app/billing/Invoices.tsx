@@ -6,6 +6,7 @@ import {
   Download, Eye, CheckCircle
 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
+import { useRole } from "@/context/RoleContext";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface InvoiceLineItem {
@@ -65,6 +66,9 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
   { embedded = false },
   ref
 ) {
+  const { role, user } = useRole();
+  const isAdmin = role === "Admin" || role === "SuperAdmin";
+
   // List state
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,7 +104,8 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
   // ── Data loading ─────────────────────────────────────────────────────────
   const loadInvoices = () => {
     setLoading(true);
-    fetch(`${API_BASE_URL}/invoices`)
+    const url = (!isAdmin && user?.id) ? `${API_BASE_URL}/invoices?user_id=${user.id}` : `${API_BASE_URL}/invoices`;
+    fetch(url)
       .then(r => r.json())
       .then(d => setInvoices(Array.isArray(d.invoices) ? d.invoices : []))
       .catch(console.error)
@@ -109,7 +114,7 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
 
   useEffect(() => {
     loadInvoices();
-  }, []);
+  }, [user?.id, role]);
 
   const filtered = invoices.filter(inv => {
     if (statusFilter !== "All" && inv.status !== statusFilter) return false;
@@ -171,7 +176,8 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
     setForm({ client_id: "", amount: "", tax: "", currency: "MXN", due_date: "", notes: "" });
     setLineItems([{ description: "", amount: 0, provider: "Internal" }]);
     setError(null);
-    fetch(`${API_BASE_URL}/clients`).then(r => r.json()).then(d => {
+    const clientsUrl = (!isAdmin && user?.id) ? `${API_BASE_URL}/clients?assigned_employee_id=${user.id}` : `${API_BASE_URL}/clients`;
+    fetch(clientsUrl).then(r => r.json()).then(d => {
       setClients(Array.isArray(d.clients) ? d.clients : []);
     }).catch(() => {});
     setShowCreate(true);

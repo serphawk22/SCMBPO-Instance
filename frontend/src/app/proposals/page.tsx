@@ -118,6 +118,7 @@ function ProposalsPageContent() {
   const { t } = useLanguage();
   const { role, user } = useRole();
   const isClient = role === "Client";
+  const isAdmin = role === "Admin" || role === "SuperAdmin";
   const clientId = user?.client_id;
   const searchParams = useSearchParams();
 
@@ -173,24 +174,31 @@ function ProposalsPageContent() {
   const fetchProposals = useCallback(async () => {
     setLoading(true);
     try {
-      const url = isClient && clientId
-        ? `${API_BASE_URL}/proposals?client_id=${clientId}`
-        : `${API_BASE_URL}/proposals`;
+      let url = `${API_BASE_URL}/proposals`;
+      if (isClient && clientId) {
+        url += `?client_id=${clientId}`;
+      } else if (!isAdmin && user?.id) {
+        url += `?user_id=${user.id}`;
+      }
       const res = await fetch(url);
       const data = await res.json();
       setProposals(data.proposals || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [isClient, clientId]);
+  }, [isClient, clientId, isAdmin, user?.id]);
 
   useEffect(() => {
     fetchProposals();
     if (!isClient) {
+      const clientsUrl = !isAdmin && user?.id ? `${API_BASE_URL}/clients?assigned_employee_id=${user.id}&per_page=500` : `${API_BASE_URL}/clients?per_page=500`;
+      const leadsUrl = !isAdmin && user?.id ? `${API_BASE_URL}/leads?owner_id=${user.id}` : `${API_BASE_URL}/leads`;
+      const dealsUrl = !isAdmin && user?.id ? `${API_BASE_URL}/deals?user_id=${user.id}` : `${API_BASE_URL}/deals`;
+
       Promise.all([
-        fetch(`${API_BASE_URL}/clients?per_page=500`).then(r => r.json()),
-        fetch(`${API_BASE_URL}/leads`).then(r => r.json()),
+        fetch(clientsUrl).then(r => r.json()),
+        fetch(leadsUrl).then(r => r.json()),
         fetch(`${API_BASE_URL}/proposals/catalog`).then(r => r.json()),
-        fetch(`${API_BASE_URL}/deals`).then(r => r.json()),
+        fetch(dealsUrl).then(r => r.json()),
       ]).then(([c, l, cat, d]) => {
         setClients(c.clients || []);
         setLeads(l.leads || []);
@@ -198,7 +206,7 @@ function ProposalsPageContent() {
         setDeals(d.deals || []);
       }).catch(console.error);
     }
-  }, [fetchProposals, isClient]);
+  }, [fetchProposals, isClient, isAdmin, user?.id]);
 
   // ─── Auto-open wizard from URL query parameters ───────────────────────────
   useEffect(() => {
