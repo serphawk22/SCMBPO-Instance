@@ -25,7 +25,7 @@ interface Deal {
   created_at: string;
 }
 
-const STAGES = ["Lead", "Discovery", "Demo", "Negotiation", "Closed Won", "Closed Lost"];
+const STAGES = ["Lead", "Discovery", "Demo", "Proposal Sent", "Negotiation", "Closed Won", "Closed Lost"];
 
 export default function PipelinePage() {
   const { t } = useLanguage();
@@ -307,10 +307,10 @@ export default function PipelinePage() {
 
           {error && <div className="p-4 mb-4 bg-red-50 text-red-600 rounded-xl">{error}</div>}
 
-          {role === "Admin" && salesPerformance.length > 0 && <div className="mb-6 overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:bg-zinc-800"><tr><th className="px-4 py-3">Salesperson</th><th className="px-4 py-3">Deals</th><th className="px-4 py-3">Pipeline</th><th className="px-4 py-3">Won Revenue</th><th className="px-4 py-3">Lead</th><th className="px-4 py-3">Negotiation</th><th className="px-4 py-3">Won</th></tr></thead><tbody>{salesPerformance.map(item => <tr key={item.assigned_to || "unassigned"} className="border-t border-slate-100 dark:border-zinc-800"><td className="px-4 py-3 font-bold dark:text-white">{item.salesperson}</td><td className="px-4 py-3">{item.deals}</td><td className="px-4 py-3">${Number(item.pipeline_value).toLocaleString()}</td><td className="px-4 py-3 font-bold text-emerald-600">${Number(item.won_revenue).toLocaleString()}</td><td className="px-4 py-3">{item.stages.Lead || 0}</td><td className="px-4 py-3">{item.stages.Negotiation || 0}</td><td className="px-4 py-3">{item.stages["Closed Won"] || 0}</td></tr>)}</tbody></table></div>}
+          {role === "Admin" && salesPerformance.length > 0 && <div className="mb-6 overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:bg-zinc-800"><tr><th className="px-4 py-3">Salesperson</th><th className="px-4 py-3">Deals</th><th className="px-4 py-3">Pipeline</th><th className="px-4 py-3">Won Revenue</th><th className="px-4 py-3">Proposal Sent</th><th className="px-4 py-3">Negotiation</th><th className="px-4 py-3">Won</th></tr></thead><tbody>{salesPerformance.map(item => <tr key={item.assigned_to || "unassigned"} className="border-t border-slate-100 dark:border-zinc-800"><td className="px-4 py-3 font-bold dark:text-white">{item.salesperson}</td><td className="px-4 py-3">{item.deals}</td><td className="px-4 py-3">${Number(item.pipeline_value).toLocaleString()}</td><td className="px-4 py-3 font-bold text-emerald-600">${Number(item.won_revenue).toLocaleString()}</td><td className="px-4 py-3">{item.stages["Proposal Sent"] || 0}</td><td className="px-4 py-3">{item.stages.Negotiation || 0}</td><td className="px-4 py-3">{item.stages["Closed Won"] || 0}</td></tr>)}</tbody></table></div>}
 
           {/* Kanban Board */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6 gap-4 pb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-4 pb-6">
             {STAGES.map(stage => (
               <div 
                 key={stage}

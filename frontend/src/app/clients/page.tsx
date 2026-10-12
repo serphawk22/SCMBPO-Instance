@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -33,7 +33,10 @@ import {
   UserX,
   UserCheck,
   X,
-  ChevronDown
+  ChevronDown,
+  CalendarClock,
+  Calendar,
+  FileText
 } from 'lucide-react';
 import Link from 'next/link';
 import { API_BASE_URL } from '@/config';
@@ -43,6 +46,7 @@ import DropClientModal from '@/components/DropClientModal';
 import { useRole } from '@/context/RoleContext';
 import PageGuide from '@/components/PageGuide';
 import SalesAssignModal from '@/components/SalesAssignModal';
+import AddFollowUpModal, { FollowUpTarget } from '@/components/AddFollowUpModal';
 import dynamic from 'next/dynamic';
 import { ContextMenu } from '@/components/ContextMenu';
 import { ViewSwitcher, ViewType } from '@/components/ViewSwitcher';
@@ -98,6 +102,7 @@ interface Client {
   lastActivity?: string;
   lastActivityDate?: string;
   assignedEmployeeName?: string;
+  assignedEmployeeId?: number | null;
   lead_source?: string;
   industry?: string;
 }
@@ -107,6 +112,30 @@ interface ClientStatusOption {
   name: string;
   color: string;
 }
+
+const CLIENT_STAGES = [
+  "Product Demo Scheduled",
+  "Attended",
+  "Not Attended",
+  "Proposal Sent",
+  "Negotiation",
+  "Won",
+  "Lost"
+];
+
+const CLIENT_STATUS_STYLE: Record<string, string> = {
+  "Product Demo Scheduled": "bg-sky-500/10 text-sky-600 border-sky-500/20",
+  Attended: "bg-indigo-500/10 text-indigo-600 border-indigo-500/20",
+  "Not Attended": "bg-amber-500/10 text-amber-600 border-amber-500/20",
+  "Proposal Sent": "bg-purple-500/10 text-purple-600 border-purple-500/20",
+  Negotiation: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+  Won: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+  Lost: "bg-rose-500/10 text-rose-600 border-rose-500/20",
+  Active: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+  Hold: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+  Pending: "bg-slate-500/10 text-slate-600 border-slate-500/20",
+  Dropped: "bg-rose-500/10 text-rose-600 border-rose-500/20",
+};
 
 export default function ClientsPage() {
   const { t, language } = useLanguage();
@@ -148,6 +177,7 @@ export default function ClientsPage() {
   // Pitch Modal State
   const [pitchModal, setPitchModal] = useState<{isOpen: boolean, pitch: string, clientName: string}>({ isOpen: false, pitch: "", clientName: "" });
   const [reassignClient, setReassignClient] = useState<Client | null>(null);
+  const [followUpTarget, setFollowUpTarget] = useState<FollowUpTarget | null>(null);
 
   // Dropped Clients State & Dropdown
   const [droppedClients, setDroppedClients] = useState<any[]>([]);
@@ -156,6 +186,17 @@ export default function ClientsPage() {
   const [dropClientTarget, setDropClientTarget] = useState<any>(null);
   const [isDropModalOpen, setIsDropModalOpen] = useState(false);
   const droppedDropdownRef = useRef<HTMLDivElement>(null);
+  const [employees, setEmployees] = useState<{ id: number; name: string }[]>([]);
+
+  const filteredClients = useMemo(() => {
+    return clients.filter(client => {
+      const name = (client.companyName || client.projectName || client.email || "").toLowerCase();
+      const s = search.toLowerCase();
+      const matchesSearch = !s || name.includes(s) || (client.email && client.email.toLowerCase().includes(s));
+      const matchesFilter = filter === "All" || client.status === filter;
+      return matchesSearch && matchesFilter;
+    });
+  }, [clients, search, filter]);
 
   const [formData, setFormData] = useState({
     companyName: '',
@@ -308,6 +349,7 @@ export default function ClientsPage() {
     fetchStatuses();
     fetchActivities();
     fetchDroppedClients();
+    fetchEmployees();
   }, [role, user]);
 
   useEffect(() => {
@@ -322,7 +364,7 @@ export default function ClientsPage() {
 
   useEffect(() => {
     fetchClients();
-  }, [filter, page]);
+  }, [filter, page, viewMode]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -331,6 +373,16 @@ export default function ClientsPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  const fetchEmployees = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/employees/workload`);
+      const data = await res.json();
+      setEmployees(data.employees || []);
+    } catch (err) {
+      console.error("Failed to fetch employees", err);
+    }
+  };
 
   const fetchStatuses = async () => {
     try {
@@ -350,7 +402,8 @@ export default function ClientsPage() {
       if (filter !== 'All') url.searchParams.append('status', filter);
       if (search.trim()) url.searchParams.append('query', search.trim());
       url.searchParams.append('page', String(page));
-      url.searchParams.append('per_page', String(perPage));
+      const effectivePerPage = viewMode === 'kanban' || viewMode === 'graph' || viewMode === 'pivot' ? 100 : perPage;
+      url.searchParams.append('per_page', String(effectivePerPage));
       if (role === 'SalesManager' && user?.id) {
         url.searchParams.append('assigned_employee_id', String(user.id));
       }
@@ -367,6 +420,20 @@ export default function ClientsPage() {
       setLoadTime(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStatusChange = async (clientId: number, newStatus: string) => {
+    setClients(prev => prev.map(c => c.id === clientId ? { ...c, status: newStatus } : c));
+    try {
+      await fetch(`${API_BASE_URL}/clients/${clientId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (e) {
+      console.error("Failed to update client status", e);
+      fetchClients();
     }
   };
 
@@ -453,8 +520,6 @@ export default function ClientsPage() {
       fetchClients(); // revert optimistic removal
     }
   };
-
-  const filteredClients = clients;
 
   const StatusBadge = ({ statusName }: { statusName: string }) => {
     const statusObj = statuses.find(s => s.name === statusName);
@@ -629,8 +694,8 @@ export default function ClientsPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-white dark:bg-[#1e293b] border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
-        <div className="relative w-72">
+      <div className="flex items-center justify-between px-3 sm:px-6 py-3 bg-white dark:bg-[#1e293b] border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
+        <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text" placeholder="Search clients..."
@@ -638,11 +703,11 @@ export default function ClientsPage() {
             className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 dark:text-white placeholder:text-slate-400"
           />
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap max-w-full overflow-x-auto scrollbar-none pb-1 sm:pb-0">
           <ViewSwitcher currentView={viewMode as any} onViewChange={(v: any) => setViewMode(v)} />
-          {["All", ...statuses.map(s => s.name)].map(s => (
+          {["All", ...CLIENT_STAGES].map(s => (
             <button key={s} onClick={() => { setFilter(s === "All" ? "All" : s); setPage(1); }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${(filter === "All" ? "All" : filter) === s ? (s === "Dropped" ? "bg-rose-600 text-white shadow-sm shadow-rose-500/30" : "bg-blue-600 dark:bg-white text-white dark:text-black shadow-sm") : (s === "Dropped" ? "bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 hover:bg-rose-100 border border-rose-200 dark:border-rose-900/40" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700")}`}>
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${(filter === "All" ? "All" : filter) === s ? (s === "Lost" ? "bg-rose-600 text-white shadow-sm shadow-rose-500/30" : "bg-blue-600 dark:bg-white text-white dark:text-black shadow-sm") : (s === "Lost" ? "bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 hover:bg-rose-100 border border-rose-200 dark:border-rose-900/40" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700")}`}>
               {s}
             </button>
           ))}
@@ -807,27 +872,38 @@ export default function ClientsPage() {
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="w-full flex flex-1 overflow-hidden">
         {/* Main Content Area */}
-        <div className="flex-1 overflow-auto bg-white dark:bg-[#1e293b]">
+        <div className="w-full flex-1 overflow-auto bg-white dark:bg-[#1e293b]">
           {loading && clients.length === 0 ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="animate-spin w-8 h-8 text-blue-600" />
             </div>
           ) : viewMode === 'kanban' ? (
             <div className="flex gap-4 p-6 overflow-x-auto h-full items-start">
-              {statuses.map(status => {
-                const colClients = filteredClients.filter(c => c.status === status.name);
+              {CLIENT_STAGES.map(stage => {
+                const colClients = filteredClients.filter(c => (c.status || "Product Demo Scheduled") === stage);
                 return (
-                  <div key={status.id} className="w-80 shrink-0 flex flex-col bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#222222] rounded-2xl max-h-full">
+                  <div
+                    key={stage}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const draggedId = e.dataTransfer.getData("clientId");
+                      if (draggedId) {
+                        handleStatusChange(Number(draggedId), stage);
+                      }
+                    }}
+                    className="w-80 shrink-0 flex flex-col bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#222222] rounded-2xl max-h-full transition-all hover:border-blue-400/50"
+                  >
                     <div className="p-4 font-bold text-slate-800 dark:text-white flex items-center justify-between border-b border-slate-200 dark:border-[#222222]">
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: status.color.replace('bg-', '') || '#6366f1' }}></div>
-                        <span>{status.name}</span>
+                        <div className="w-2 h-2 rounded-full bg-blue-500" />
+                        <span className="text-xs font-bold">{stage}</span>
                       </div>
                       <span className="px-2.5 py-1 rounded-full bg-slate-200 dark:bg-[#222222] text-xs text-slate-600 dark:text-[#a3a3a3]">{colClients.length}</span>
                     </div>
-                    <div className="p-3 flex-1 overflow-y-auto space-y-3 min-h-[200px]">
+                    <div className="p-3 flex-1 overflow-y-auto space-y-3 min-h-[220px]">
                       {colClients.map(client => (
                         <ContextMenu 
                           key={client.id}
@@ -835,17 +911,50 @@ export default function ClientsPage() {
                           actions={[
                             { label: 'Open in New Tab', icon: <ExternalLink className="w-4 h-4" />, onClick: () => window.open(`/admin/clients/${client.id}`, '_blank') },
                             { label: 'Open Client', icon: <ChevronRight className="w-4 h-4" />, onClick: () => router.push(`/admin/clients/${client.id}`) },
+                            { label: 'Create Proposal', icon: <FileText className="w-4 h-4 text-blue-500" />, onClick: () => router.push(`/proposals?new=true&client_id=${client.id}`) },
+                            {
+                              label: 'Add Follow-up',
+                              icon: <CalendarClock className="w-4 h-4 text-amber-500" />,
+                              onClick: () => setFollowUpTarget({
+                                type: 'client',
+                                id: client.id,
+                                name: client.companyName || client.projectName || client.email || 'Client',
+                                email: client.email,
+                                salespersonName: client.assignedEmployeeName
+                              })
+                            },
                             { label: 'Reassign Salesperson', icon: <UserCheck className="w-4 h-4 text-violet-500" />, onClick: () => setReassignClient(client) },
                             { label: 'AI Call Pitch', icon: <Phone className="w-4 h-4" />, onClick: () => handleSimulateCall(client.id) },
                             { label: 'Mark as Dropped', icon: <UserX className="w-4 h-4 text-rose-500" />, onClick: () => { setDropClientTarget(client); setIsDropModalOpen(true); } },
                             { label: 'Delete Client', icon: <XCircle className="w-4 h-4" />, danger: true, onClick: () => handleDeleteClient(client.id) },
                           ]}
                         >
-                          <motion.div layoutId={`client-${client.id}`} onClick={() => router.push(`/admin/clients/${client.id}`)}
-                            className="p-4 bg-white dark:bg-[#000000] rounded-xl shadow-sm border border-slate-200 dark:border-[#222222] cursor-pointer hover:border-blue-500 dark:hover:border-white transition-colors group">
+                          <motion.div
+                            layoutId={`client-${client.id}`}
+                            draggable={true}
+                            onDragStart={e => {
+                              e.dataTransfer.setData("clientId", String(client.id));
+                            }}
+                            onClick={() => router.push(`/admin/clients/${client.id}`)}
+                            className="p-4 bg-white dark:bg-[#000000] rounded-xl shadow-sm border border-slate-200 dark:border-[#222222] cursor-grab active:cursor-grabbing hover:border-blue-500 dark:hover:border-white transition-colors group"
+                          >
                             <div className="font-semibold text-slate-900 dark:text-white text-sm">{client.companyName || client.projectName || client.email || 'Unnamed Client'}</div>
                             {client.website && <div className="text-[12px] text-slate-500 mt-1 line-clamp-1">{client.website}</div>}
                             {client.email && <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><Mail className="w-3 h-3"/>{client.email}</div>}
+                            
+                            {/* Quick stage selector on card */}
+                            <div className="mt-2.5 flex items-center justify-between gap-2" onClick={e => e.stopPropagation()}>
+                              <select
+                                value={client.status || "Product Demo Scheduled"}
+                                onChange={e => handleStatusChange(client.id, e.target.value)}
+                                className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border cursor-pointer focus:outline-none ${CLIENT_STATUS_STYLE[client.status] || "bg-blue-500/10 text-blue-600 border-blue-500/20"}`}
+                              >
+                                {CLIENT_STAGES.map(st => (
+                                  <option key={st} value={st} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-zinc-100">{st}</option>
+                                ))}
+                              </select>
+                            </div>
+
                             <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-zinc-800">
                               <span className="text-[11px] font-semibold text-slate-600 dark:text-zinc-400 flex items-center gap-1 truncate max-w-[170px]">
                                 <UserCheck className="w-3 h-3 text-violet-500 shrink-0" />
@@ -865,7 +974,7 @@ export default function ClientsPage() {
                       {colClients.length === 0 && <div className="p-4 text-center text-sm text-slate-400 border-2 border-dashed border-slate-200 dark:border-[#222222] rounded-xl">No clients</div>}
                     </div>
                   </div>
-                )
+                );
               })}
             </div>
           ) : viewMode === 'graph' ? (
@@ -941,12 +1050,13 @@ export default function ClientsPage() {
               <ClientMapView clients={filteredClients} />
             </div>
           ) : (
-            <table className="w-full text-left border-collapse">
+            <div className="overflow-x-auto w-full">
+              <table className="w-full text-left border-collapse min-w-[640px]">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 text-[13px] font-semibold text-slate-500 dark:text-slate-400">
                   <th className="px-6 py-4 font-medium">Client</th>
                   <th className="px-6 py-4 font-medium">Status</th>
-                  <th className="px-6 py-4 font-medium">Assignee</th>
+                  <th className="px-6 py-4 font-medium">Salesperson</th>
                   <th className="px-6 py-4 font-medium">Website</th>
                   <th className="px-6 py-4 font-medium">Last Activity</th>
                   <th className="px-6 py-4 font-medium text-right">Actions</th>
@@ -975,20 +1085,55 @@ export default function ClientsPage() {
                             )}
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border bg-blue-500/10 text-blue-600 border-blue-500/20`}>
-                            {client.status || "Active"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4" onClick={(e) => { e.stopPropagation(); setReassignClient(client); }}>
-                          <button
-                            type="button"
-                            title="Click to reassign or view audit history"
-                            className="text-[13px] text-slate-600 dark:text-slate-300 hover:text-violet-600 dark:hover:text-violet-400 font-medium flex items-center gap-1 group/btn text-left"
+                        <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
+                          <select
+                            value={client.status || "Product Demo Scheduled"}
+                            onChange={e => handleStatusChange(client.id, e.target.value)}
+                            className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border cursor-pointer focus:outline-none transition-all shadow-sm ${CLIENT_STATUS_STYLE[client.status] || "bg-blue-500/10 text-blue-600 border-blue-500/20"}`}
+                            title="Change client stage"
                           >
-                            <span>{client.assignedEmployeeName || '—'}</span>
-                            <UserCheck className="w-3.5 h-3.5 opacity-0 group-hover/btn:opacity-100 text-violet-500 transition-opacity" />
-                          </button>
+                            {CLIENT_STAGES.map(st => (
+                              <option key={st} value={st} className="bg-white dark:bg-slate-900 text-slate-800 dark:text-zinc-100 font-semibold">
+                                {st}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={client.assignedEmployeeId || ""}
+                              onChange={async (e) => {
+                                const empId = e.target.value ? Number(e.target.value) : null;
+                                const empName = employees.find(emp => emp.id === empId)?.name || null;
+                                setClients(prev => prev.map(c => c.id === client.id ? { ...c, assignedEmployeeId: empId, assignedEmployeeName: empName } : c));
+                                try {
+                                  await fetch(`${API_BASE_URL}/clients/${client.id}`, {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ assignedEmployeeId: empId, employee_id: empId }),
+                                  });
+                                } catch (err) {
+                                  fetchClients();
+                                }
+                              }}
+                              className="text-[12px] font-medium bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[145px]"
+                              title="Assign Salesperson"
+                            >
+                              <option value="">Unassigned</option>
+                              {employees.map(emp => (
+                                <option key={emp.id} value={emp.id}>{emp.name}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => setReassignClient(client)}
+                              title="View reassignment audit history"
+                              className="p-1 rounded hover:bg-violet-100 dark:hover:bg-violet-900/30 text-violet-500 transition-colors"
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-[13px] text-slate-600 dark:text-slate-300">
@@ -1004,6 +1149,38 @@ export default function ClientsPage() {
                           <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={(e) => { e.stopPropagation(); setExpandedRowId(p => p === client.id ? null : client.id); }} title="Quick Actions" className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 transition-colors">
                               <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", expandedRowId === client.id && "rotate-90")} />
+                            </button>
+                            <Link
+                              href={`/proposals?new=true&client_id=${client.id}`}
+                              onClick={e => e.stopPropagation()}
+                              title="Create Proposal"
+                              className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-slate-400 hover:text-blue-600 transition-colors"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                            </Link>
+                            <Link
+                              href={`/meetings?new=true&client_id=${client.id}&title=${encodeURIComponent(`Meeting with ${client.companyName || client.projectName || client.email}`)}`}
+                              onClick={e => e.stopPropagation()}
+                              title="Schedule Meeting"
+                              className="p-1.5 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/30 text-slate-400 hover:text-indigo-600 transition-colors"
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                            </Link>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFollowUpTarget({
+                                  type: 'client',
+                                  id: client.id,
+                                  name: client.companyName || client.projectName || client.email || 'Client',
+                                  email: client.email,
+                                  salespersonName: client.assignedEmployeeName
+                                });
+                              }}
+                              title="Add Follow-up"
+                              className="p-1.5 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/30 text-slate-400 hover:text-amber-600 transition-colors"
+                            >
+                              <CalendarClock className="w-3.5 h-3.5" />
                             </button>
                             <button onClick={(e) => { e.stopPropagation(); setReassignClient(client); }} title="Reassign Salesperson" className="p-1.5 rounded-lg hover:bg-violet-100 dark:hover:bg-violet-900/30 text-slate-400 hover:text-violet-600 transition-colors">
                               <UserCheck className="w-3.5 h-3.5" />
@@ -1033,6 +1210,26 @@ export default function ClientsPage() {
                           >
                             <td colSpan={6} className="p-0">
                               <div className="px-6 py-4 flex items-center gap-3 flex-wrap">
+                                <Link
+                                  href={`/proposals?new=true&client_id=${client.id}`}
+                                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors shadow-sm"
+                                >
+                                  <FileText className="w-4 h-4" />
+                                  Create Proposal
+                                </Link>
+                                <button
+                                  onClick={() => setFollowUpTarget({
+                                    type: 'client',
+                                    id: client.id,
+                                    name: client.companyName || client.projectName || client.email || 'Client',
+                                    email: client.email,
+                                    salespersonName: client.assignedEmployeeName
+                                  })}
+                                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-sm font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors shadow-sm"
+                                >
+                                  <CalendarClock className="w-4 h-4 text-amber-500" />
+                                  Add Follow-up
+                                </button>
                                 <button
                                   onClick={() => setReassignClient(client)}
                                   className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 text-sm font-semibold hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors shadow-sm"
@@ -1082,6 +1279,7 @@ export default function ClientsPage() {
                 </AnimatePresence>
               </tbody>
             </table>
+            </div>
           )}
           {/* Pagination Controls */}
           {viewMode === 'list' && totalCount > perPage && (
@@ -1117,35 +1315,6 @@ export default function ClientsPage() {
             </div>
           )}
         </div>
-        
-        {/* Activity Sidebar */}
-        <motion.div
-          initial="hidden" animate="show"
-          className="w-full xl:w-[400px] shrink-0 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-[#1e293b] flex flex-col h-full overflow-hidden"
-        >
-          <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3 shrink-0">
-            <div className="p-2 bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-xl"><Zap className="w-5 h-5" /></div>
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Recent Activity</h3>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {activities.length === 0 ? (
-              <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-8">No activity yet.</p>
-            ) : (
-              activities.map(act => (
-                <Link href={act.clientId ? `/admin/clients/${act.clientId}` : '#'} key={act.id} className="block p-4 bg-slate-50 dark:bg-[#0f172a] hover:bg-slate-100 dark:hover:bg-[#1e293b] rounded-2xl border border-slate-100 dark:border-slate-800 transition-colors group">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-xs font-bold px-2 py-1 bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-lg">{act.action}</span>
-                    <span className="text-[10px] text-slate-400 font-medium">{new Date(act.createdAt).toLocaleDateString()}</span>
-                  </div>
-                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-2">{act.content}</p>
-                  {act.details && (
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 line-clamp-1">{act.details}</p>
-                  )}
-                </Link>
-              ))
-            )}
-          </div>
-        </motion.div>
       </div>
       {/* Modals remain structurally similar, but updated with glassmorphism */}
       <AnimatePresence>
@@ -1598,6 +1767,14 @@ export default function ClientsPage() {
           }}
         />
       )}
+
+      {/* Add Follow-up Modal */}
+      <AddFollowUpModal
+        open={!!followUpTarget}
+        onClose={() => setFollowUpTarget(null)}
+        target={followUpTarget}
+        onSuccess={fetchClients}
+      />
 
     </div>
   );

@@ -27,15 +27,57 @@ import { GlobalLimitModal } from "@/components/GlobalLimitModal";
 import { NotificationProvider } from "@/context/NotificationContext";
 import GlobalFooter from "@/components/GlobalFooter";
 
+import { Menu } from "lucide-react";
+
 function AdminMainContent({ children }: { children: React.ReactNode }) {
-  const { collapsed } = useSidebar();
+  const { collapsed, isMobile, setMobileOpen } = useSidebar();
   const pathname = usePathname();
   const isClientDetail = pathname?.match(/^\/admin\/clients\/\d+$/);
 
   return (
-    <main className={`relative z-10 min-h-screen transition-all duration-300 ${collapsed ? "ml-[72px]" : "ml-[280px]"}`}>
+    <main
+      className={`relative z-10 min-h-screen transition-all duration-300 ${
+        isMobile ? "ml-0" : collapsed ? "ml-[72px]" : "ml-[280px]"
+      }`}
+    >
+      {/* Mobile top bar with hamburger menu toggle */}
+      {isMobile && (
+        <header
+          className="sticky top-0 z-40 flex items-center justify-between px-3 py-2.5 border-b backdrop-blur-md"
+          style={{
+            background: "var(--sidebar-bg, rgba(15, 23, 42, 0.95))",
+            borderColor: "var(--border, rgba(255, 255, 255, 0.1))",
+          }}
+        >
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open navigation menu"
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 active:scale-95 transition-all touch-manipulation"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md">
+                <span className="text-white text-xs font-black">S</span>
+              </div>
+              <span className="font-bold text-sm tracking-tight" style={{ color: "var(--text-primary)" }}>
+                SERP Hawk
+              </span>
+            </div>
+          </div>
+        </header>
+      )}
+
       <TopRightControls />
-      <div className={isClientDetail ? "w-full h-full pr-20" : "pt-[76px] px-6 md:px-8 pb-6 md:pb-8 pr-20 md:pr-24 max-w-[1600px] mx-auto h-full"}>
+      <div
+        className={
+          isClientDetail
+            ? "w-full h-full pr-14 sm:pr-20"
+            : "pt-[60px] sm:pt-[76px] px-3 sm:px-6 md:px-8 pb-6 md:pb-8 pr-14 sm:pr-16 lg:pr-24 max-w-[1600px] mx-auto h-full"
+        }
+      >
         {children}
       </div>
     </main>
@@ -43,11 +85,11 @@ function AdminMainContent({ children }: { children: React.ReactNode }) {
 }
 
 function ClientLayout({ children }: { children: React.ReactNode }) {
-  const { collapsed } = useSidebar();
+  const { collapsed, isMobile } = useSidebar();
   return (
     <div className="client-shell relative w-full min-h-screen bg-transparent text-white" style={{ color: "var(--text-primary)" }}>
       <ClientSidebar />
-      <main className={`min-h-screen transition-all duration-300 pt-6 px-4 md:px-6 ${collapsed ? "ml-[72px]" : "ml-[220px]"}`}>
+      <main className={`min-h-screen transition-all duration-300 pt-6 px-3 sm:px-4 md:px-6 ${isMobile ? "ml-0" : collapsed ? "ml-[72px]" : "ml-[220px]"}`}>
         {children}
       </main>
     </div>

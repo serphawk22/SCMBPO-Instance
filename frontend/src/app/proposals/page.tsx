@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Plus, X, Loader2, FileSignature, CheckCircle, Send,
   Clock, XCircle, DollarSign, Trash2, Eye, Edit3, Download,
   PlayCircle, Search, ShoppingCart, Package, ChevronRight,
   User2, Building2, IndianRupee, BadgeDollarSign, Minus,
-  AlertCircle, FileText, RefreshCw, ArrowLeft, FilePlus2, Link2
+  AlertCircle, FileText, RefreshCw, ArrowLeft, FilePlus2, Link2,
+  Sparkles, Check, ArrowRightLeft
 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
@@ -63,36 +65,61 @@ interface Client { id: number; companyName: string; projectName?: string; assign
 interface Lead   { id: number; company_name?: string; contact_name?: string; email?: string; }
 interface Deal   { id: number; title: string; stage: string; value: number; client_id?: number; }
 
-// ─── Wizard Steps ───────────────────────────────────────────────────────────
 type WizardStep = "recipient" | "cart" | "details";
 
-// ─── Currency config ─────────────────────────────────────────────────────────
-const INR_RATE  = 4.5; // 1 MXN ≈ 4.5 INR
-const CURRENCIES = [
-  { code: "MXN", label: "MXN (Peso)", symbol: "$",  icon: BadgeDollarSign },
-  { code: "INR", label: "INR (₹)",    symbol: "₹", icon: IndianRupee },
-];
+// ─── Currency Config & Conversions (1 USD = 83.5 INR) ──────────────────────────
+const USD_TO_INR_RATE = 83.5;
 
-function currSymbol(c: string) { return c === "INR" ? "₹" : "$"; }
-function fmtMoney(val: number, curr: string) {
-  return `${currSymbol(curr)}${val.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export function toInr(usd: number): number {
+  return Math.round(usd * USD_TO_INR_RATE * 100) / 100;
 }
 
-// ─── Status config ───────────────────────────────────────────────────────────
-const STATUS_CFG: Record<string, { icon: any; color: string; dot: string }> = {
-  Draft:            { icon: Edit3,       color: "text-slate-500",   dot: "bg-slate-400" },
-  Sent:             { icon: Send,        color: "text-blue-600",    dot: "bg-blue-500" },
-  Accepted:         { icon: CheckCircle, color: "text-emerald-600", dot: "bg-emerald-500" },
-  Rejected:         { icon: XCircle,     color: "text-red-500",     dot: "bg-red-500" },
-  "Demo Requested": { icon: PlayCircle,  color: "text-violet-600",  dot: "bg-violet-500" },
+export function toUsd(inr: number): number {
+  return Math.round((inr / USD_TO_INR_RATE) * 100) / 100;
+}
+
+const CURRENCIES = [
+  { code: "USD", label: "USD ($)", symbol: "$", icon: BadgeDollarSign },
+  { code: "INR", label: "INR (₹)", symbol: "₹", icon: IndianRupee },
+];
+
+function fmtUsd(val: number): string {
+  return `$${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtInr(val: number): string {
+  return `₹${val.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtDualCurrency(amount: number, baseCurr: string = "USD"): { usdText: string; inrText: string } {
+  if (baseCurr === "INR") {
+    const usd = toUsd(amount);
+    return { usdText: fmtUsd(usd), inrText: fmtInr(amount) };
+  }
+  const inr = toInr(amount);
+  return { usdText: fmtUsd(amount), inrText: fmtInr(inr) };
+}
+
+// ─── Status Config ─────────────────────────────────────────────────────────────
+const STATUS_CFG: Record<string, { icon: any; color: string; dot: string; label: string }> = {
+  Draft:            { icon: Edit3,       color: "text-slate-500",   dot: "bg-slate-400",   label: "Draft" },
+  Sent:             { icon: Send,        color: "text-blue-600",    dot: "bg-blue-500",    label: "Proposal Sent" },
+  "Proposal Sent":  { icon: Send,        color: "text-blue-600",    dot: "bg-blue-500",    label: "Proposal Sent" },
+  Negotiation:      { icon: Clock,       color: "text-amber-600",   dot: "bg-amber-500",   label: "Negotiation" },
+  Accepted:         { icon: CheckCircle, color: "text-emerald-600", dot: "bg-emerald-500", label: "Won / Accepted" },
+  Won:              { icon: CheckCircle, color: "text-emerald-600", dot: "bg-emerald-500", label: "Won / Accepted" },
+  Rejected:         { icon: XCircle,     color: "text-red-500",     dot: "bg-red-500",     label: "Lost / Rejected" },
+  Lost:             { icon: XCircle,     color: "text-red-500",     dot: "bg-red-500",     label: "Lost / Rejected" },
+  "Demo Requested": { icon: PlayCircle,  color: "text-violet-600",  dot: "bg-violet-500",  label: "Demo Requested" },
 };
 
-// ─── Main Component ───────────────────────────────────────────────────────────
-export default function ProposalsPage() {
+// ─── Main Proposals Component with Suspense ────────────────────────────────────
+function ProposalsPageContent() {
   const { t } = useLanguage();
   const { role, user } = useRole();
   const isClient = role === "Client";
   const clientId = user?.client_id;
+  const searchParams = useSearchParams();
 
   const [proposals, setProposals]       = useState<Proposal[]>([]);
   const [clients,   setClients]         = useState<Client[]>([]);
@@ -116,15 +143,23 @@ export default function ProposalsPage() {
 
   // Cart step
   const [cart, setCart]                 = useState<LineItem[]>([]);
-  const [currency, setCurrency]         = useState("MXN");
+  const [currency, setCurrency]         = useState<"USD" | "INR">("USD");
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("All");
+
+  // Custom Item Form state
+  const [customName, setCustomName]     = useState("");
+  const [customDesc, setCustomDesc]     = useState("");
+  const [customQty, setCustomQty]       = useState("1");
+  const [customUnit, setCustomUnit]     = useState("service");
+  const [customUsdPrice, setCustomUsdPrice] = useState("");
+  const [customInrPrice, setCustomInrPrice] = useState("");
 
   // Details step
   const [quoteTitle, setQuoteTitle]     = useState("");
   const [validUntil, setValidUntil]     = useState("");
   const [notes, setNotes]               = useState("");
-  const [sendStatus, setSendStatus]     = useState<"Draft" | "Sent">("Draft");
+  const [sendStatus, setSendStatus]     = useState<"Draft" | "Sent">("Sent");
   const [selectedDealId, setSelectedDealId] = useState<number | null>(null);
 
   // Detail view
@@ -134,7 +169,7 @@ export default function ProposalsPage() {
   const [preview, setPreview]           = useState<{ id: number; name: string; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  // ─── Fetch ───────────────────────────────────────────────────────────────
+  // ─── Fetch Proposals ────────────────────────────────────────────────────────
   const fetchProposals = useCallback(async () => {
     setLoading(true);
     try {
@@ -151,7 +186,6 @@ export default function ProposalsPage() {
   useEffect(() => {
     fetchProposals();
     if (!isClient) {
-      // Parallel fetch clients + leads + deals for the wizard
       Promise.all([
         fetch(`${API_BASE_URL}/clients?per_page=500`).then(r => r.json()),
         fetch(`${API_BASE_URL}/leads`).then(r => r.json()),
@@ -166,7 +200,28 @@ export default function ProposalsPage() {
     }
   }, [fetchProposals, isClient]);
 
-  // ─── Wizard helpers ───────────────────────────────────────────────────────
+  // ─── Auto-open wizard from URL query parameters ───────────────────────────
+  useEffect(() => {
+    const isNew = searchParams.get("new");
+    const cId = searchParams.get("client_id");
+    const lId = searchParams.get("lead_id");
+    if (isNew === "true") {
+      setShowWizard(true);
+      if (cId) {
+        setSelectedClientId(Number(cId));
+        setRecipientType("client");
+        setStep("cart");
+      } else if (lId) {
+        setSelectedLeadId(Number(lId));
+        setRecipientType("lead");
+        setStep("cart");
+      } else {
+        setStep("recipient");
+      }
+    }
+  }, [searchParams]);
+
+  // ─── Wizard Helpers ────────────────────────────────────────────────────────
   function openWizard() {
     setStep("recipient");
     setRecipientType("client");
@@ -175,17 +230,17 @@ export default function ProposalsPage() {
     setSelectedDealId(null);
     setRecipientSearch("");
     setCart([]);
-    setCurrency("MXN");
+    setCurrency("USD");
     setCatalogSearch("");
     setCatalogCategory("All");
     setQuoteTitle("");
     setValidUntil("");
     setNotes("");
-    setSendStatus("Draft");
+    setSendStatus("Sent");
     setShowWizard(true);
   }
 
-  function recipientName() {
+  function recipientName(): string {
     if (recipientType === "client") {
       const c = clients.find(c => c.id === selectedClientId);
       return c?.companyName || "";
@@ -194,12 +249,20 @@ export default function ProposalsPage() {
     return l?.company_name || l?.contact_name || "";
   }
 
+  // ─── Cart Calculations ─────────────────────────────────────────────────────
   const cartTotal = useMemo(() => {
-    const mxn = cart.reduce((s, li) => s + li.quantity * li.unit_price, 0);
-    return currency === "INR" ? mxn * INR_RATE : mxn;
-  }, [cart, currency]);
+    return cart.reduce((sum, li) => sum + (li.quantity * li.unit_price), 0);
+  }, [cart]);
+
+  const dualTotal = useMemo(() => {
+    return fmtDualCurrency(cartTotal, currency);
+  }, [cartTotal, currency]);
 
   function addToCart(item: CatalogItem) {
+    // Default catalog prices are assumed USD (or base supplier cost converted to USD)
+    const basePriceUsd = item.unit_price > 0 ? item.unit_price : 100;
+    const finalPrice = currency === "INR" ? toInr(basePriceUsd) : basePriceUsd;
+
     setCart(prev => {
       const existing = prev.findIndex(c => c.product_id === item.id);
       if (existing >= 0) {
@@ -212,11 +275,37 @@ export default function ProposalsPage() {
         product_name: item.name,
         description: item.description,
         quantity: 1,
-        unit_price: currency === "INR" ? item.unit_price * INR_RATE : item.unit_price,
-        unit: item.unit,
+        unit_price: finalPrice,
+        unit: item.unit || "pcs",
         currency,
       }];
     });
+  }
+
+  function addCustomItem() {
+    if (!customName.trim()) return;
+    const qty = Math.max(1, parseFloat(customQty) || 1);
+    let price = 0;
+    if (currency === "USD") {
+      price = parseFloat(customUsdPrice) || (parseFloat(customInrPrice) ? toUsd(parseFloat(customInrPrice)) : 0);
+    } else {
+      price = parseFloat(customInrPrice) || (parseFloat(customUsdPrice) ? toInr(parseFloat(customUsdPrice)) : 0);
+    }
+
+    setCart(prev => [...prev, {
+      product_name: customName.trim(),
+      description: customDesc.trim() || undefined,
+      quantity: qty,
+      unit_price: price,
+      unit: customUnit.trim() || "service",
+      currency,
+    }]);
+
+    setCustomName("");
+    setCustomDesc("");
+    setCustomQty("1");
+    setCustomUsdPrice("");
+    setCustomInrPrice("");
   }
 
   function removeFromCart(idx: number) {
@@ -228,30 +317,38 @@ export default function ProposalsPage() {
     setCart(prev => prev.map((li, i) => i === idx ? { ...li, quantity: qty } : li));
   }
 
-  function updateCartPrice(idx: number, price: number) {
-    setCart(prev => prev.map((li, i) => i === idx ? { ...li, unit_price: price } : li));
+  // Two-way price updates for an existing cart line item
+  function updateCartPriceUsd(idx: number, usdVal: number) {
+    const targetPrice = currency === "USD" ? usdVal : toInr(usdVal);
+    setCart(prev => prev.map((li, i) => i === idx ? { ...li, unit_price: targetPrice } : li));
   }
 
-  // When currency switches, convert prices in cart
-  function switchCurrency(newCurr: string) {
+  function updateCartPriceInr(idx: number, inrVal: number) {
+    const targetPrice = currency === "INR" ? inrVal : toUsd(inrVal);
+    setCart(prev => prev.map((li, i) => i === idx ? { ...li, unit_price: targetPrice } : li));
+  }
+
+  // When proposal currency base switches
+  function switchCurrency(newCurr: "USD" | "INR") {
     if (newCurr === currency) return;
     setCurrency(newCurr);
     setCart(prev => prev.map(li => ({
       ...li,
       currency: newCurr,
-      unit_price: newCurr === "INR"
-        ? li.unit_price * INR_RATE
-        : li.unit_price / INR_RATE,
+      unit_price: newCurr === "INR" ? toInr(li.unit_price) : toUsd(li.unit_price),
     })));
   }
 
+  // ─── Submit Proposal ────────────────────────────────────────────────────────
   async function submitQuote() {
     setSaving(true);
-    const totalMXN = currency === "INR" ? cartTotal / INR_RATE : cartTotal;
+    // Send standard total_value normalized to USD for backend reports, or base total
+    const totalNormalizedUsd = currency === "INR" ? toUsd(cartTotal) : cartTotal;
     const autoTitle = quoteTitle.trim() ||
-      `Quotation for ${recipientName()} – ${new Date().toLocaleDateString("en-IN")}`;
+      `Commercial Proposal for ${recipientName()} – ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+
     try {
-      await fetch(`${API_BASE_URL}/proposals`, {
+      const res = await fetch(`${API_BASE_URL}/proposals`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -262,29 +359,46 @@ export default function ProposalsPage() {
           content: notes || null,
           status: sendStatus,
           valid_until: validUntil || null,
-          total_value: totalMXN,
+          total_value: totalNormalizedUsd,
           line_items: cart,
           currency,
           deal_id: selectedDealId || null,
         }),
       });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Failed to create proposal");
+        return;
+      }
+
       setShowWizard(false);
-      fetchProposals();
-    } finally { setSaving(false); }
+      await fetchProposals();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to submit proposal.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function updateStatus(id: number, status: string) {
-    await fetch(`${API_BASE_URL}/proposals/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    setProposals(prev => prev.map(p => p.id === id ? { ...p, status } : p));
-    if (selected?.id === id) setSelected(s => s ? { ...s, status } : s);
+  // ─── Update Proposal Status (Multi-Way Sync) ───────────────────────────────
+  async function updateStatus(id: number, newStatus: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/proposals/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        setProposals(prev => prev.map(p => p.id === id ? { ...p, status: newStatus } : p));
+        if (selected?.id === id) setSelected(s => s ? { ...s, status: newStatus } : s);
+      }
+    } catch (e) { console.error(e); }
   }
 
   async function deleteProposal(id: number) {
-    if (!confirm(t("proposals.confirm_delete"))) return;
+    if (!confirm(t("proposals.confirm_delete") || "Are you sure you want to delete this proposal?")) return;
     await fetch(`${API_BASE_URL}/proposals/${id}`, { method: "DELETE" });
     setProposals(prev => prev.filter(p => p.id !== id));
     setSelected(null);
@@ -302,7 +416,7 @@ export default function ProposalsPage() {
     fetch(`${API_BASE_URL}/proposals/${id}/pdf${uid}`)
       .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.blob(); })
       .then(blob => setPreview({ id, name: p?.title || `Q-${String(id).padStart(4, "0")}`, url: URL.createObjectURL(new Blob([blob], { type: "application/pdf" })) }))
-      .catch(() => alert(t("proposals.pdf_error")))
+      .catch(() => alert("Failed to load PDF preview."))
       .finally(() => setPreviewLoading(false));
   }
 
@@ -311,10 +425,17 @@ export default function ProposalsPage() {
     setPreview(null);
   }
 
-  // ─── Derived state ────────────────────────────────────────────────────────
-  const filtered = filterStatus === "All" ? proposals : proposals.filter(p => p.status === filterStatus);
+  // ─── Filtered Data ──────────────────────────────────────────────────────────
+  const filtered = filterStatus === "All"
+    ? proposals
+    : proposals.filter(p => {
+        if (filterStatus === "Sent") return p.status === "Sent" || p.status === "Proposal Sent";
+        if (filterStatus === "Accepted") return p.status === "Accepted" || p.status === "Won";
+        if (filterStatus === "Rejected") return p.status === "Rejected" || p.status === "Lost";
+        return p.status === filterStatus;
+      });
 
-  const catalogCategories = ["All", ...Array.from(new Set(catalog.map(i => i.category)))];
+  const catalogCategories = ["All", ...Array.from(new Set(catalog.map(i => i.category || "General")))];
   const filteredCatalog = catalog.filter(item => {
     const matchCat = catalogCategory === "All" || item.category === catalogCategory;
     const matchQ   = !catalogSearch || item.name.toLowerCase().includes(catalogSearch.toLowerCase());
@@ -322,21 +443,21 @@ export default function ProposalsPage() {
   });
 
   const filteredRecipients = recipientType === "client"
-    ? clients.filter(c => !recipientSearch || c.companyName.toLowerCase().includes(recipientSearch.toLowerCase()))
+    ? clients.filter(c => !recipientSearch || (c.companyName || "").toLowerCase().includes(recipientSearch.toLowerCase()))
     : leads.filter(l => {
         const name = (l.company_name || l.contact_name || "").toLowerCase();
         return !recipientSearch || name.includes(recipientSearch.toLowerCase());
       });
 
   const stats = {
-    total:    proposals.length,
-    accepted: proposals.filter(p => p.status === "Accepted").length,
-    sent:     proposals.filter(p => p.status === "Sent").length,
-    value:    proposals.filter(p => p.status === "Accepted")
-                .reduce((s, p) => s + (p.total_value || 0), 0),
+    total: proposals.length,
+    sent: proposals.filter(p => p.status === "Sent" || p.status === "Proposal Sent").length,
+    negotiation: proposals.filter(p => p.status === "Negotiation").length,
+    accepted: proposals.filter(p => p.status === "Accepted" || p.status === "Won").length,
+    value: proposals.filter(p => p.status === "Accepted" || p.status === "Won")
+      .reduce((s, p) => s + (p.total_value || 0), 0),
   };
 
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full bg-[#f8fafc] dark:bg-black min-h-screen">
 
@@ -345,57 +466,69 @@ export default function ProposalsPage() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2.5">
-              <span>Proposals &amp; Quotes</span>
-              <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                Commercial Engine
+              <span>Proposals &amp; Quotations</span>
+              <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                USD ($) &amp; INR (₹) Engine
               </span>
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-              Auto-mapped to Deals Pipeline &amp; Sales Representatives · Pre-invoice approvals
+              Two-way auto currency conversion · Instant stage sync across Client Hub, Deals Pipeline &amp; Revenue
             </p>
           </div>
           <div className="flex gap-2">
-            <button onClick={fetchProposals}
+            <button onClick={fetchProposals} title="Refresh proposals list"
               className="p-2.5 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors">
               <RefreshCw className="w-4 h-4" />
             </button>
             {!isClient && (
               <button id="create-quotation-btn" onClick={openWizard}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-all hover:shadow-md active:scale-95">
-                <Plus className="w-4 h-4" /> {t("proposals.create_quotation")}
+                <Plus className="w-4 h-4" /> Create Proposal
               </button>
             )}
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+        {/* Currency Rate Banner & Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
           {[
-            { label: t("proposals.stat_total"),    value: stats.total,    color: "text-blue-600",    bg: "bg-blue-50 dark:bg-blue-900/20" },
-            { label: t("proposals.stat_sent"),     value: stats.sent,     color: "text-amber-600",   bg: "bg-amber-50 dark:bg-amber-900/20" },
-            { label: t("proposals.stat_accepted"), value: stats.accepted, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
-            { label: t("proposals.stat_won_value"),value: `$${(stats.value/1000).toFixed(1)}k`, color: "text-violet-600", bg: "bg-violet-50 dark:bg-violet-900/20" },
+            { label: "Total Proposals", value: stats.total, color: "text-blue-600", bg: "bg-blue-50 dark:bg-blue-900/20" },
+            { label: "Proposals Sent", value: stats.sent, color: "text-sky-600", bg: "bg-sky-50 dark:bg-sky-900/20" },
+            { label: "In Negotiation", value: stats.negotiation, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/20" },
+            { label: "Won Deals", value: stats.accepted, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
+            {
+              label: "Won Revenue ($ / ₹)",
+              value: `$${(stats.value/1000).toFixed(1)}k / ₹${(toInr(stats.value)/100000).toFixed(1)}L`,
+              color: "text-violet-600",
+              bg: "bg-violet-50 dark:bg-violet-900/20"
+            },
           ].map(s => (
-            <div key={s.label} className={`flex items-center gap-3 px-4 py-3 rounded-xl ${s.bg}`}>
-              <p className={`text-xl font-black ${s.color}`}>{loading ? "—" : s.value}</p>
-              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">{s.label}</p>
+            <div key={s.label} className={`flex flex-col justify-center px-4 py-3 rounded-xl ${s.bg}`}>
+              <p className={`text-lg font-black ${s.color}`}>{loading ? "—" : s.value}</p>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 font-semibold">{s.label}</p>
             </div>
           ))}
         </div>
       </div>
 
       {/* ── FILTER BAR ──────────────────────────────────────────────────── */}
-      <div className="flex gap-2 px-6 py-3 bg-white dark:bg-black border-b border-slate-200 dark:border-slate-800 overflow-x-auto">
-        {["All", "Draft", "Sent", "Accepted", "Rejected", "Demo Requested"].map(s => (
-          <button key={s} onClick={() => setFilterStatus(s)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-              filterStatus === s
-                ? "bg-blue-600 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
-            }`}>
-            {s}
-          </button>
-        ))}
+      <div className="flex items-center justify-between gap-3 px-6 py-3 bg-white dark:bg-black border-b border-slate-200 dark:border-slate-800 overflow-x-auto">
+        <div className="flex gap-2">
+          {["All", "Sent", "Negotiation", "Accepted", "Rejected", "Draft"].map(s => (
+            <button key={s} onClick={() => setFilterStatus(s)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                filterStatus === s
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+              }`}>
+              {s === "Sent" ? "Proposal Sent" : s === "Accepted" ? "Won" : s === "Rejected" ? "Lost" : s}
+            </button>
+          ))}
+        </div>
+        <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 font-medium shrink-0 bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800">
+          <ArrowRightLeft className="w-3.5 h-3.5 text-blue-500" />
+          <span>Live Exchange Rate: <strong>1 USD ($) = 83.50 INR (₹)</strong></span>
+        </div>
       </div>
 
       {/* ── LIST ────────────────────────────────────────────────────────── */}
@@ -407,10 +540,10 @@ export default function ProposalsPage() {
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <FileSignature className="w-12 h-12 text-slate-300 mb-3" />
-            <p className="text-slate-500 font-medium">{t("proposals.empty")}</p>
+            <p className="text-slate-500 font-medium">No proposals matching your filter.</p>
             {!isClient && (
               <button onClick={openWizard} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors">
-                {t("proposals.create_first")}
+                Create Proposal
               </button>
             )}
           </div>
@@ -418,8 +551,9 @@ export default function ProposalsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {filtered.map(p => {
               const cfg = STATUS_CFG[p.status] || STATUS_CFG.Draft;
-              const Icon = cfg.icon;
-              const sym = currSymbol(p.currency || "MXN");
+              const usdVal = p.currency === "INR" ? toUsd(p.total_value || 0) : (p.total_value || 0);
+              const inrVal = p.currency === "INR" ? (p.total_value || 0) : toInr(p.total_value || 0);
+
               return (
                 <div key={p.id}
                   onClick={() => setSelected(p)}
@@ -428,7 +562,7 @@ export default function ProposalsPage() {
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div className="flex-1 min-w-0">
                         <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
-                          Q-{String(p.id).padStart(4, "0")}
+                          PROP-{String(p.id).padStart(4, "0")}
                         </span>
                         <h3 className="font-semibold text-slate-900 dark:text-white text-sm leading-tight truncate mt-0.5">
                           {p.title}
@@ -436,7 +570,7 @@ export default function ProposalsPage() {
                       </div>
                       <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${cfg.color} bg-slate-100 dark:bg-slate-800`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                        {p.status}
+                        {cfg.label}
                       </span>
                     </div>
 
@@ -466,7 +600,7 @@ export default function ProposalsPage() {
                       </div>
                       <div className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-100/70 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 shrink-0">
                         <span>Pipeline:</span>
-                        <span>{p.deal_stage || "Negotiation"}</span>
+                        <span>{p.deal_stage || (p.status === "Sent" ? "Proposal Sent" : p.status === "Accepted" ? "Closed Won" : "Negotiation")}</span>
                       </div>
                     </div>
 
@@ -486,10 +620,16 @@ export default function ProposalsPage() {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 dark:border-zinc-800/80">
-                    <span className="text-lg font-bold text-slate-900 dark:text-white">
-                      {p.total_value ? fmtMoney(p.total_value, p.currency || "MXN") : "—"}
-                    </span>
+                  {/* Dual Currency Values & Row Actions */}
+                  <div className="flex items-center justify-between mt-2 pt-2.5 border-t border-slate-100 dark:border-zinc-800/80">
+                    <div>
+                      <div className="text-base font-black text-slate-900 dark:text-white">
+                        {fmtUsd(usdVal)}
+                      </div>
+                      <div className="text-xs font-semibold text-slate-400">
+                        {fmtInr(inrVal)}
+                      </div>
+                    </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       {p.public_uuid && (
                         <a
@@ -505,27 +645,27 @@ export default function ProposalsPage() {
                       <button
                         onClick={e => { e.stopPropagation(); previewPDF(p.id); }}
                         className="p-1.5 rounded-lg bg-slate-100 hover:bg-purple-100 text-slate-500 hover:text-purple-600 dark:bg-slate-800 dark:hover:bg-purple-900/30 dark:text-slate-400 dark:hover:text-purple-400 transition-colors"
-                        title={t("proposals.preview_pdf")}>
+                        title="Preview PDF">
                         <Eye className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={e => { e.stopPropagation(); downloadPDF(p.id); }}
                         className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-500 hover:text-blue-600 dark:bg-slate-800 dark:hover:bg-blue-900/30 dark:text-slate-400 dark:hover:text-blue-400 transition-colors"
-                        title={t("proposals.download_pdf")}>
+                        title="Download PDF">
                         <Download className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={e => { e.stopPropagation(); deleteProposal(p.id); }}
                         className="p-1.5 rounded-lg bg-slate-100 hover:bg-red-100 text-slate-500 hover:text-red-500 dark:bg-slate-800 dark:hover:bg-red-900/30 dark:hover:text-red-400 transition-colors"
-                        title={t("proposals.delete")}>
+                        title="Delete Proposal">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
 
                   {p.valid_until && (
-                    <p className="text-[10px] text-slate-400 mt-1.5 flex items-center gap-1">
-                      <Clock className="w-3 h-3" /> {t("proposals.valid_until")} {p.valid_until}
+                    <p className="text-[10px] text-slate-400 mt-2 flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> Valid until: {p.valid_until}
                     </p>
                   )}
                 </div>
@@ -544,7 +684,7 @@ export default function ProposalsPage() {
             {/* Header */}
             <div className="flex items-start justify-between p-6 border-b border-slate-200 dark:border-slate-800">
               <div>
-                <span className="text-xs font-mono text-slate-400">Q-{String(selected.id).padStart(4, "0")}</span>
+                <span className="text-xs font-mono text-slate-400">PROP-{String(selected.id).padStart(4, "0")}</span>
                 <h2 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">{selected.title}</h2>
                 {selected.client_name && (
                   <p className="text-sm text-slate-500 mt-0.5 flex items-center gap-1.5">
@@ -561,56 +701,87 @@ export default function ProposalsPage() {
             </div>
 
             <div className="p-6 space-y-5">
-              {/* Status */}
+              {/* Synchronized Stage Updater */}
               <div>
-                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">{t("proposals.update_status")}</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Sync Status across CRM</p>
+                  <span className="text-[11px] text-blue-600 font-semibold">Updates Client &amp; Deal automatically</span>
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {Object.keys(STATUS_CFG).map(s => {
-                    const cfg = STATUS_CFG[s];
-                    const Icon = cfg.icon;
+                  {[
+                    { id: "Sent", label: "Proposal Sent", icon: Send },
+                    { id: "Negotiation", label: "Negotiation", icon: Clock },
+                    { id: "Accepted", label: "Won (Accepted)", icon: CheckCircle },
+                    { id: "Rejected", label: "Lost (Rejected)", icon: XCircle },
+                    { id: "Draft", label: "Draft", icon: Edit3 },
+                  ].map(s => {
+                    const isCurrent = selected.status === s.id || (s.id === "Sent" && selected.status === "Proposal Sent");
                     return (
-                      <button key={s} onClick={() => updateStatus(selected.id, s)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
-                          selected.status === s
-                            ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-600"
+                      <button key={s.id} onClick={() => updateStatus(selected.id, s.id)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                          isCurrent
+                            ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-600 shadow-sm"
                             : "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
                         }`}>
-                        <Icon className="w-3.5 h-3.5" />{s}
+                        <s.icon className="w-3.5 h-3.5" />{s.label}
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Line items */}
+              {/* Line items with Dual Currency */}
               {selected.line_items?.length > 0 && (
                 <div>
                   <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2">
-                    Items ({selected.currency || "MXN"})
+                    Line Items &amp; Pricing
                   </p>
                   <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-slate-50 dark:bg-slate-900 text-left">
-                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs">{t("proposals.col_product")}</th>
-                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">{t("proposals.col_qty")}</th>
-                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">{t("proposals.col_unit_price")}</th>
-                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">{t("proposals.col_total")}</th>
+                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs">Product / Service</th>
+                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">Qty</th>
+                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">Unit ($ / ₹)</th>
+                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">Total</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {selected.line_items.map((li, i) => (
-                          <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
-                            <td className="px-3 py-2.5 text-slate-900 dark:text-white">{li.product_name}</td>
-                            <td className="px-3 py-2.5 text-right text-slate-600 dark:text-slate-300">{li.quantity} {li.unit}</td>
-                            <td className="px-3 py-2.5 text-right text-slate-600 dark:text-slate-300">{fmtMoney(li.unit_price, selected.currency)}</td>
-                            <td className="px-3 py-2.5 text-right font-semibold text-slate-900 dark:text-white">{fmtMoney(li.quantity * li.unit_price, selected.currency)}</td>
-                          </tr>
-                        ))}
+                        {selected.line_items.map((li, i) => {
+                          const liUsd = li.currency === "INR" ? toUsd(li.unit_price) : li.unit_price;
+                          const liInr = li.currency === "INR" ? li.unit_price : toInr(li.unit_price);
+                          const totalUsd = liUsd * li.quantity;
+                          const totalInr = liInr * li.quantity;
+
+                          return (
+                            <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
+                              <td className="px-3 py-2.5 text-slate-900 dark:text-white">
+                                <p className="font-semibold">{li.product_name}</p>
+                                {li.description && <p className="text-xs text-slate-400">{li.description}</p>}
+                              </td>
+                              <td className="px-3 py-2.5 text-right text-slate-600 dark:text-slate-300 font-mono">
+                                {li.quantity} {li.unit || "pcs"}
+                              </td>
+                              <td className="px-3 py-2.5 text-right text-slate-600 dark:text-slate-300 font-mono text-xs">
+                                <div>{fmtUsd(liUsd)}</div>
+                                <div className="text-[10px] text-slate-400">{fmtInr(liInr)}</div>
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-bold text-slate-900 dark:text-white font-mono">
+                                <div>{fmtUsd(totalUsd)}</div>
+                                <div className="text-[10px] text-slate-400 font-normal">{fmtInr(totalInr)}</div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                         <tr className="border-t-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
-                          <td colSpan={3} className="px-3 py-2.5 font-bold text-slate-900 dark:text-white text-right">{t("proposals.total")}</td>
-                          <td className="px-3 py-2.5 text-right font-bold text-blue-600 text-base">
-                            {fmtMoney(selected.total_value || 0, selected.currency)}
+                          <td colSpan={3} className="px-3 py-2.5 font-bold text-slate-900 dark:text-white text-right">
+                            Grand Total:
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-black text-blue-600 text-base font-mono">
+                            <div>{fmtUsd(selected.currency === "INR" ? toUsd(selected.total_value || 0) : (selected.total_value || 0))}</div>
+                            <div className="text-xs font-semibold text-slate-500">
+                              {fmtInr(selected.currency === "INR" ? (selected.total_value || 0) : toInr(selected.total_value || 0))}
+                            </div>
                           </td>
                         </tr>
                       </tbody>
@@ -622,20 +793,20 @@ export default function ProposalsPage() {
               {/* Notes */}
               {selected.content && (
                 <div>
-                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1.5">{t("proposals.notes")}</p>
+                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1.5">Proposal Notes &amp; Scope</p>
                   <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-900 rounded-xl p-3">{selected.content}</p>
                 </div>
               )}
 
-              {/* Meta */}
+              {/* Meta information */}
               <div className="grid grid-cols-2 gap-3">
                 {[
                   { label: "Assigned Sales Rep", value: selected.salesperson_name || selected.creator_name || "Unassigned" },
                   { label: "Deals Pipeline",    value: `Stage: ${selected.deal_stage || "Negotiation"}` },
-                  { label: t("proposals.meta_valid_until"),  value: selected.valid_until || "—" },
-                  { label: t("proposals.meta_currency"),     value: selected.currency || "MXN" },
-                  { label: t("proposals.meta_created"),      value: new Date(selected.created_at).toLocaleDateString("en-IN") },
-                  { label: t("proposals.meta_creator"),      value: selected.creator_name || "—" },
+                  { label: "Valid Until",       value: selected.valid_until || "—" },
+                  { label: "Exchange Rate",     value: "1 USD = 83.50 INR" },
+                  { label: "Created Date",      value: new Date(selected.created_at).toLocaleDateString("en-US") },
+                  { label: "Created By",        value: selected.creator_name || "Sales Admin" },
                 ].map(m => (
                   <div key={m.label} className="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl">
                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">{m.label}</p>
@@ -648,7 +819,7 @@ export default function ProposalsPage() {
               {selected.public_uuid && (
                 <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-800/60 flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-[11px] font-bold text-blue-900 dark:text-blue-300">Live Web Proposal &amp; Signature Link</p>
+                    <p className="text-[11px] font-bold text-blue-900 dark:text-blue-300">Live Client Proposal &amp; Digital Sign Link</p>
                     <p className="text-xs text-slate-500 truncate font-mono">/p/{selected.public_uuid}</p>
                   </div>
                   <a
@@ -657,52 +828,11 @@ export default function ProposalsPage() {
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors shadow-sm"
                   >
-                    <span>Open Web View</span>
+                    <span>Open Public Web View</span>
                     <Link2 className="w-3.5 h-3.5" />
                   </a>
                 </div>
               )}
-
-              {/* Digital Signature Block */}
-              <div className="mt-6 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-6 bg-slate-50 dark:bg-slate-900/50 flex flex-col items-center justify-center">
-                {selected.signed_at ? (
-                  <div className="text-center space-y-2">
-                    <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2">
-                      <FileSignature className="w-6 h-6" />
-                    </div>
-                    <p className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-serif italic">{t("proposals.digitally_signed")}</p>
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">
-                      Signed on {new Date(selected.signed_at).toLocaleString("en-IN")}
-                    </p>
-                    {selected.signed_by_ip && (
-                      <p className="text-[10px] text-slate-400">IP: {selected.signed_by_ip}</p>
-                    )}
-                  </div>
-                ) : isClient ? (
-                  <div className="text-center space-y-4 w-full">
-                    <p className="text-sm text-slate-600 dark:text-slate-300 font-medium">{t("proposals.ready_to_sign")}</p>
-                    <button onClick={async () => {
-                      try {
-                        const res = await fetch(`${API_BASE_URL}/proposals/${selected.id}/sign`, { method: "POST" });
-                        if (res.ok) {
-                          const updated = await res.json();
-                          setSelected(updated);
-                          fetchProposals();
-                        }
-                      } catch (e) { console.error(e); }
-                    }} className="w-full py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl font-bold shadow-md hover:scale-[1.02] transition-transform flex items-center justify-center gap-2">
-                      <FileSignature className="w-5 h-5" />
-                      {t("proposals.approve_sign")}
-                    </button>
-                    <p className="text-[10px] text-slate-400">{t("proposals.by_signing")}</p>
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <FileSignature className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-                    <p className="text-sm font-semibold text-slate-500">{t("proposals.awaiting_signature")}</p>
-                  </div>
-                )}
-              </div>
 
               {/* Actions */}
               <div className="flex gap-3 pt-2">
@@ -712,7 +842,7 @@ export default function ProposalsPage() {
                 </button>
                 <button onClick={() => downloadPDF(selected.id)}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 transition-colors">
-                  <Download className="w-4 h-4" /> {t("proposals.download_pdf")}
+                  <Download className="w-4 h-4" /> Download PDF
                 </button>
                 {selected.status === 'Accepted' && (
                   <button
@@ -748,161 +878,133 @@ export default function ProposalsPage() {
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
-      {/* PDF PREVIEW                                                         */}
+      {/* PDF PREVIEW MODAL                                                   */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {preview && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#0d0d0d] rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden" style={{ height: "85vh" }}>
-            <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-slate-200 dark:border-slate-800">
-              <h2 className="text-base font-black text-slate-800 dark:text-zinc-100 flex items-center gap-2 truncate">
-                <Eye className="w-4 h-4 text-purple-500 shrink-0" /> {preview.name}
-              </h2>
-              <div className="flex items-center gap-2 shrink-0">
-                {previewLoading && <Loader2 className="w-4 h-4 animate-spin text-purple-500" />}
-                <button
-                  onClick={() => downloadPDF(preview.id)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-all"
-                  title={t("proposals.download_pdf")}>
-                  <Download className="w-3.5 h-3.5" /> {t("proposals.download_pdf")}
-                </button>
-                <button
-                  onClick={closePreview}
-                  className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-400 transition-all">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-zinc-800">
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">{preview.name} (PDF Preview)</h3>
+              <button onClick={closePreview} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
             </div>
-            <iframe src={preview.url} className="flex-1 w-full border-0 bg-white" title="Quotation Preview" />
+            <div className="flex-1 bg-slate-100 dark:bg-black">
+              <iframe src={preview.url} className="w-full h-full border-0" />
+            </div>
           </div>
         </div>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
-      {/* QUOTATION WIZARD                                                   */}
+      {/* PROPOSAL CREATION WIZARD (WITH TWO-WAY USD <-> INR CONVERSION)     */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
       {showWizard && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#0d0d0d] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[95vh] overflow-hidden flex flex-col">
-
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#111] rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[92vh] overflow-hidden">
             {/* Wizard Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-4">
-                {step !== "recipient" && (
-                  <button onClick={() => setStep(step === "cart" ? "recipient" : "cart")}
-                    className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-slate-500">
-                    <ArrowLeft className="w-4 h-4" />
-                  </button>
-                )}
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 dark:text-white">{t("proposals.wizard_new")}</h2>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {(["recipient", "cart", "details"] as WizardStep[]).map((s, i) => (
-                      <div key={s} className="flex items-center gap-1.5">
-                        {i > 0 && <ChevronRight className="w-3 h-3 text-slate-300" />}
-                        <span className={`text-xs font-medium ${step === s ? "text-blue-600" : step > s ? "text-emerald-500" : "text-slate-400"}`}>
-                          {s === "recipient" ? t("proposals.wizard_step_recipient") : s === "cart" ? t("proposals.wizard_step_products") : t("proposals.wizard_step_details")}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#161616]">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white">Create Commercial Proposal</h2>
+                <p className="text-xs text-slate-500">Dual Currency Conversion ($ USD ⇄ ₹ INR)</p>
               </div>
-              <button onClick={() => setShowWizard(false)} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-                <X className="w-5 h-5 text-slate-500" />
+              <button onClick={() => setShowWizard(false)} className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400">
+                <X className="w-5 h-5" />
               </button>
+            </div>
+
+            {/* Stepper */}
+            <div className="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111]">
+              {[
+                { id: "recipient", num: "1", title: "Select Client" },
+                { id: "cart",      num: "2", title: "Products & Pricing ($ / ₹)" },
+                { id: "details",   num: "3", title: "Terms & Send" },
+              ].map(s => {
+                const isActive = step === s.id;
+                return (
+                  <div key={s.id}
+                    className={`flex-1 py-3 px-4 flex items-center gap-2 border-b-2 font-medium text-xs transition-colors ${
+                      isActive ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold bg-blue-50/50 dark:bg-blue-950/20" : "border-transparent text-slate-400"
+                    }`}>
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                      isActive ? "bg-blue-600 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                    }`}>
+                      {s.num}
+                    </span>
+                    <span>{s.title}</span>
+                  </div>
+                );
+              })}
             </div>
 
             {/* ── STEP 1: RECIPIENT ────────────────────────────────────── */}
             {step === "recipient" && (
-              <div className="flex-1 overflow-y-auto p-6">
-                <p className="text-sm text-slate-500 mb-5">{t("proposals.wizard_who_for")}</p>
-
-                {/* Type toggle */}
-                <div className="flex gap-3 mb-5">
-                  {([
-                    { type: "client", label: "Client", icon: Building2 },
-                    { type: "lead",   label: "Lead",   icon: User2 },
-                  ] as const).map(t => (
-                    <button key={t.type} onClick={() => { setRecipientType(t.type); setSelectedClientId(null); setSelectedLeadId(null); setRecipientSearch(""); }}
-                      className={`flex-1 flex flex-col items-center gap-2 py-4 rounded-2xl border-2 transition-all ${
-                        recipientType === t.type
-                          ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                          : "border-slate-200 dark:border-slate-700 hover:border-blue-300"
-                      }`}>
-                      <t.icon className={`w-6 h-6 ${recipientType === t.type ? "text-blue-600" : "text-slate-400"}`} />
-                      <span className={`text-sm font-semibold ${recipientType === t.type ? "text-blue-700 dark:text-blue-400" : "text-slate-600 dark:text-slate-300"}`}>
-                        {t.label}
-                      </span>
-                    </button>
-                  ))}
+              <div className="p-6 flex-1 overflow-y-auto">
+                <div className="flex gap-2 mb-4">
+                  <button onClick={() => { setRecipientType("client"); setSelectedLeadId(null); }}
+                    className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
+                      recipientType === "client" ? "border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400" : "border-slate-200 dark:border-slate-700 text-slate-500"
+                    }`}>
+                    <Building2 className="w-4 h-4" /> Existing Client
+                  </button>
+                  <button onClick={() => { setRecipientType("lead"); setSelectedClientId(null); }}
+                    className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-colors flex items-center justify-center gap-1.5 ${
+                      recipientType === "lead" ? "border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400" : "border-slate-200 dark:border-slate-700 text-slate-500"
+                    }`}>
+                    <User2 className="w-4 h-4" /> Pipeline Lead
+                  </button>
                 </div>
 
-                {/* Search */}
                 <div className="relative mb-4">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
                     value={recipientSearch}
                     onChange={e => setRecipientSearch(e.target.value)}
-                    placeholder={`${t("proposals.wizard_search")} ${recipientType === "client" ? t("proposals.wizard_clients") : t("proposals.wizard_leads")}…`}
-                    className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
+                    placeholder={`Search ${recipientType === "client" ? "clients" : "leads"}…`}
+                    className="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
 
-                {/* List */}
-                <div className="space-y-2 max-h-80 overflow-y-auto">
-                  {filteredRecipients.slice(0, 50).map((r: any) => {
-                    const id   = r.id;
-                    const name = r.companyName || r.company_name || r.contact_name || "—";
-                    const isSelected = recipientType === "client"
-                      ? selectedClientId === id
-                      : selectedLeadId === id;
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {filteredRecipients.map((r: any) => {
+                    const isSelected = recipientType === "client" ? selectedClientId === r.id : selectedLeadId === r.id;
+                    const name = recipientType === "client" ? r.companyName : (r.company_name || r.contact_name);
                     return (
-                      <button key={id}
-                        onClick={() => recipientType === "client" ? setSelectedClientId(id) : setSelectedLeadId(id)}
-                        className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                          isSelected
-                            ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                            : "border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-[#111]"
+                      <button key={r.id}
+                        onClick={() => {
+                          if (recipientType === "client") setSelectedClientId(r.id);
+                          else setSelectedLeadId(r.id);
+                        }}
+                        className={`w-full p-3 rounded-xl border text-left flex items-center gap-3 transition-colors ${
+                          isSelected ? "border-blue-500 bg-blue-50/70 dark:bg-blue-950/30" : "border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
                         }`}>
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm ${
-                          isSelected ? "bg-blue-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-500"
-                        }`}>
-                          {name.charAt(0).toUpperCase()}
+                        <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/40 text-blue-600 flex items-center justify-center shrink-0">
+                          {recipientType === "client" ? <Building2 className="w-4 h-4" /> : <User2 className="w-4 h-4" />}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm text-slate-900 dark:text-white truncate">{name}</p>
-                          {r.email && <p className="text-xs text-slate-400 truncate">{r.email}</p>}
+                          <p className="font-bold text-xs text-slate-900 dark:text-white truncate">{name}</p>
+                          {r.email && <p className="text-[11px] text-slate-400 truncate">{r.email}</p>}
                         </div>
-                        {isSelected && <CheckCircle className="w-4 h-4 text-blue-600 flex-shrink-0" />}
+                        {isSelected && <Check className="w-4 h-4 text-blue-600 shrink-0" />}
                       </button>
                     );
                   })}
                   {filteredRecipients.length === 0 && (
-                    <p className="text-center text-slate-400 py-8 text-sm">{t("proposals.wizard_no_results")}</p>
+                    <p className="text-center text-slate-400 py-8 text-xs">No matching clients found.</p>
                   )}
                 </div>
 
-                {/* Auto-mapping sales rep & deal banner */}
                 {recipientType === "client" && selectedClientId && (
                   (() => {
                     const selClient = clients.find(c => c.id === selectedClientId);
                     return (
-                      <div className="mt-4 p-4 rounded-xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 space-y-2">
-                        <div className="flex items-center justify-between flex-wrap gap-2">
-                          <div className="flex items-center gap-2">
-                            <User2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                              Assigned Sales Representative:
-                            </span>
-                            <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-300">
-                              {selClient?.assignedEmployeeName || user?.name || "Auto-assigned upon creation"}
-                            </span>
-                          </div>
-                          <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 bg-white dark:bg-zinc-900 px-2.5 py-0.5 rounded-full border border-blue-200 dark:border-blue-800 shadow-sm">
-                            Auto-sync with Pipeline
-                          </span>
+                      <div className="mt-4 p-3.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">Sales Representative:</span>
+                          <span className="font-bold text-blue-700 dark:text-blue-300">{selClient?.assignedEmployeeName || user?.name || "Auto-assigned"}</span>
                         </div>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                          ⚡ Creating this proposal will automatically link or create an opportunity in your <strong>Sales Pipeline</strong> under stage <strong>Negotiation</strong>.
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          ⚡ Sending this proposal will immediately update the client to <strong>Proposal Sent</strong> and keep deals pipeline synchronized.
                         </p>
                       </div>
                     );
@@ -913,28 +1015,32 @@ export default function ProposalsPage() {
                   <button
                     disabled={recipientType === "client" ? !selectedClientId : !selectedLeadId}
                     onClick={() => setStep("cart")}
-                    className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                    {t("proposals.wizard_continue_products")}
+                    className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Continue to Products &amp; Pricing →
                   </button>
                 </div>
               </div>
             )}
 
-            {/* ── STEP 2: CART ─────────────────────────────────────────── */}
+            {/* ── STEP 2: CART & DUAL CURRENCY AUTO CONVERSION ─────────── */}
             {step === "cart" && (
-              <div className="flex-1 overflow-hidden flex">
-                {/* Left: Catalog */}
-                <div className="flex-1 overflow-y-auto p-5 border-r border-slate-200 dark:border-slate-800">
-                  {/* Currency Toggle */}
-                  <div className="flex items-center justify-between mb-4">
-                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">{t("proposals.wizard_catalog")}</p>
-                    <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+              <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
+                {/* Left: Custom Product Form & Catalog */}
+                <div className="flex-1 overflow-y-auto p-5 border-r border-slate-200 dark:border-slate-800 space-y-5">
+                  {/* Currency Selector & Live Rate */}
+                  <div className="flex items-center justify-between bg-blue-50/60 dark:bg-blue-950/20 p-3 rounded-xl border border-blue-100 dark:border-blue-900/40">
+                    <div>
+                      <p className="text-xs font-bold text-slate-900 dark:text-white">Proposal Base Currency</p>
+                      <p className="text-[11px] text-slate-500">Auto-converts between Dollar ($) and Rupee (₹)</p>
+                    </div>
+                    <div className="flex gap-1 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
                       {CURRENCIES.map(c => (
-                        <button key={c.code} onClick={() => switchCurrency(c.code)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        <button key={c.code} onClick={() => switchCurrency(c.code as "USD" | "INR")}
+                          className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all ${
                             currency === c.code
-                              ? "bg-white dark:bg-slate-700 shadow text-blue-700 dark:text-blue-400"
-                              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                              ? "bg-blue-600 text-white shadow-sm"
+                              : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
                           }`}>
                           <c.icon className="w-3.5 h-3.5" />{c.code}
                         </button>
@@ -942,241 +1048,407 @@ export default function ProposalsPage() {
                     </div>
                   </div>
 
-                  {/* Search & Category */}
-                  <div className="flex gap-2 mb-3">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                      <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)}
-                        placeholder={t("proposals.wizard_search_products")}
-                        className="w-full pl-8 pr-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 dark:text-white" />
+                  {/* ── ADD CUSTOM SERVICE / PRODUCT WITH TWO-WAY CONVERTER ── */}
+                  <div className="bg-slate-50 dark:bg-zinc-900/80 p-4 rounded-xl border border-slate-200 dark:border-zinc-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                        Add Custom Service / Line Item
+                      </span>
+                      <span className="text-[10px] font-semibold text-blue-600 bg-blue-100/60 dark:bg-blue-900/40 px-2 py-0.5 rounded">
+                        Two-Way Conversion
+                      </span>
                     </div>
-                    <select value={catalogCategory} onChange={e => setCatalogCategory(e.target.value)}
-                      className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-300 focus:outline-none">
-                      {catalogCategories.map(c => <option key={c}>{c}</option>)}
-                    </select>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        value={customName}
+                        onChange={e => setCustomName(e.target.value)}
+                        placeholder="Service or Product Title (e.g. BPO Sprint)"
+                        className="px-3 py-2 bg-white dark:bg-black border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <input
+                        value={customDesc}
+                        onChange={e => setCustomDesc(e.target.value)}
+                        placeholder="Scope / SLA Description (optional)"
+                        className="px-3 py-2 bg-white dark:bg-black border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 block mb-0.5">Quantity</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={customQty}
+                          onChange={e => setCustomQty(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 block mb-0.5">Unit</label>
+                        <input
+                          value={customUnit}
+                          onChange={e => setCustomUnit(e.target.value)}
+                          placeholder="service / mo"
+                          className="w-full px-2.5 py-1.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-700 rounded-lg text-xs"
+                        />
+                      </div>
+                      {/* Price in Dollars */}
+                      <div>
+                        <label className="text-[10px] font-black text-blue-600 block mb-0.5">Price in Dollars ($ USD)</label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={customUsdPrice}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setCustomUsdPrice(v);
+                              if (v !== "") {
+                                const n = parseFloat(v) || 0;
+                                setCustomInrPrice(String(toInr(n)));
+                              } else {
+                                setCustomInrPrice("");
+                              }
+                            }}
+                            placeholder="0.00"
+                            className="w-full pl-6 pr-2 py-1.5 bg-white dark:bg-black border border-blue-300 dark:border-blue-700 rounded-lg text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                      {/* Price in Rupees */}
+                      <div>
+                        <label className="text-[10px] font-black text-emerald-600 block mb-0.5">Price in Rupees (₹ INR)</label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">₹</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={customInrPrice}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setCustomInrPrice(v);
+                              if (v !== "") {
+                                const n = parseFloat(v) || 0;
+                                setCustomUsdPrice(String(toUsd(n)));
+                              } else {
+                                setCustomUsdPrice("");
+                              }
+                            }}
+                            placeholder="0.00"
+                            className="w-full pl-6 pr-2 py-1.5 bg-white dark:bg-black border border-emerald-300 dark:border-emerald-700 rounded-lg text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <button
+                        onClick={addCustomItem}
+                        disabled={!customName.trim()}
+                        className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add to Proposal
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Product grid */}
-                  {filteredCatalog.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-48 text-slate-400">
-                      <Package className="w-10 h-10 mb-2 opacity-40" />
-                      <p className="text-sm">{t("proposals.wizard_no_products")}</p>
+                  {/* ── CATALOG ITEMS ── */}
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Pick from Catalog</p>
+                      <span className="text-[11px] text-slate-400">{filteredCatalog.length} available</span>
                     </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
+
+                    <div className="flex gap-2 mb-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                        <input value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)}
+                          placeholder="Search catalog items…"
+                          className="w-full pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </div>
+                      <select value={catalogCategory} onChange={e => setCatalogCategory(e.target.value)}
+                        className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-300">
+                        {catalogCategories.map(c => <option key={c}>{c}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto">
                       {filteredCatalog.map(item => {
                         const inCart = cart.find(c => c.product_id === item.id);
-                        const price  = currency === "INR" ? item.unit_price * INR_RATE : item.unit_price;
+                        const baseUsd = item.unit_price > 0 ? item.unit_price : 100;
+                        const usdPrice = baseUsd;
+                        const inrPrice = toInr(baseUsd);
+
                         return (
                           <button key={item.id} onClick={() => addToCart(item)}
-                            className={`text-left p-3 rounded-xl border transition-all hover:shadow-md relative overflow-hidden ${
-                              inCart
-                                ? "border-blue-400 bg-blue-50 dark:bg-blue-900/20"
-                                : "border-slate-100 dark:border-slate-800 bg-white dark:bg-[#111] hover:border-blue-200"
+                            className={`text-left p-2.5 rounded-xl border transition-all text-xs flex items-center justify-between gap-2 ${
+                              inCart ? "border-blue-400 bg-blue-50/70 dark:bg-blue-900/20" : "border-slate-200 dark:border-slate-800 hover:border-blue-300"
                             }`}>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-bold text-slate-900 dark:text-white truncate">{item.name}</p>
+                              <p className="text-[10px] text-slate-400 truncate">{item.category} · {item.unit || "pcs"}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="font-black text-blue-600 font-mono">{fmtUsd(usdPrice)}</div>
+                              <div className="text-[10px] font-semibold text-slate-400 font-mono">{fmtInr(inrPrice)}</div>
+                            </div>
                             {inCart && (
-                              <span className="absolute top-2 right-2 bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                              <span className="bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">
                                 ×{inCart.quantity}
                               </span>
                             )}
-                            {item.photo_url ? (
-                              <img src={item.photo_url.startsWith('/') ? `${API_BASE_URL}${item.photo_url}` : item.photo_url} alt={item.name}
-                                className="w-full h-20 object-cover rounded-lg mb-2 bg-slate-100" />
-                            ) : (
-                              <div className="w-full h-20 bg-slate-100 dark:bg-slate-800 rounded-lg mb-2 flex items-center justify-center">
-                                <Package className="w-6 h-6 text-slate-300" />
-                              </div>
-                            )}
-                            <p className="text-xs font-semibold text-slate-900 dark:text-white leading-tight truncate">{item.name}</p>
-                            <p className="text-[10px] text-slate-400 mb-1 truncate">{item.category}</p>
-                            <p className="text-xs font-bold text-blue-600">
-                              {price > 0 ? `${currSymbol(currency)}${price.toFixed(2)}` : "—"}<span className="font-normal text-slate-400">/{item.unit}</span>
-                            </p>
                           </button>
                         );
                       })}
                     </div>
-                  )}
+                  </div>
                 </div>
 
-                {/* Right: Cart */}
-                <div className="w-72 flex flex-col bg-slate-50 dark:bg-[#0a0a0a]">
-                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
-                    <ShoppingCart className="w-4 h-4 text-blue-600" />
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{t("proposals.wizard_cart")} ({cart.length})</p>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                    {cart.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-40 text-slate-400">
-                        <ShoppingCart className="w-8 h-8 mb-2 opacity-30" />
-                        <p className="text-xs text-center">{t("proposals.wizard_click_to_add")}</p>
-                      </div>
-                    ) : cart.map((li, idx) => (
-                      <div key={idx} className="bg-white dark:bg-[#111] rounded-xl p-3 border border-slate-100 dark:border-slate-800">
-                        <div className="flex items-start justify-between gap-1 mb-2">
-                          <p className="text-xs font-semibold text-slate-900 dark:text-white leading-tight flex-1">{li.product_name}</p>
-                          <button onClick={() => removeFromCart(idx)} className="text-slate-300 hover:text-red-500 transition-colors">
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <button onClick={() => updateCartQty(idx, li.quantity - 1)} className="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-                            <Minus className="w-3 h-3 text-slate-600 dark:text-slate-300" />
-                          </button>
-                          <span className="text-sm font-bold text-slate-900 dark:text-white w-6 text-center">{li.quantity}</span>
-                          <button onClick={() => updateCartQty(idx, li.quantity + 1)} className="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-                            <Plus className="w-3 h-3 text-slate-600 dark:text-slate-300" />
-                          </button>
-                          <span className="text-[10px] text-slate-400">{li.unit}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs text-slate-400">{currSymbol(currency)}</span>
-                          <input type="number" value={li.unit_price} min={0} step={0.01}
-                            onChange={e => updateCartPrice(idx, parseFloat(e.target.value) || 0)}
-                            className="flex-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                        </div>
-                        <p className="text-xs font-bold text-blue-600 mt-1.5 text-right">
-                          {fmtMoney(li.quantity * li.unit_price, currency)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Cart total */}
-                  <div className="p-4 border-t border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-sm text-slate-500">{t("proposals.wizard_total")}</p>
-                      <p className="text-xl font-black text-slate-900 dark:text-white">{fmtMoney(cartTotal, currency)}</p>
+                {/* Right: Cart Review with Live Two-Way Price Edit */}
+                <div className="w-full md:w-80 flex flex-col bg-slate-50 dark:bg-[#0a0a0a] border-t md:border-t-0 md:border-l border-slate-200 dark:border-slate-800">
+                  <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ShoppingCart className="w-4 h-4 text-blue-600" />
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">Proposal Cart ({cart.length})</p>
                     </div>
-                    <button disabled={cart.length === 0} onClick={() => setStep("details")}
-                      className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                      {t("proposals.wizard_continue_details")}
-                    </button>
+                    <span className="text-[11px] font-bold text-blue-600 font-mono">{currency}</span>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2 max-h-[380px]">
+                    {cart.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-48 text-slate-400 text-center px-4">
+                        <ShoppingCart className="w-8 h-8 mb-2 opacity-30" />
+                        <p className="text-xs font-semibold">Your proposal cart is empty</p>
+                        <p className="text-[11px] text-slate-400 mt-1">Add items from the catalog or create a custom service above.</p>
+                      </div>
+                    ) : cart.map((li, idx) => {
+                      const liUsd = currency === "INR" ? toUsd(li.unit_price) : li.unit_price;
+                      const liInr = currency === "INR" ? li.unit_price : toInr(li.unit_price);
+                      const subtotalUsd = liUsd * li.quantity;
+                      const subtotalInr = liInr * li.quantity;
+
+                      return (
+                        <div key={idx} className="bg-white dark:bg-[#111] rounded-xl p-3 border border-slate-200 dark:border-slate-800 text-xs">
+                          <div className="flex items-start justify-between gap-1 mb-1.5">
+                            <p className="font-bold text-slate-900 dark:text-white truncate flex-1">{li.product_name}</p>
+                            <button onClick={() => removeFromCart(idx)} className="text-slate-300 hover:text-red-500 transition-colors">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Qty controls */}
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <button onClick={() => updateCartQty(idx, li.quantity - 1)} className="w-5 h-5 rounded bg-slate-100 dark:bg-slate-800 flex items-center justify-center hover:bg-slate-200">
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              <span className="font-bold w-6 text-center font-mono">{li.quantity}</span>
+                              <button onClick={() => updateCartQty(idx, li.quantity + 1)} className="w-5 h-5 rounded bg-slate-100 dark:bg-slate-800 flex items-center justify-center hover:bg-slate-200">
+                                <Plus className="w-3 h-3" />
+                              </button>
+                              <span className="text-[10px] text-slate-400">{li.unit}</span>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-black text-blue-600 font-mono">{fmtUsd(subtotalUsd)}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">{fmtInr(subtotalInr)}</div>
+                            </div>
+                          </div>
+
+                          {/* Two-way live unit price inputs */}
+                          <div className="grid grid-cols-2 gap-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800">
+                            <div>
+                              <span className="text-[9px] font-bold text-blue-600 block">Unit ($ USD)</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={liUsd}
+                                onChange={e => updateCartPriceUsd(idx, parseFloat(e.target.value) || 0)}
+                                className="w-full px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-[11px] font-mono text-slate-900 dark:text-white"
+                              />
+                            </div>
+                            <div>
+                              <span className="text-[9px] font-bold text-emerald-600 block">Unit (₹ INR)</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={liInr}
+                                onChange={e => updateCartPriceInr(idx, parseFloat(e.target.value) || 0)}
+                                className="w-full px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-[11px] font-mono text-slate-900 dark:text-white"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Dual Total Summary */}
+                  <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111]">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-slate-500 font-semibold">Total in Dollars:</span>
+                      <span className="text-base font-black text-blue-600 font-mono">{dualTotal.usdText}</span>
+                    </div>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs text-slate-500 font-semibold">Total in Rupees:</span>
+                      <span className="text-base font-black text-emerald-600 font-mono">{dualTotal.inrText}</span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button onClick={() => setStep("recipient")}
+                        className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        Back
+                      </button>
+                      <button disabled={cart.length === 0} onClick={() => setStep("details")}
+                        className="flex-1 py-2 bg-blue-600 text-white rounded-xl font-bold text-xs hover:bg-blue-700 disabled:opacity-40 transition-colors">
+                        Continue to Terms &amp; Send →
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* ── STEP 3: DETAILS ──────────────────────────────────────── */}
+            {/* ── STEP 3: DETAILS & SEND ───────────────────────────────── */}
             {step === "details" && (
-              <div className="flex-1 overflow-y-auto p-6 max-w-xl mx-auto w-full">
-                <p className="text-sm text-slate-500 mb-6">{t("proposals.wizard_final_details")}</p>
-
-                {/* Summary card */}
-                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-4 mb-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      {recipientType === "lead"
-                        ? <User2 className="w-4 h-4 text-amber-500" />
-                        : <Building2 className="w-4 h-4 text-blue-500" />}
-                      <p className="font-semibold text-slate-900 dark:text-white text-sm">{recipientName()}</p>
-                    </div>
-                    <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400 rounded-full font-medium">
-                      {recipientType === "lead" ? "Lead" : "Client"}
-                    </span>
+              <div className="flex-1 overflow-y-auto p-6 max-w-xl mx-auto w-full space-y-4">
+                {/* Summary banner */}
+                <div className="bg-blue-50 dark:bg-blue-950/30 rounded-2xl p-4 border border-blue-200 dark:border-blue-900/50">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="font-bold text-sm text-slate-900 dark:text-white">{recipientName()}</p>
+                    <span className="text-xs font-mono font-bold text-blue-600 uppercase">{currency} Proposal</span>
                   </div>
-                  <p className="text-sm text-slate-500">{cart.length} product{cart.length !== 1 ? "s" : ""} · {currency}</p>
-                  <p className="text-2xl font-black text-blue-700 dark:text-blue-400 mt-1">{fmtMoney(cartTotal, currency)}</p>
-
-                  {recipientType === "client" && selectedClientId && (
-                    <div className="mt-3 pt-3 border-t border-blue-200 dark:border-blue-800/50 flex items-center justify-between text-xs text-blue-800 dark:text-blue-300">
-                      <span className="flex items-center gap-1.5 font-medium">
-                        <User2 className="w-3.5 h-3.5" />
-                        Sales Owner: <strong>{clients.find(c => c.id === selectedClientId)?.assignedEmployeeName || user?.name || "Auto-assigned"}</strong>
-                      </span>
-                      <span className="flex items-center gap-1 text-[11px] bg-blue-100 dark:bg-blue-800 px-2 py-0.5 rounded font-bold">
-                        Pipeline: Negotiation
-                      </span>
+                  <div className="flex items-center gap-3 mt-2">
+                    <div className="text-xl font-black text-blue-700 dark:text-blue-400 font-mono">
+                      {dualTotal.usdText}
                     </div>
-                  )}
+                    <span className="text-slate-400">⇄</span>
+                    <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                      {dualTotal.inrText}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">{cart.length} line item{cart.length !== 1 ? "s" : ""} included.</p>
                 </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                      {t("proposals.wizard_quotation_title")}
-                    </label>
-                    <input value={quoteTitle} onChange={e => setQuoteTitle(e.target.value)}
-                      placeholder={`${t("proposals.wizard_quotation_for")} ${recipientName()}`}
-                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
+                    Proposal Title
+                  </label>
+                  <input
+                    value={quoteTitle}
+                    onChange={e => setQuoteTitle(e.target.value)}
+                    placeholder={`Commercial Proposal for ${recipientName()}`}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                      {t("proposals.wizard_valid_until")}
-                    </label>
-                    <input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
+                    Valid Until Date
+                  </label>
+                  <input
+                    type="date"
+                    value={validUntil}
+                    onChange={e => setValidUntil(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                      {t("proposals.wizard_notes")}
-                    </label>
-                    <textarea value={notes} onChange={e => setNotes(e.target.value)}
-                      rows={4} placeholder={t("proposals.wizard_notes_placeholder")}
-                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-                  </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
+                    Scope of Work / Commercial Terms
+                  </label>
+                  <textarea
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Enter delivery timeline, operational milestones, payment terms, or custom notes…"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  />
+                </div>
 
-                  {/* Deals Pipeline Option */}
-                  {recipientType === "client" && selectedClientId && (
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                        Sales Pipeline Deal Integration
-                      </label>
-                      <select
-                        value={selectedDealId || ""}
-                        onChange={e => setSelectedDealId(e.target.value ? Number(e.target.value) : null)}
-                        className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">⚡ Auto-sync / Create Deal in Pipeline (Stage: Negotiation)</option>
-                        {deals
-                          .filter(d => d.client_id === selectedClientId && d.stage !== "Closed Won" && d.stage !== "Closed Lost")
-                          .map(d => (
-                            <option key={d.id} value={d.id}>
-                              Link to: {d.title} ({d.stage} — ${d.value?.toLocaleString()})
-                            </option>
-                          ))}
-                      </select>
+                {/* Pipeline Integration */}
+                {recipientType === "client" && selectedClientId && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
+                      Deals Pipeline Stage Sync
+                    </label>
+                    <select
+                      value={selectedDealId || ""}
+                      onChange={e => setSelectedDealId(e.target.value ? Number(e.target.value) : null)}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">⚡ Auto-sync with Client's Active Deal (Stage: Proposal Sent)</option>
+                      {deals
+                        .filter(d => d.client_id === selectedClientId && d.stage !== "Closed Won" && d.stage !== "Closed Lost")
+                        .map(d => (
+                          <option key={d.id} value={d.id}>
+                            Link to Deal: {d.title} ({d.stage} — ${d.value?.toLocaleString()})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Proposal Status Options */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1.5">
+                    Action upon Creation
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSendStatus("Sent")}
+                      className={`p-3 rounded-xl border-2 text-left transition-all ${
+                        sendStatus === "Sent"
+                          ? "border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-sm"
+                          : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 font-bold text-xs">
+                        <Send className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Send Proposal to Client</span>
+                      </div>
                       <p className="text-[11px] text-slate-500 mt-1">
-                        Automatically keeps pipeline stage and deal value synchronized with this proposal.
+                        Automatically changes client status to <strong>Proposal Sent</strong>.
                       </p>
-                    </div>
-                  )}
+                    </button>
 
-                  {/* Save as Draft or Send */}
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                      {t("proposals.wizard_save_as")}
-                    </label>
-                    <div className="flex gap-2">
-                      {(["Draft", "Sent"] as const).map(s => (
-                        <button key={s} onClick={() => setSendStatus(s)}
-                          className={`flex-1 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${
-                            sendStatus === s
-                              ? s === "Sent"
-                                ? "border-blue-600 bg-blue-600 text-white"
-                                : "border-slate-400 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
-                              : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300"
-                          }`}>
-                          {s === "Draft" ? t("proposals.wizard_save_draft") : `Send to ${recipientName() || "Client"}`}
-                        </button>
-                      ))}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSendStatus("Draft")}
+                      className={`p-3 rounded-xl border-2 text-left transition-all ${
+                        sendStatus === "Draft"
+                          ? "border-slate-600 bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 shadow-sm"
+                          : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 font-bold text-xs">
+                        <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Save as Draft</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Keeps proposal internal until ready for client delivery.
+                      </p>
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex gap-3 mt-6">
+                <div className="flex gap-3 pt-3">
                   <button onClick={() => setStep("cart")}
-                    className="px-6 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                    {t("proposals.wizard_back")}
+                    className="px-6 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    Back
                   </button>
                   <button onClick={submitQuote} disabled={saving}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors">
-                    {saving
-                      ? <><Loader2 className="w-4 h-4 animate-spin" /> {t("proposals.wizard_saving")}…</>
-                      : <><FileText className="w-4 h-4" /> {sendStatus === "Draft" ? t("proposals.wizard_save_quotation") : t("proposals.wizard_create_send")}</>}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-xs hover:bg-blue-700 disabled:opacity-50 transition-all shadow-md active:scale-95">
+                    {saving ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Creating Proposal…</>
+                    ) : (
+                      <><FileText className="w-4 h-4" /> {sendStatus === "Sent" ? "Generate & Send Proposal" : "Save Proposal as Draft"}</>
+                    )}
                   </button>
                 </div>
               </div>
@@ -1185,5 +1457,17 @@ export default function ProposalsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ProposalsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen bg-[#f8fafc] dark:bg-black">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    }>
+      <ProposalsPageContent />
+    </Suspense>
   );
 }

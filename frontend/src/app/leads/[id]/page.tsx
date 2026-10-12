@@ -863,6 +863,7 @@ export default function LeadDetailsPage() {
         onScheduleMeeting={() => router.push('/meetings')}
         onSendEmail={() => lead?.email ? window.location.href = `mailto:${lead.email}` : alert(language === 'es' ? 'No hay correo' : 'No email found for this client')}
         onUploadFile={() => switchTab('files')}
+        onStatusChange={(newSt) => setLead((p: any) => ({ ...p, status: newSt, is_converted: newSt === 'Converted' }))}
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
       />

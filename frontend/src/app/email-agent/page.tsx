@@ -401,31 +401,33 @@ export default function EmailAgentPage() {
       <div className="relative z-10 w-full max-w-5xl flex flex-col h-full mt-6 px-4 pb-20 overflow-y-auto">
         
         {/* Top Header - completely transparent, NO BLUR, white text */}
-        <div className="bg-slate-50 dark:bg-zinc-950 rounded-2xl px-6 pt-6 pb-2 flex items-center justify-between mb-2">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-zinc-800 shadow-lg backdrop-blur-sm">
-              <Bot className="w-5 h-5 text-slate-800 dark:text-zinc-100" />
+        <div className="bg-slate-50 dark:bg-zinc-950 rounded-2xl p-4 sm:px-6 sm:pt-6 sm:pb-3 flex flex-col md:flex-row md:items-center justify-between gap-3 mb-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-zinc-800 shadow-lg backdrop-blur-sm shrink-0">
+                <Bot className="w-5 h-5 text-slate-800 dark:text-zinc-100" />
+              </div>
+              <div>
+                <h1 className="text-xl font-black text-slate-800 dark:text-zinc-100">{t('email_agent.title')}</h1>
+                <p className="text-slate-500 dark:text-zinc-400 text-xs font-medium">{t('email_agent.subtitle')}</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-xl font-black text-slate-800 dark:text-zinc-100">{t('email_agent.title')}</h1>
-              <p className="text-slate-500 dark:text-zinc-400 text-xs font-medium">{t('email_agent.subtitle')}</p>
-            </div>
-            <div className="flex bg-slate-200 dark:bg-zinc-800 p-1 rounded-lg ml-4">
+            <div className="flex flex-wrap bg-slate-200 dark:bg-zinc-800 p-1 rounded-lg sm:ml-4">
               <button
                 onClick={() => setMode("single")}
-                className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${mode === "single" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
+                className={`flex-1 sm:flex-none px-3 py-1.5 rounded-md text-xs font-bold transition-all ${mode === "single" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
               >
                 {t('email_agent.mode_single')}
               </button>
               <button
                 onClick={() => setMode("bulk")}
-                className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${mode === "bulk" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
+                className={`flex-1 sm:flex-none px-3 py-1.5 rounded-md text-xs font-bold transition-all ${mode === "bulk" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
               >
                 {t('email_agent.mode_bulk')}
               </button>
               <button
                 onClick={() => setMode("excel")}
-                className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${mode === "excel" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
+                className={`flex-1 sm:flex-none px-3 py-1.5 rounded-md text-xs font-bold transition-all ${mode === "excel" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
               >
                 Excel Campaign
               </button>

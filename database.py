@@ -23,7 +23,6 @@ except ImportError:
 
 connect_args = {}
 if DATABASE_URL and DATABASE_URL.startswith("postgresql"):
-    DATABASE_URL = DATABASE_URL.replace("-pooler.", ".")
     if not HAS_PSYCOPG2:
         # Windows compatibility fallback: use pg8000 if psycopg2 is blocked or not installed
         import re
@@ -878,6 +877,12 @@ class TaskSheetEntry(SQLModel, table=True):
     blocker: Optional[str] = Field(default=None, sa_column=Column(Text))
     follow_up_date: Optional[str] = Field(default=None, index=True)
     completion_date: Optional[str] = Field(default=None, index=True)
+    outreaches_count: int = Field(default=0)
+    positives_count: int = Field(default=0)
+    negatives_count: int = Field(default=0)
+    followups_scheduled: int = Field(default=0)
+    meetings_scheduled: int = Field(default=0)
+    key_focus: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

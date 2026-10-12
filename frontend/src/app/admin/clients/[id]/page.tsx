@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -309,6 +310,118 @@ function OverviewTab({ client, employees, serviceRequests, activities, timeline,
           )}
         </div>
       )}
+
+      {/* ── Commercial Deals & Proposals Card ───────────────────────────────── */}
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 18, padding: '16px 20px', backdropFilter: 'blur(16px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ background: '#3b82f6', borderRadius: 8, padding: '4px 7px', display: 'flex' }}>
+              <FileText size={13} color="#fff" />
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-primary)' }}>
+              Commercial Deals &amp; Proposals
+            </span>
+            <span style={{ fontSize: 10, fontWeight: 800, padding: '1px 8px', borderRadius: 999, background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6' }}>
+              {clientProposals.length} Proposals · {deals.length} Deals
+            </span>
+          </div>
+          <Link
+            href={`/proposals?new=true&client_id=${clientId}`}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-sm active:scale-95"
+          >
+            <FileText size={13} />
+            <span>+ Create Proposal</span>
+          </Link>
+        </div>
+
+        {/* Proposals List */}
+        {clientProposals.length > 0 ? (
+          <div className="space-y-2 mb-4">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Proposals &amp; Quotes</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {clientProposals.map((prop: any) => {
+                const badge = PROPOSAL_STATUS_BADGE[prop.status] || { bg: '#f1f5f9', color: '#475569' };
+                const usdVal = prop.currency === 'INR' ? (prop.total_value || 0) / 83.5 : (prop.total_value || 0);
+                const inrVal = prop.currency === 'INR' ? (prop.total_value || 0) : (prop.total_value || 0) * 83.5;
+                return (
+                  <div key={prop.id} className="p-3 rounded-xl border border-slate-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between gap-3 hover:border-blue-300 transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-bold text-slate-900 dark:text-zinc-100 truncate">{prop.title || `Proposal #${prop.id}`}</p>
+                        <span style={{ background: badge.bg, color: badge.color }} className="text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase shrink-0">
+                          {prop.status || 'Draft'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        <strong className="text-blue-600 font-bold">${usdVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD</strong>
+                        {' · '}
+                        <span className="text-slate-400">₹{inrVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR</span>
+                      </p>
+                    </div>
+                    {prop.public_uuid && (
+                      <a
+                        href={`/p/${prop.public_uuid}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1 rounded-lg shrink-0"
+                      >
+                        View ↗
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {/* Pipeline Deals */}
+        {deals.length > 0 ? (
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Linked Pipeline Opportunities</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {deals.map((deal: any) => {
+                const sBadge = STAGE_BADGE[deal.stage] || { bg: '#f1f5f9', color: '#475569' };
+                const usd = deal.value || 0;
+                const inr = usd * 83.5;
+                return (
+                  <div key={deal.id} className="p-3 rounded-xl border border-slate-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-bold text-slate-900 dark:text-zinc-100 truncate">{deal.title}</p>
+                        <span style={{ background: sBadge.bg, color: sBadge.color }} className="text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase shrink-0">
+                          {deal.stage || 'Negotiation'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        <strong className="text-indigo-600 font-bold">${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD</strong>
+                        {' · '}
+                        <span className="text-slate-400">₹{inr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR</span>
+                      </p>
+                    </div>
+                    <Link href="/pipeline" className="text-xs font-semibold text-slate-400 hover:text-indigo-600 shrink-0">
+                      Pipeline →
+                    </Link>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {clientProposals.length === 0 && deals.length === 0 && (
+          <div className="text-center py-6">
+            <p className="text-xs text-slate-400 mb-2">No commercial proposals or deals created yet for this client.</p>
+            <Link
+              href={`/proposals?new=true&client_id=${clientId}`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-colors"
+            >
+              <FileText size={13} />
+              <span>Create First Proposal</span>
+            </Link>
+          </div>
+        )}
+      </div>
 
       {/* Company Overview */}
       {research?.company_overview && (
@@ -1160,6 +1273,7 @@ export default function AdminClientDetailPage() {
         onViewDropDetails={() => { setDropModalMode('view'); setIsDropModalOpen(true); }}
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
+        onStatusChange={(newStatus) => setClient((prev: any) => ({ ...prev, status: newStatus }))}
       />
 
       {/* ── Full-Width layout ──────────────────────────────────────── */}

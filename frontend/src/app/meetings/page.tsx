@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Calendar, Plus, X, Clock, Users, MapPin, CheckCircle2, Filter, Search, Loader2, Video, Phone, Coffee, BarChart2, Trash2, Edit2, Upload, FileText } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
+import TimezonePicker from "@/components/TimezonePicker";
+import { detectTimeZone } from "@/lib/timezone";
 
 interface Meeting {
   id: number; title: string; description?: string; location?: string;
@@ -24,9 +26,11 @@ const STATUS_COLORS: Record<string, string> = {
   Completed: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
   Cancelled: "bg-red-500/10 text-red-400 border-red-500/20",
   "No-show": "bg-amber-500/10 text-amber-500 border-amber-500/20",
+  Missed: "bg-rose-500/10 text-rose-500 border-rose-500/20",
 };
 const TYPES = ["Meeting", "Demo", "Follow-up", "Discovery", "Call"];
-const STATUSES = ["Scheduled", "Completed", "Cancelled", "No-show"];
+const STATUSES = ["Scheduled", "Completed", "Cancelled", "No-show", "Missed"];
+const FILTER_TABS = ["All", "Today", "Tomorrow", "Missed", "Scheduled", "Completed", "Cancelled", "No-show"];
 
 export default function MeetingsPage() {
   const { t } = useLanguage();
@@ -76,6 +80,11 @@ export default function MeetingsPage() {
   }, []);
 
   const filtered = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const todayEnd = todayStart + 86400000;
+    const tomorrowEnd = todayEnd + 86400000;
+
     return meetings.filter(m => {
       const q = search.toLowerCase();
       const matchSearch = !q || m.title.toLowerCase().includes(q) ||
@@ -83,10 +92,39 @@ export default function MeetingsPage() {
         (m.lead_name || "").toLowerCase().includes(q) ||
         (m.location || "").toLowerCase().includes(q) ||
         (m.meeting_link || "").toLowerCase().includes(q);
-      const matchStatus = statusFilter === "All" || m.status === statusFilter;
-      return matchSearch && matchStatus;
+
+      if (!matchSearch) return false;
+
+      if (statusFilter === "All") return true;
+
+      const mTime = m.scheduled_at ? new Date(m.scheduled_at).getTime() : 0;
+
+      if (statusFilter === "Today") {
+        return mTime >= todayStart && mTime < todayEnd;
+      }
+      if (statusFilter === "Tomorrow") {
+        return mTime >= todayEnd && mTime < tomorrowEnd;
+      }
+      if (statusFilter === "Missed") {
+        return m.status === "Missed" || (m.status === "Scheduled" && mTime > 0 && mTime < now.getTime());
+      }
+      return m.status === statusFilter;
     });
   }, [meetings, search, statusFilter]);
+
+  const handleStatusChange = async (meetingId: number, newStatus: string) => {
+    setMeetings(prev => prev.map(m => m.id === meetingId ? { ...m, status: newStatus } : m));
+    try {
+      await fetch(`${API_BASE_URL}/meetings/${meetingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (e) {
+      console.error("Failed to update meeting status", e);
+      load();
+    }
+  };
 
   const openCreate = () => {
     setEditMeeting(null);
@@ -220,17 +258,17 @@ export default function MeetingsPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm flex flex-wrap gap-3 items-center">
+      <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-3 sm:p-4 shadow-sm flex flex-col sm:flex-row flex-wrap gap-3 items-stretch sm:items-center">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t("meetings.search_placeholder")}
             className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500" />
         </div>
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-slate-400" />
-          {["All", ...STATUSES].map(s => (
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 sm:pb-0">
+          <Filter className="w-4 h-4 text-slate-400 shrink-0 mr-1" />
+          {FILTER_TABS.map(s => (
             <button key={s} onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${statusFilter === s ? "bg-violet-600 text-white" : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 hover:bg-slate-200 dark:hover:bg-zinc-700"}`}>
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${statusFilter === s ? "bg-violet-600 text-white shadow-sm" : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-400 hover:bg-slate-200 dark:hover:bg-zinc-700"}`}>
               {s}
             </button>
           ))}
@@ -265,7 +303,20 @@ export default function MeetingsPage() {
                     <p className="text-xs text-slate-500 dark:text-zinc-400">{m.meeting_type}</p>
                   </div>
                 </div>
-                <span className={`text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-lg border ${statusCls}`}>{m.status}</span>
+                <div className="relative" onClick={e => e.stopPropagation()}>
+                  <select
+                    value={m.status}
+                    onChange={e => handleStatusChange(m.id, e.target.value)}
+                    className={`text-[10px] font-black uppercase tracking-wide px-2 py-1 rounded-lg border cursor-pointer focus:outline-none transition-all shadow-sm ${statusCls}`}
+                    title="Click to change meeting status"
+                  >
+                    <option value="Scheduled" className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100">Scheduled</option>
+                    <option value="Completed" className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100">Completed</option>
+                    <option value="Cancelled" className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100">Cancelled</option>
+                    <option value="No-show" className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100">No-show</option>
+                    <option value="Missed" className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100">Missed</option>
+                  </select>
+                </div>
               </div>
               {m.scheduled_at && (() => {
                 const start = new Date(m.scheduled_at);
@@ -316,11 +367,11 @@ export default function MeetingsPage() {
                   <span className="text-xs text-slate-500 dark:text-zinc-400">{m.client_name || m.lead_name || m.contact_name}</span>
                 </div>
               )}
-              <div className="flex gap-2 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => openEdit(m)} className="flex-1 py-1.5 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-zinc-700 transition-all flex items-center justify-center gap-1">
+              <div className="flex gap-2 mt-3 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                <button onClick={() => openEdit(m)} className="flex-1 py-1.5 rounded-lg bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-zinc-700 transition-all flex items-center justify-center gap-1 active:scale-95">
                   <Edit2 className="w-3 h-3" /> {t("meetings.edit")}
                 </button>
-                <button onClick={() => handleDelete(m.id)} className="flex-1 py-1.5 rounded-lg bg-red-500/10 text-red-500 text-xs font-bold hover:bg-red-500/20 transition-all flex items-center justify-center gap-1">
+                <button onClick={() => handleDelete(m.id)} className="flex-1 py-1.5 rounded-lg bg-red-500/10 text-red-500 text-xs font-bold hover:bg-red-500/20 transition-all flex items-center justify-center gap-1 active:scale-95">
                   <Trash2 className="w-3 h-3" /> {t("meetings.delete")}
                 </button>
               </div>
@@ -341,63 +392,64 @@ export default function MeetingsPage() {
                 <button onClick={() => setShowModal(false)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800"><X className="w-4 h-4" /></button>
               </div>
               <div className="p-6 space-y-4">
-                {[
-                  { label: t("meetings.title_label"), key: "title", placeholder: t("meetings.title_placeholder") },
-                  { label: "Meeting Link (Zoom / Google Meet)", key: "meeting_link", placeholder: "https://meet.google.com/... or https://zoom.us/..." },
-                  { label: t("meetings.location_label"), key: "location", placeholder: t("meetings.location_placeholder") },
-                ].map(({ label, key, placeholder }) => (
-                  <div key={key}>
-                    <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest mb-1 block">{label}</label>
-                    <input value={(form as any)[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} placeholder={placeholder}
-                      className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500" />
-                  </div>
-                ))}
                 <div>
-                  <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest mb-1 block">Timezone</label>
-                  <input value={form.timezone} onChange={e => setForm(f => ({ ...f, timezone: e.target.value }))} placeholder="Asia/Kolkata or America/New_York"
+                  <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest mb-1 block">{t("meetings.title_label")} *</label>
+                  <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder={t("meetings.title_placeholder")}
                     className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
+
                 <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">{t("meetings.linked_party")}</label>
-                  <select value={form.linked} onChange={e => setForm(f => ({ ...f, linked: e.target.value }))}
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                    <option value="">{t("meetings.none")}</option>
-                    <optgroup label="Clients">
-                      {clients.map(c => (
-                        <option key={`client-${c.id}`} value={`client:${c.id}`}>{c.companyName || c.projectName || c.contact_person || `Client #${c.id}`}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Leads">
-                      {leads.map(l => (
-                        <option key={`lead-${l.id}`} value={`lead:${l.id}`}>{l.company_name || `Lead #${l.id}`}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Contacts">
-                      {contacts.map(c => (
-                        <option key={`contact-${c.id}`} value={`contact:${c.id}`}>{`${c.first_name || ""} ${c.last_name || ""}`.trim() || `Contact #${c.id}`}</option>
-                      ))}
-                    </optgroup>
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest block">Meeting Link</label>
+                    <div className="flex gap-1.5">
+                      <button type="button" onClick={() => setForm(f => ({ ...f, meeting_link: "https://meet.google.com/new" }))}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 hover:bg-violet-200 transition-colors">
+                        + Google Meet
+                      </button>
+                      <button type="button" onClick={() => setForm(f => ({ ...f, meeting_link: "https://zoom.us/start/videomeeting" }))}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 hover:bg-blue-200 transition-colors">
+                        + Zoom
+                      </button>
+                    </div>
+                  </div>
+                  <input value={form.meeting_link} onChange={e => setForm(f => ({ ...f, meeting_link: e.target.value }))} placeholder="https://meet.google.com/... or https://zoom.us/..."
+                    className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500" />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">{t("meetings.type")}</label>
+                    <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest mb-1 block">Type</label>
                     <select value={form.meeting_type} onChange={e => setForm(f => ({ ...f, meeting_type: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                      {TYPES.map(t => <option key={t}>{t}</option>)}
+                      {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">{t("meetings.status")}</label>
+                    <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest mb-1 block">Status</label>
                     <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                      {STATUSES.map(s => <option key={s}>{s}</option>)}
+                      {STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
                     </select>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+
+                <div>
+                  <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest mb-1 block">{t("meetings.location_label")}</label>
+                  <input value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} placeholder={t("meetings.location_placeholder")}
+                    className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                </div>
+
+                {/* Timezone Handling with Automatic Confirmation */}
+                <TimezonePicker
+                  value={form.timezone}
+                  onChange={tz => setForm(f => ({ ...f, timezone: tz }))}
+                  localTime={form.scheduled_at}
+                  label="Meeting Timezone"
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">{t("meetings.date_time")}</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">{t("meetings.date_time")} *</label>
                     <input type="datetime-local" value={form.scheduled_at} onChange={e => setForm(f => ({ ...f, scheduled_at: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
                   </div>
@@ -405,6 +457,14 @@ export default function MeetingsPage() {
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">{t("meetings.duration_min")}</label>
                     <input type="number" value={form.duration_minutes} onChange={e => setForm(f => ({ ...f, duration_minutes: e.target.value }))} placeholder="60"
                       className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {[15, 30, 45, 60, 90].map(dur => (
+                        <button key={dur} type="button" onClick={() => setForm(f => ({ ...f, duration_minutes: String(dur) }))}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md transition-colors ${form.duration_minutes === String(dur) ? "bg-violet-600 text-white" : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700"}`}>
+                          {dur}m
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <div>

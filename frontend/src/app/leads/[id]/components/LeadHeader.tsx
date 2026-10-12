@@ -8,6 +8,7 @@ import {
   TrendingUp, Phone, Globe, Sun, Moon, MapPin, Linkedin
 } from 'lucide-react';
 import { useLanguage } from '@/context/LanguageContext';
+import { API_BASE_URL } from '@/config';
 
 interface LeadHeaderProps {
   lead: any;
@@ -22,13 +23,29 @@ interface LeadHeaderProps {
   onCreateOpportunity: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
+  onStatusChange?: (newStatus: string) => void;
 }
 
+const LEAD_STAGES = [
+  "New",
+  "Contacted",
+  "Not Responded",
+  "Neutral",
+  "Positive",
+  "Negative",
+  "Converted"
+];
+
 const STATUS_CONFIG: Record<string, { bg: string; text: string; dot: string }> = {
-  Active:   { bg: 'bg-emerald-100 ', text: 'text-emerald-700 ', dot: 'bg-emerald-500' },
-  Hold:     { bg: 'bg-amber-100 ',   text: 'text-amber-700 ',   dot: 'bg-amber-500'   },
-  Pending:  { bg: 'bg-blue-100 ',    text: 'text-blue-700 ',    dot: 'bg-blue-500'    },
-  Inactive: { bg: 'bg-slate-100 dark:bg-zinc-800 ',     text: 'text-slate-600 dark:text-zinc-300 ',  dot: 'bg-slate-400'   },
+  New:             { bg: 'bg-blue-100 dark:bg-blue-950/40 border-blue-200',      text: 'text-blue-700 dark:text-blue-300',     dot: 'bg-blue-500' },
+  Contacted:       { bg: 'bg-sky-100 dark:bg-sky-950/40 border-sky-200',        text: 'text-sky-700 dark:text-sky-300',       dot: 'bg-sky-500' },
+  "Not Responded": { bg: 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200',        text: 'text-zinc-700 dark:text-zinc-300',     dot: 'bg-zinc-500' },
+  Neutral:         { bg: 'bg-amber-100 dark:bg-amber-950/40 border-amber-200',  text: 'text-amber-700 dark:text-amber-300',   dot: 'bg-amber-500' },
+  Positive:        { bg: 'bg-teal-100 dark:bg-teal-950/40 border-teal-200',     text: 'text-teal-700 dark:text-teal-300',     dot: 'bg-teal-500' },
+  Negative:        { bg: 'bg-rose-100 dark:bg-rose-950/40 border-rose-200',     text: 'text-rose-700 dark:text-rose-300',     dot: 'bg-rose-500' },
+  Converted:       { bg: 'bg-emerald-100 dark:bg-emerald-950/40 border-emerald-200', text: 'text-emerald-700 dark:text-emerald-300', dot: 'bg-emerald-500' },
+  Active:          { bg: 'bg-emerald-100 dark:bg-emerald-950/40 border-emerald-200', text: 'text-emerald-700 dark:text-emerald-300', dot: 'bg-emerald-500' },
+  Inactive:        { bg: 'bg-slate-100 dark:bg-zinc-800 border-slate-200',       text: 'text-slate-600 dark:text-zinc-300',    dot: 'bg-slate-400' },
 };
 
 function LeadScoreRing({ score }: { score: number }) {
@@ -106,10 +123,31 @@ export default function LeadHeader({
               <h1 className="text-xl font-black text-slate-900 dark:text-zinc-50  leading-tight">
                 {companyName || (language === 'es' ? 'Empresa Desconocida' : 'Unknown Company')}
               </h1>
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold ${statusCfg.bg} ${statusCfg.text}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dot}`} />
-                {lead?.status || 'Unknown'}
-              </span>
+              <select
+                value={lead?.is_converted ? "Converted" : (lead?.status || "New")}
+                onChange={async (e) => {
+                  const val = e.target.value;
+                  try {
+                    await fetch(`${API_BASE_URL}/leads/${lead?.id}/status`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ status: val }),
+                    });
+                    if (onStatusChange) onStatusChange(val);
+                    else window.location.reload();
+                  } catch (err) {
+                    console.error(err);
+                  }
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border cursor-pointer focus:outline-none transition-all shadow-sm ${statusCfg.bg} ${statusCfg.text}`}
+                title="Change stage"
+              >
+                {LEAD_STAGES.map((st) => (
+                  <option key={st} value={st} className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 font-semibold">
+                    {st}
+                  </option>
+                ))}
+              </select>
               {lead?.industry && (
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-zinc-800  text-slate-600 dark:text-zinc-300 ">
                   {lead.industry}

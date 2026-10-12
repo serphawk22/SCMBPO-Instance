@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, UserX, TrendingDown, TrendingUp, DollarSign
+  Trophy, Star, UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock, X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -42,7 +42,7 @@ const iconMap: Record<string, any> = {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star,
-  UserX, TrendingDown, TrendingUp, DollarSign
+  UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock
 };
 
 interface SidebarProps {
@@ -77,6 +77,7 @@ const defaultSidebarSections = [
       { id: "item-projects", name: "Projects", icon: "FolderOpen", href: "/projects", roles: ["Admin", "Employee", "Intern", "ProjectMember", "Demo"] },
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-follow-ups", name: "Follow-ups", icon: "CalendarClock", href: "/follow-ups", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
       { id: "item-meetings", name: "Meetings", icon: "Calendar", href: "/meetings", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-calls", name: "Calls", icon: "Phone", href: "/calls", roles: ["Admin", "SalesManager", "Demo"] },
     ],
@@ -243,7 +244,7 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
                     href={item.href}
                     className={cn(
                       "relative group flex items-center gap-2 rounded-[8px] transition-all duration-150 select-none shrink-0",
-                      collapsed ? "w-9 h-9 justify-center mx-auto" : "py-[4px] px-2 h-[28px]",
+                      collapsed ? "w-9 h-9 justify-center mx-auto" : "py-[4px] px-2 h-[42px] lg:h-[28px]",
                       !isActive && "hover:bg-gray-50 dark:hover:bg-slate-800/50"
                     )}
                     style={isActive ? { background: "rgba(37,99,235,0.08)", color: "#2563eb" } : { color: "var(--sidebar-text)" }}
@@ -310,7 +311,9 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
 export function Sidebar({ role }: SidebarProps) {
   const pathname = usePathname();
   const { user } = useRole();
-  const { collapsed, setCollapsed } = useSidebar();
+  const { collapsed: desktopCollapsed, setCollapsed, isMobile, mobileOpen, setMobileOpen } = useSidebar();
+  // On phones/tablets the sidebar is an off-canvas drawer and is never icon-collapsed
+  const collapsed = isMobile ? false : desktopCollapsed;
   const { theme, toggleTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
   
@@ -326,6 +329,17 @@ export function Sidebar({ role }: SidebarProps) {
     }
     return initial;
   });
+
+  // Close the mobile drawer after navigating
+  useEffect(() => { setMobileOpen(false); }, [pathname, setMobileOpen]);
+
+  // Lock page scroll while the drawer is open
+  useEffect(() => {
+    if (!(isMobile && mobileOpen)) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [isMobile, mobileOpen]);
 
   // Auto-expand the section containing the current route
   useEffect(() => {
@@ -545,11 +559,19 @@ export function Sidebar({ role }: SidebarProps) {
 
   return (
     <>
+      {isMobile && mobileOpen && (
+        <div
+          className="fixed inset-0 z-[74] bg-black/50 backdrop-blur-[2px] lg:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <motion.div
         initial={false}
-        animate={{ width: collapsed ? 72 : 280 }}
+        animate={{ width: isMobile ? 300 : collapsed ? 72 : 280, x: isMobile && !mobileOpen ? "-105%" : 0 }}
         transition={{ type: "spring", stiffness: 280, damping: 30 }}
-        className="fixed left-0 top-0 bottom-0 z-50 flex flex-col overflow-hidden"
+        className="fixed left-0 top-0 bottom-0 z-[75] lg:z-50 flex flex-col overflow-hidden max-w-[88vw]"
+        aria-hidden={isMobile && !mobileOpen}
         style={{
           background: "var(--sidebar-bg)",
           boxShadow: "4px 0 24px rgba(0,0,0,0.06)",
@@ -580,6 +602,11 @@ export function Sidebar({ role }: SidebarProps) {
                   <span className="block text-[10px] font-medium truncate" style={{ color: "var(--text-secondary)" }}>{t("sidebar.corporate_hq")}</span>
                 </div>
                 <div className="flex items-center gap-1">
+                  {isMobile && (
+                    <button onClick={() => setMobileOpen(false)} aria-label="Close menu" className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+                      <X className="w-5 h-5" />
+                    </button>
+                  )}
                   <button 
                     onClick={() => setIsEditMode(!isEditMode)} 
                     className={cn("p-1.5 rounded-lg transition-colors", isEditMode ? "bg-blue-100 text-blue-600 dark:bg-blue-900/50" : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800")}
@@ -672,7 +699,7 @@ export function Sidebar({ role }: SidebarProps) {
                       href={item.href}
                       className={cn(
                         "relative group flex items-center gap-2 rounded-[8px] transition-all duration-150 select-none shrink-0",
-                        collapsed ? "w-9 h-9 justify-center mx-auto" : "py-[4px] px-2 h-[28px]",
+                        collapsed ? "w-9 h-9 justify-center mx-auto" : "py-[4px] px-2 h-[42px] lg:h-[28px]",
                         !isActive && "hover:bg-gray-50 dark:hover:bg-slate-800/50"
                       )}
                       style={isActive ? { background: "rgba(37,99,235,0.08)", color: "#2563eb" } : { color: "var(--sidebar-text)" }}
@@ -753,7 +780,7 @@ export function Sidebar({ role }: SidebarProps) {
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.92 }}
         title={collapsed ? t("sidebar.expand_sidebar") : t("sidebar.collapse_sidebar")}
-        className="fixed top-[52px] z-[60] -translate-x-1/2 flex items-center justify-center w-7 h-7 rounded-full border-2 shadow-md transition-colors"
+        className="hidden lg:flex fixed top-[52px] z-[60] -translate-x-1/2 items-center justify-center w-7 h-7 rounded-full border-2 shadow-md transition-colors"
         style={{
           background: "var(--sidebar-bg)",
           borderColor: "var(--border)",

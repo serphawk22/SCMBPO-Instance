@@ -1,13 +1,16 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
   Building2, Star, User, ArrowLeft, Plus, MessageSquare,
   Calendar, Mail, Target, Zap,
-  TrendingUp, Phone, Globe, Sun, Moon, MapPin, Linkedin, UserX
+  TrendingUp, Phone, Globe, Sun, Moon, MapPin, Linkedin, UserX, FileText
 } from 'lucide-react';
 import { useLanguage } from '@/context/LanguageContext';
+
+import { API_BASE_URL } from '@/config';
 
 interface ClientHeaderProps {
   client: any;
@@ -22,14 +25,33 @@ interface ClientHeaderProps {
   onViewDropDetails?: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
+  onStatusChange?: (newStatus: string) => void;
 }
 
+const CLIENT_STAGES = [
+  "Product Demo Scheduled",
+  "Attended",
+  "Not Attended",
+  "Proposal Sent",
+  "Negotiation",
+  "Won",
+  "Lost",
+  "Dropped"
+];
+
 const STATUS_CONFIG: Record<string, { bg: string; text: string; dot: string }> = {
-  Active:   { bg: 'bg-emerald-100 ', text: 'text-emerald-700 ', dot: 'bg-emerald-500' },
-  Hold:     { bg: 'bg-amber-100 ',   text: 'text-amber-700 ',   dot: 'bg-amber-500'   },
-  Pending:  { bg: 'bg-blue-100 ',    text: 'text-blue-700 ',    dot: 'bg-blue-500'    },
-  Dropped:  { bg: 'bg-rose-100 dark:bg-rose-950/40 ', text: 'text-rose-700 dark:text-rose-300 ', dot: 'bg-rose-500' },
-  Inactive: { bg: 'bg-slate-100 dark:bg-zinc-800 ',     text: 'text-slate-600 dark:text-zinc-300 ',  dot: 'bg-slate-400'   },
+  "Product Demo Scheduled": { bg: 'bg-sky-100 dark:bg-sky-950/40 border-sky-200', text: 'text-sky-700 dark:text-sky-300', dot: 'bg-sky-500' },
+  Attended:                 { bg: 'bg-indigo-100 dark:bg-indigo-950/40 border-indigo-200', text: 'text-indigo-700 dark:text-indigo-300', dot: 'bg-indigo-500' },
+  "Not Attended":            { bg: 'bg-amber-100 dark:bg-amber-950/40 border-amber-200', text: 'text-amber-700 dark:text-amber-300', dot: 'bg-amber-500' },
+  "Proposal Sent":          { bg: 'bg-purple-100 dark:bg-purple-950/40 border-purple-200', text: 'text-purple-700 dark:text-purple-300', dot: 'bg-purple-500' },
+  Negotiation:              { bg: 'bg-blue-100 dark:bg-blue-950/40 border-blue-200', text: 'text-blue-700 dark:text-blue-300', dot: 'bg-blue-500' },
+  Won:                      { bg: 'bg-emerald-100 dark:bg-emerald-950/40 border-emerald-200', text: 'text-emerald-700 dark:text-emerald-300', dot: 'bg-emerald-500' },
+  Lost:                     { bg: 'bg-rose-100 dark:bg-rose-950/40 border-rose-200', text: 'text-rose-700 dark:text-rose-300', dot: 'bg-rose-500' },
+  Active:                   { bg: 'bg-emerald-100 dark:bg-emerald-950/40 border-emerald-200', text: 'text-emerald-700 dark:text-emerald-300', dot: 'bg-emerald-500' },
+  Hold:                     { bg: 'bg-amber-100 dark:bg-amber-950/40 border-amber-200', text: 'text-amber-700 dark:text-amber-300', dot: 'bg-amber-500' },
+  Pending:                  { bg: 'bg-blue-100 dark:bg-blue-950/40 border-blue-200', text: 'text-blue-700 dark:text-blue-300', dot: 'bg-blue-500' },
+  Dropped:                  { bg: 'bg-rose-100 dark:bg-rose-950/40 border-rose-200', text: 'text-rose-700 dark:text-rose-300', dot: 'bg-rose-500' },
+  Inactive:                 { bg: 'bg-slate-100 dark:bg-zinc-800 border-slate-200', text: 'text-slate-600 dark:text-zinc-300', dot: 'bg-slate-400' },
 };
 
 function LeadScoreRing({ score }: { score: number }) {
@@ -54,7 +76,8 @@ function LeadScoreRing({ score }: { score: number }) {
 export default function ClientHeader({
   client, employees, onBack, onAddNote, onAddConversation,
   onScheduleMeeting, onSendEmail,
-  onCreateOpportunity, onDropClient, onViewDropDetails, darkMode, onToggleDarkMode
+  onCreateOpportunity, onDropClient, onViewDropDetails, darkMode, onToggleDarkMode,
+  onStatusChange
 }: ClientHeaderProps) {
   const { language } = useLanguage();
   const statusCfg = STATUS_CONFIG[client?.status] || STATUS_CONFIG.Inactive;
@@ -94,6 +117,16 @@ export default function ClientHeader({
 
           {/* Action buttons */}
           <div className="flex items-center gap-2">
+            {client?.id && (
+              <Link
+                href={`/proposals?new=true&client_id=${client.id}`}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-sm hover:shadow active:scale-95 cursor-pointer"
+                title="Create a proposal or quotation for this client"
+              >
+                <FileText size={14} />
+                <span>Create Proposal</span>
+              </Link>
+            )}
             {client?.status === 'Dropped' ? (
               <div className="flex items-center gap-2">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 text-white text-xs font-bold shadow-sm shadow-rose-500/20">
@@ -139,10 +172,36 @@ export default function ClientHeader({
               <h1 className="text-xl font-black text-slate-900 dark:text-zinc-50  leading-tight">
                 {companyName || (language === 'es' ? 'Empresa Desconocida' : 'Unknown Company')}
               </h1>
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold ${statusCfg.bg} ${statusCfg.text}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dot}`} />
-                {client?.status || 'Unknown'}
-              </span>
+              <div className="relative inline-flex items-center">
+                <select
+                  value={client?.status || "Product Demo Scheduled"}
+                  onChange={async (e) => {
+                    const newStatus = e.target.value;
+                    try {
+                      await fetch(`${API_BASE_URL}/clients/${client?.id}/status`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ status: newStatus }),
+                      });
+                      if (onStatusChange) {
+                        onStatusChange(newStatus);
+                      } else {
+                        window.location.reload();
+                      }
+                    } catch (err) {
+                      console.error("Failed to update client status:", err);
+                    }
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border cursor-pointer focus:outline-none transition-all shadow-sm ${statusCfg.bg} ${statusCfg.text}`}
+                  title="Change stage"
+                >
+                  {CLIENT_STAGES.map((st) => (
+                    <option key={st} value={st} className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 font-semibold">
+                      {st}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {client?.industry && (
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-zinc-800  text-slate-600 dark:text-zinc-300 ">
                   {client.industry}

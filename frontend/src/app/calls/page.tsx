@@ -562,40 +562,40 @@ export default function CallsPage() {
               {calls.length} {t("calls.logged_suffix")} &middot; {scheduledCalls.filter((s) => s.status === "Scheduled").length} {t("calls.scheduled_suffix")} &middot; {aiCallLogs.length} {t("calls.ai_calls_suffix")}
             </p>
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-2.5 sm:gap-3 w-full sm:w-auto">
             <button onClick={() => setShowGenerateModal(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-2xl font-bold text-sm hover:-translate-y-0.5 transition-all shadow-lg">
-              <Zap className="w-4 h-4" /> {t("calls.generate_pitch_call")}
+              className="flex-1 sm:flex-none items-center justify-center flex gap-2 px-4 sm:px-5 py-2.5 sm:py-3 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-2xl font-bold text-xs sm:text-sm hover:-translate-y-0.5 transition-all shadow-lg active:scale-95">
+              <Zap className="w-4 h-4 shrink-0" /> {t("calls.generate_pitch_call")}
             </button>
             <button onClick={() => setShowScheduleModal(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-2xl font-bold shadow-lg hover:-translate-y-0.5 transition-all text-sm">
-              <CalendarClock className="w-4 h-4" /> {t("calls.schedule_call")}
+              className="flex-1 sm:flex-none items-center justify-center flex gap-2 px-4 sm:px-5 py-2.5 sm:py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-2xl font-bold shadow-lg hover:-translate-y-0.5 transition-all text-xs sm:text-sm active:scale-95">
+              <CalendarClock className="w-4 h-4 shrink-0" /> {t("calls.schedule_call")}
             </button>
             <button onClick={() => setShowLogModal(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-2xl font-bold shadow-[0_8px_20px_rgba(245,158,11,0.3)] hover:-translate-y-0.5 transition-all text-sm">
-              <Plus className="w-4 h-4" /> {t("calls.log_call")}
+              className="flex-1 sm:flex-none items-center justify-center flex gap-2 px-4 sm:px-5 py-2.5 sm:py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-2xl font-bold shadow-[0_8px_20px_rgba(245,158,11,0.3)] hover:-translate-y-0.5 transition-all text-xs sm:text-sm active:scale-95">
+              <Plus className="w-4 h-4 shrink-0" /> {t("calls.log_call")}
             </button>
           </div>
         </motion.div>
 
         {/* Tabs */}
-        <motion.div variants={itemVariants} className="flex bg-slate-100 dark:bg-zinc-900 p-1 rounded-2xl w-fit">
+        <motion.div variants={itemVariants} className="flex bg-slate-100 dark:bg-zinc-900 p-1 rounded-2xl w-fit max-w-full overflow-x-auto scrollbar-none">
           <button onClick={() => setActiveTab("logged")}
-            className={cn("flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all",
+            className={cn("flex shrink-0 items-center gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all",
               activeTab === "logged" ? "bg-white dark:bg-zinc-800 text-amber-600 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700")}>
             <PhoneCall className="w-4 h-4" /> {t("calls.tab_logged")}
             <span className={cn("text-xs px-2 py-0.5 rounded-full font-black",
               activeTab === "logged" ? "bg-amber-100 text-amber-700" : "bg-slate-200 dark:bg-zinc-700 text-slate-500")}>{calls.length}</span>
           </button>
           <button onClick={() => setActiveTab("scheduled")}
-            className={cn("flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all",
+            className={cn("flex shrink-0 items-center gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all",
               activeTab === "scheduled" ? "bg-white dark:bg-zinc-800 text-indigo-600 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700")}>
             <CalendarClock className="w-4 h-4" /> {t("calls.tab_scheduled")}
             <span className={cn("text-xs px-2 py-0.5 rounded-full font-black",
               activeTab === "scheduled" ? "bg-indigo-100 text-indigo-700" : "bg-slate-200 dark:bg-zinc-700 text-slate-500")}>{scheduledCalls.filter((s) => s.status === "Scheduled").length}</span>
           </button>
           <button onClick={() => setActiveTab("ai-calls")}
-            className={cn("flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all",
+            className={cn("flex shrink-0 items-center gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all",
               activeTab === "ai-calls" ? "bg-white dark:bg-zinc-800 text-violet-600 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700")}>
             <Bot className="w-4 h-4" /> {t("calls.tab_ai")}
             {aiCallLogs.length > 0 && (
@@ -841,9 +841,9 @@ export default function CallsPage() {
         <AnimatePresence>
           {showLogModal && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-900/50 backdrop-blur-md flex items-center justify-center z-50 p-4">
+              className="fixed inset-0 bg-slate-900/50 backdrop-blur-md flex items-center justify-center z-50 p-3 sm:p-4">
               <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
-                className="bg-white dark:bg-zinc-900/95 backdrop-blur-2xl rounded-[2rem] border border-slate-200 dark:border-zinc-700 shadow-2xl w-full max-w-lg p-8 relative max-h-[90vh] overflow-y-auto">
+                className="bg-white dark:bg-zinc-900/95 backdrop-blur-2xl rounded-3xl sm:rounded-[2rem] border border-slate-200 dark:border-zinc-700 shadow-2xl w-full max-w-lg p-5 sm:p-8 relative max-h-[90vh] overflow-y-auto">
                 <button onClick={() => setShowLogModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
                 <h2 className="text-2xl font-black text-slate-800 dark:text-zinc-100 mb-6 flex items-center gap-3">
                   <div className="p-2 bg-amber-50 text-amber-600 rounded-xl"><Phone className="w-5 h-5" /></div>
@@ -913,9 +913,9 @@ export default function CallsPage() {
         <AnimatePresence>
           {showScheduleModal && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-slate-900/50 backdrop-blur-md flex items-center justify-center z-50 p-4">
+              className="fixed inset-0 bg-slate-900/50 backdrop-blur-md flex items-center justify-center z-50 p-3 sm:p-4">
               <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
-                className="bg-white dark:bg-zinc-900/95 backdrop-blur-2xl rounded-[2rem] border border-slate-200 dark:border-zinc-700 shadow-2xl w-full max-w-xl p-8 relative max-h-[90vh] overflow-y-auto">
+                className="bg-white dark:bg-zinc-900/95 backdrop-blur-2xl rounded-3xl sm:rounded-[2rem] border border-slate-200 dark:border-zinc-700 shadow-2xl w-full max-w-xl p-5 sm:p-8 relative max-h-[90vh] overflow-y-auto">
                 <button onClick={() => setShowScheduleModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-slate-700"><X className="w-5 h-5" /></button>
                 <h2 className="text-2xl font-black text-slate-800 dark:text-zinc-100 mb-6 flex items-center gap-3">
                   <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl"><CalendarClock className="w-5 h-5" /></div>

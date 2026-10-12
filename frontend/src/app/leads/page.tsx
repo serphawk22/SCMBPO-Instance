@@ -2,7 +2,7 @@
 import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Filter, MoreVertical, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ChevronDown, ArrowUpRight, CheckCircle2, Clock, Zap, Edit2, Trash2, Tag } from "lucide-react";
+import { Search, Plus, Filter, MoreVertical, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ChevronDown, ArrowUpRight, CheckCircle2, Clock, Zap, Edit2, Trash2, Tag, CalendarClock, UserCheck, Calendar } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ViewSwitcher, ViewType } from "@/components/ViewSwitcher";
@@ -10,6 +10,7 @@ import DemoLimits from "@/components/DemoLimits";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useLanguage } from "@/context/LanguageContext";
 import SalesAssignModal from "@/components/SalesAssignModal";
+import AddFollowUpModal, { FollowUpTarget } from "@/components/AddFollowUpModal";
 
 interface Lead {
   id: number;
@@ -24,6 +25,9 @@ interface Lead {
   is_converted: boolean;
   notes?: string | null;
   created_at: string;
+  owner_id?: number | null;
+  owner_name?: string | null;
+  salesperson_name?: string | null;
 }
 
 interface ActivityLogEntry {
@@ -42,17 +46,24 @@ const INDUSTRIES = [
   "Consulting", "Media", "Hospitality", "Construction", "Other"
 ];
 const SOURCES = ["Website", "Email", "Referral", "LinkedIn", "Cold Call", "Event", "Radar", "Import", "Other"];
-const STATUSES = ["New", "Contacted", "Qualified", "Proposal Sent", "Negotiation", "Won", "Lost"];
+const STATUSES = [
+  "New",
+  "Contacted",
+  "Not Responded",
+  "Neutral",
+  "Positive",
+  "Negative",
+  "Converted"
+];
 
 const STATUS_STYLE: Record<string, string> = {
   New: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-  Contacted: "bg-violet-500/10 text-violet-600 border-violet-500/20",
-  Qualified: "bg-amber-500/10 text-amber-600 border-amber-500/20",
-  "Proposal Sent": "bg-orange-500/10 text-orange-600 border-orange-500/20",
-  Negotiation: "bg-indigo-500/10 text-indigo-600 border-indigo-500/20",
-  Won: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-  Lost: "bg-red-500/10 text-red-500 border-red-500/20",
-  Converted: "bg-green-500/10 text-green-700 border-green-500/20",
+  Contacted: "bg-sky-500/10 text-sky-600 border-sky-500/20",
+  "Not Responded": "bg-zinc-500/10 text-zinc-600 border-zinc-500/20",
+  Neutral: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+  Positive: "bg-teal-500/10 text-teal-600 border-teal-500/20",
+  Negative: "bg-rose-500/10 text-rose-600 border-rose-500/20",
+  Converted: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
 };
 
 const emptyForm = {
@@ -90,10 +101,64 @@ export default function LeadsPage() {
   const [showSalesAssign, setShowSalesAssign] = useState(false);
   const [pendingLeadForm, setPendingLeadForm] = useState<any>(null);
   const [availableSources, setAvailableSources] = useState<string[]>(SOURCES);
+  const [followUpTarget, setFollowUpTarget] = useState<FollowUpTarget | null>(null);
+  const [employees, setEmployees] = useState<{ id: number; name: string }[]>([]);
+  const [autoAssigning, setAutoAssigning] = useState(false);
+
+  const fetchEmployees = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/employees/workload`);
+      const data = await res.json();
+      setEmployees(data.employees || []);
+    } catch (e) {}
+  };
+
+  const handleAssignSalesperson = async (leadId: number, employeeId: number | null) => {
+    const emp = employees.find(e => e.id === employeeId);
+    setLeads(prev => prev.map(l => l.id === leadId ? {
+      ...l,
+      owner_id: employeeId,
+      owner_name: emp ? emp.name : null,
+      salesperson_name: emp ? emp.name : null
+    } : l));
+    try {
+      await fetch(`${API_BASE_URL}/leads/${leadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner_id: employeeId })
+      });
+    } catch (err) {
+      console.error("Failed to assign salesperson", err);
+      fetchLeads();
+    }
+  };
+
+  const handleAutoAssignLeads = async () => {
+    setAutoAssigning(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/leads/auto-assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Auto-assign complete: ${data.assigned_count} unassigned leads distributed fairly across ${data.salespeople_count} team members!`);
+        fetchLeads();
+        fetchEmployees();
+      } else {
+        alert("Auto-assign failed");
+      }
+    } catch (e) {
+      alert("Error calling auto-assign");
+    } finally {
+      setAutoAssigning(false);
+    }
+  };
 
   useEffect(() => {
     fetchLeads();
     fetchActivities();
+    fetchEmployees();
     fetch(`${API_BASE_URL}/lead-sources`)
       .then(r => r.json())
       .then(d => {
@@ -140,6 +205,21 @@ export default function LeadsPage() {
     } catch (e) {
       console.error("Failed to fetch leads", e);
     } finally { setLoading(false); }
+  };
+
+  const handleStatusChange = async (leadId: number, newStatus: string) => {
+    const isConverted = newStatus.toLowerCase() === "converted";
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: newStatus, is_converted: isConverted } : l));
+    try {
+      await fetch(`${API_BASE_URL}/leads/${leadId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (e) {
+      console.error("Failed to update lead status", e);
+      fetchLeads();
+    }
   };
 
   const filtered = useMemo(() => {
@@ -315,6 +395,15 @@ export default function LeadsPage() {
             >
               <Download className="w-4 h-4" /> Export CSV
             </button>
+            <button
+              onClick={handleAutoAssignLeads}
+              disabled={autoAssigning}
+              title="Automatically distribute unassigned leads by round-robin with conversion rate tie-breaker"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-violet-600 hover:bg-violet-700 text-white shadow-sm transition-all hover:shadow-md active:scale-95 disabled:opacity-50"
+            >
+              {autoAssigning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-amber-300" />}
+              Auto-Assign Leads
+            </button>
             <Link href="/import" className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors">
               <Upload className="w-4 h-4" /> {t("leads.import")}
             </Link>
@@ -345,8 +434,8 @@ export default function LeadsPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-white dark:bg-black border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
-        <div className="relative w-72">
+      <div className="flex items-center justify-between px-3 sm:px-6 py-3 bg-white dark:bg-black border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
+        <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text" placeholder={t("leads.search_placeholder")}
@@ -354,7 +443,7 @@ export default function LeadsPage() {
             className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-900 dark:text-white placeholder:text-slate-400"
           />
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap max-w-full overflow-x-auto scrollbar-none pb-1 sm:pb-0">
           <ViewSwitcher currentView={currentView} onViewChange={setCurrentView} />
           
           <select 
@@ -366,8 +455,8 @@ export default function LeadsPage() {
             <option value="name">{t("leads.sort_name")}</option>
           </select>
 
-          {["All", ...STATUSES, "Converted"].map(s => {
-            const count = s === "All" ? leads.length : (s === "Converted" ? leads.filter(l => l.is_converted).length : leads.filter(l => l.status === s).length);
+          {["All", ...STATUSES].map(s => {
+            const count = s === "All" ? leads.length : leads.filter(l => (l.is_converted ? "Converted" : l.status) === s).length;
             return (
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${statusFilter === s ? "bg-blue-600 dark:bg-white text-white dark:text-black shadow-sm" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"}`}>
@@ -378,9 +467,9 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="w-full flex flex-1 overflow-hidden">
       {/* Table */}
-      <div className="flex-1 overflow-auto bg-white dark:bg-black">
+      <div className="w-full flex-1 overflow-auto bg-white dark:bg-black">
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="animate-spin w-8 h-8 text-blue-600" />
@@ -399,26 +488,86 @@ export default function LeadsPage() {
         ) : currentView === 'kanban' ? (
           <div className="flex gap-4 p-6 overflow-x-auto h-full items-start">
             {STATUSES.map(status => {
-              const colLeads = filtered.filter(l => l.status === status);
+              const colLeads = filtered.filter(l => (l.is_converted ? "Converted" : l.status) === status);
               return (
-                <div key={status} className="w-80 shrink-0 flex flex-col bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#222222] rounded-2xl max-h-full">
+                <div
+                  key={status}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const draggedId = e.dataTransfer.getData("leadId");
+                    if (draggedId) {
+                      handleStatusChange(Number(draggedId), status);
+                    }
+                  }}
+                  className="w-80 shrink-0 flex flex-col bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#222222] rounded-2xl max-h-full transition-all hover:border-blue-400/50"
+                >
                   <div className="p-4 font-bold text-slate-800 dark:text-white flex items-center justify-between border-b border-slate-200 dark:border-[#222222]">
-                    <span>{status}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${STATUS_STYLE[status]?.split(' ')[1] || 'bg-blue-500'}`} />
+                      <span>{status}</span>
+                    </div>
                     <span className="px-2.5 py-1 rounded-full bg-slate-200 dark:bg-[#222222] text-xs text-slate-600 dark:text-[#a3a3a3]">{colLeads.length}</span>
                   </div>
-                  <div className="p-3 flex-1 overflow-y-auto space-y-3 min-h-[200px]">
+                  <div className="p-3 flex-1 overflow-y-auto space-y-3 min-h-[220px]">
                     {colLeads.map(lead => (
-                      <motion.div key={lead.id} layoutId={`lead-${lead.id}`} onClick={() => router.push(`/leads/${lead.id}`)}
-                        className="p-4 bg-white dark:bg-[#000000] rounded-xl shadow-sm border border-slate-200 dark:border-[#222222] cursor-pointer hover:border-blue-500 dark:hover:border-white transition-colors group">
+                      <motion.div
+                        key={lead.id}
+                        layoutId={`lead-${lead.id}`}
+                        draggable={true}
+                        onDragStart={e => {
+                          e.dataTransfer.setData("leadId", String(lead.id));
+                        }}
+                        onClick={() => router.push(`/leads/${lead.id}`)}
+                        className="p-4 bg-white dark:bg-[#000000] rounded-xl shadow-sm border border-slate-200 dark:border-[#222222] cursor-grab active:cursor-grabbing hover:border-blue-500 dark:hover:border-white transition-colors group"
+                      >
                         <div className="font-semibold text-slate-900 dark:text-white text-sm">{lead.company_name}</div>
                         <div className="text-[12px] text-slate-500 mt-1 line-clamp-1">{lead.industry || 'No industry'}</div>
                         {lead.email && <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><Mail className="w-3 h-3"/>{lead.email}</div>}
+                        
+                        {/* Quick Stage Dropdown on Card */}
+                        <div className="mt-2.5 flex items-center justify-between gap-2" onClick={e => e.stopPropagation()}>
+                          <select
+                            value={lead.is_converted ? "Converted" : lead.status}
+                            onChange={e => handleStatusChange(lead.id, e.target.value)}
+                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border cursor-pointer focus:outline-none ${STATUS_STYLE[lead.is_converted ? "Converted" : lead.status] || STATUS_STYLE.New}`}
+                          >
+                            {STATUSES.map(st => (
+                              <option key={st} value={st} className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100">{st}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100 dark:border-zinc-800 text-[11px] text-slate-500">
+                          <span className="flex items-center gap-1 truncate max-w-[170px]">
+                            <UserCheck className="w-3 h-3 text-violet-500 shrink-0" />
+                            <span className="truncate">{lead.salesperson_name || lead.owner_name || 'Unassigned'}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFollowUpTarget({
+                                type: "lead",
+                                id: lead.id,
+                                name: lead.company_name,
+                                email: lead.email,
+                                phone: lead.phone,
+                                salespersonName: lead.salesperson_name || lead.owner_name
+                              });
+                            }}
+                            className="p-1 rounded hover:bg-amber-50 dark:hover:bg-amber-950/40 text-slate-400 hover:text-amber-600"
+                            title="Schedule Follow-up"
+                          >
+                            <CalendarClock className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </motion.div>
                     ))}
                     {colLeads.length === 0 && <div className="p-4 text-center text-sm text-slate-400 border-2 border-dashed border-slate-200 dark:border-[#222222] rounded-xl">{t("leads.no_leads")}</div>}
                   </div>
                 </div>
-              )
+              );
             })}
           </div>
         ) : currentView === 'graph' ? (
@@ -461,12 +610,14 @@ export default function LeadsPage() {
             </table>
           </div>
         ) : (
-          <table className="w-full text-left border-collapse">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full text-left border-collapse min-w-[640px]">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 text-[13px] font-semibold text-slate-500 dark:text-slate-400">
                 <th className="px-6 py-4 font-medium">Company</th>
                 <th className="px-6 py-4 font-medium">Industry</th>
                 <th className="px-6 py-4 font-medium">Contact</th>
+                <th className="px-6 py-4 font-medium">Salesperson</th>
                 <th className="px-6 py-4 font-medium">Source</th>
                 <th className="px-6 py-4 font-medium">Status</th>
                 <th className="px-6 py-4 font-medium text-right">Actions</th>
@@ -510,18 +661,67 @@ export default function LeadsPage() {
                         {!lead.email && !lead.phone && <span className="text-slate-400 text-[12px]">—</span>}
                       </div>
                     </td>
+                    <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
+                      <select
+                        value={lead.owner_id || ""}
+                        onChange={e => handleAssignSalesperson(lead.id, e.target.value ? Number(e.target.value) : null)}
+                        className="text-[12px] font-medium bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[145px]"
+                        title="Assign Salesperson"
+                      >
+                        <option value="">Unassigned</option>
+                        {employees.map(emp => (
+                          <option key={emp.id} value={emp.id}>
+                            {emp.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                         {lead.source || "Unknown"}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border ${STATUS_STYLE[lead.is_converted ? "Converted" : lead.status] || STATUS_STYLE.New}`}>
-                        {lead.is_converted ? "Converted" : lead.status}
-                      </span>
+                    <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
+                      <select
+                        value={lead.is_converted ? "Converted" : lead.status}
+                        onChange={e => handleStatusChange(lead.id, e.target.value)}
+                        className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border cursor-pointer focus:outline-none transition-all shadow-sm ${STATUS_STYLE[lead.is_converted ? "Converted" : lead.status] || STATUS_STYLE.New}`}
+                        title="Change lead stage"
+                      >
+                        {STATUSES.map(st => (
+                          <option key={st} value={st} className="bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100">
+                            {st}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Link
+                          href={`/meetings?new=true&lead_id=${lead.id}&title=${encodeURIComponent(`Meeting with ${lead.company_name}`)}`}
+                          onClick={e => e.stopPropagation()}
+                          title="Schedule Meeting"
+                          className="p-1.5 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/30 text-slate-400 hover:text-indigo-600 transition-colors"
+                        >
+                          <Calendar className="w-3.5 h-3.5" />
+                        </Link>
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            setFollowUpTarget({
+                              type: "lead",
+                              id: lead.id,
+                              name: lead.company_name,
+                              email: lead.email,
+                              phone: lead.phone,
+                              salespersonName: lead.salesperson_name || lead.owner_name
+                            });
+                          }}
+                          title="Schedule Follow-up"
+                          className="p-1.5 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/30 text-slate-400 hover:text-amber-600 transition-colors"
+                        >
+                          <CalendarClock className="w-3.5 h-3.5" />
+                        </button>
                         {!lead.is_converted && (
                           <button onClick={e => handleConvert(lead.id, e)} title={t("leads.convert_to_client")} className="p-1.5 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/30 text-slate-400 hover:text-green-600 transition-colors">
                             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -543,37 +743,9 @@ export default function LeadsPage() {
               </AnimatePresence>
             </tbody>
           </table>
+          </div>
         )}
       </div>
-
-      {/* Activity Sidebar */}
-      <motion.div
-        initial="hidden" animate="show"
-        className="w-full xl:w-[400px] shrink-0 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-black flex flex-col h-full overflow-hidden"
-      >
-        <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3 shrink-0">
-          <div className="p-2 bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-xl"><Zap className="w-5 h-5" /></div>
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white">{t("leads.recent_activity")}</h3>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {activities.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-8">{t("leads.no_activity_yet")}</p>
-          ) : (
-            activities.map(act => (
-              <Link href={act.leadId ? `/leads/${act.leadId}` : '#'} key={act.id} className="block p-4 bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 transition-colors group">
-                <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-bold px-2 py-1 bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-lg">{act.action}</span>
-                  <span className="text-[10px] text-slate-400 font-medium">{new Date(act.createdAt).toLocaleDateString()}</span>
-                </div>
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-2">{act.content}</p>
-                {act.details && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 line-clamp-1">{act.details}</p>
-                )}
-              </Link>
-            ))
-          )}
-        </div>
-      </motion.div>
       </div>
 
       {/* ADD / EDIT MODAL */}
@@ -758,6 +930,14 @@ export default function LeadsPage() {
         onClose={() => { setShowSalesAssign(false); setPendingLeadForm(null); }}
         onAssign={doCreateLead}
         entityType="lead"
+      />
+
+      {/* Add Follow-up Modal */}
+      <AddFollowUpModal
+        open={!!followUpTarget}
+        onClose={() => setFollowUpTarget(null)}
+        target={followUpTarget}
+        onSuccess={fetchLeads}
       />
     </div>
   );
