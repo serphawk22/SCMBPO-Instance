@@ -17,6 +17,7 @@ interface Limits {
   leads: LimitData;
   emails: LimitData;
   searches: LimitData;
+  projects?: LimitData;
 }
 
 function LimitPill({ icon, label, usage, limit }: { icon: React.ReactNode; label: string; usage: number; limit: number }) {
@@ -67,6 +68,7 @@ export default function DemoLimits({ type }: DemoLimitsProps) {
   if (user?.role !== "Demo" || !limits) return null;
 
   const current = limits[type];
+  if (!current) return null;
   const pct = (current.usage / current.limit) * 100;
   const isAtLimit = pct >= 100;
   const isNear = pct >= 80;

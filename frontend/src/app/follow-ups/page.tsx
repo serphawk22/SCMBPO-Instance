@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, X, Clock, CheckCircle2, AlertTriangle, CalendarClock, Search, Loader2, Mail, Phone, Video,
@@ -10,6 +11,8 @@ import {
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import TimezonePicker from "@/components/TimezonePicker";
+import EmailFollowUpsView from "@/components/followups/EmailFollowUpsView";
+import { ListChecks as SectionBoardIcon, Mail as SectionEmailIcon } from "lucide-react";
 import {
   detectTimeZone, formatInZone, relativeTime, toZonedInput, zonedWallToUtc, gmtLabel,
 } from "@/lib/timezone";
@@ -181,7 +184,7 @@ function Sheet({ open, onClose, title, children, footer }: { open: boolean; onCl
   );
 }
 
-export default function FollowUpsPage() {
+function RemindersBoard() {
   const { role } = useRole();
   const viewerTz = useMemo(() => detectTimeZone(), []);
   const canSeeAll = role === "Admin" || role === "SuperAdmin" || role === "SalesManager";
@@ -566,7 +569,10 @@ export default function FollowUpsPage() {
           mark_complete: draft.complete,
         }),
       });
-      if (res.ok) {
+      const sent = res.ok ? await res.clone().json().catch(() => ({})) : null;
+      if (res.ok && sent?.cancelled) {
+        showToast("Email not sent", false);
+      } else if (res.ok) {
         showToast("Email sent" + (draft.complete ? " · marked complete" : ""));
         setEmailFor(null);
         setDraft(null);
@@ -1550,6 +1556,72 @@ export default function FollowUpsPage() {
           </div>
         )}
       </Sheet>
+    </div>
+  );
+}
+
+
+type FollowUpSection = "board" | "email";
+
+const SECTIONS: { key: FollowUpSection; label: string; hint: string; Icon: typeof SectionBoardIcon }[] = [
+  { key: "board", label: "Follow-ups", hint: "Schedule, reminders, status", Icon: SectionBoardIcon },
+  { key: "email", label: "Email follow-ups", hint: "AI emails, auto-send, history", Icon: SectionEmailIcon },
+];
+
+/** One Follow-ups section: the reminders board and the email follow-ups view show the same follow_ups rows.
+ *  The tab lives in the URL: /follow-ups?tab=email opens the email view (old /followups links redirect there). */
+export default function FollowUpsPage() {
+  return (
+    <Suspense fallback={null}>
+      <FollowUpSections />
+    </Suspense>
+  );
+}
+
+function FollowUpSections() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const section: FollowUpSection = params.get("tab") === "email" ? "email" : "board";
+
+  const choose = (next: FollowUpSection) => {
+    const q = new URLSearchParams(params.toString());
+    if (next === "email") q.set("tab", "email");
+    else {
+      q.delete("tab");
+      q.delete("view");
+    }
+    const qs = q.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-zinc-950">
+      <div className="max-w-7xl mx-auto px-3 sm:px-5 md:px-8 pt-3 sm:pt-5 md:pt-8">
+        <div role="tablist" aria-label="Follow-up views" className="inline-flex w-full sm:w-auto rounded-2xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-1 shadow-sm">
+          {SECTIONS.map(({ key, label, hint, Icon }) => {
+            const active = section === key;
+            return (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={active}
+                onClick={() => choose(key)}
+                className={`flex flex-1 sm:flex-none items-center gap-2 rounded-xl px-4 py-2 text-left transition ${
+                  active ? "bg-slate-900 text-white dark:bg-white dark:text-zinc-900 shadow" : "text-slate-600 hover:bg-slate-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <span className="flex flex-col leading-tight">
+                  <span className="text-xs sm:text-sm font-black">{label}</span>
+                  <span className={`hidden sm:block text-[10px] font-semibold ${active ? "opacity-70" : "text-slate-400 dark:text-zinc-500"}`}>{hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {section === "email" ? <EmailFollowUpsView /> : <RemindersBoard />}
     </div>
   );
 }

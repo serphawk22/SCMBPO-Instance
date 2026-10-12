@@ -11,6 +11,7 @@ import {
 import { useRole, Role } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { useTheme } from "@/context/ThemeContext";
+import { useNotifications } from "@/context/NotificationContext";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_BASE_URL } from "@/config";
@@ -125,11 +126,16 @@ export function AdminTopbar() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [recentNotifs, setRecentNotifs] = useState<any[]>([]);
-  
+  // Unread count + recent notifications now come from the shared
+  // NotificationContext (already polling every 15s) instead of this
+  // component running its own independent 30s poll of the same endpoint —
+  // was doubling notification request volume with Sidebar.tsx polling the
+  // identical URL.
+  const { notifications, unreadCount, markAllRead } = useNotifications();
+  const recentNotifs = notifications.filter(n => !n.is_read).slice(0, 3);
+
   const [activityFeedOpen, setActivityFeedOpen] = useState(false);
-  
+
   const searchRef = useRef<HTMLInputElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -137,34 +143,19 @@ export function AdminTopbar() {
 
   const badge = ROLE_BADGE[role as Role];
 
-  const loadNotifs = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/notifications/${user?.id}?unread_only=true`);
-        const data = await res.json();
-        setUnreadCount(data.unread_count || 0);
-        setRecentNotifs((data.notifications || []).slice(0, 3));
-      } catch {}
-  };
-
-  useEffect(() => {
-    let int: NodeJS.Timeout;
-    if (user) {
-      loadNotifs();
-      int = setInterval(loadNotifs, 30000); // refresh every 30s
-    }
-    return () => clearInterval(int);
-  }, [user]);
-
   const handleOpenNotifs = async () => {
     const isOpening = !notifOpen;
     setNotifOpen(isOpening);
     setUserMenuOpen(false);
-    
+
     if (isOpening && unreadCount > 0 && user) {
-      // Mark all as read when opening the dropdown
+      // Mark all as read when opening the dropdown.
+      // Previously called POST /notifications/read-all/{id}, which does not
+      // exist on the backend (404, silently swallowed) — "mark as read" here
+      // never actually persisted. markAllRead() calls the real endpoint,
+      // PUT /notifications/mark-all-read/{id}.
       try {
-        await fetch(`${API_BASE_URL}/notifications/read-all/${user.id}`, { method: 'POST' });
-        setUnreadCount(0);
+        await markAllRead();
       } catch (err) {
         console.error("Failed to mark notifications read", err);
       }

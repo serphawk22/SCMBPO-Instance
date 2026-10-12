@@ -63,6 +63,10 @@ interface RadarResult {
   };
 }
 
+// Restored: still used by the radius picker below, but the declaration was dropped in 404c4fc,
+// so the page threw "RADIUS_OPTIONS is not defined" as soon as a place was found.
+const RADIUS_OPTIONS = [1, 3, 5, 10, 25];
+
 export default function RadarAnalysisPage() {
   const { t } = useLanguage();
   const colorConfig: Record<string, { bg: string; text: string; dot: string; label: string }> = {

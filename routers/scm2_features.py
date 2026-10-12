@@ -699,7 +699,7 @@ def add_negotiation(deal_id: int, body: NegotiationBody, session: Session = Depe
     session.add(n)
     if deal.stage in ("Lead", "Discovery", "Demo"):
         deal.stage = "Negotiation"
-    deal.updated_at = datetime.utcnow()
+    deal.updated_at = datetime.now(_tz.utc)
     session.add(deal)
     session.commit()
     session.refresh(n)
@@ -719,7 +719,7 @@ def resolve_negotiation(deal_id: int, neg_id: int, action: str, session: Session
     session.add(n)
     if action == "accept":
         deal.final_value = n.price
-        deal.updated_at = datetime.utcnow()
+        deal.updated_at = datetime.now(_tz.utc)
         session.add(deal)
     session.commit()
     rounds = session.exec(select(DealNegotiation).where(DealNegotiation.deal_id == deal_id).order_by(DealNegotiation.created_at)).all()
@@ -1054,7 +1054,7 @@ def add_movement(item_id: int, body: StockBody, session: Session = Depends(get_s
         raise HTTPException(status_code=400, detail=f"Insufficient stock (available {item.current_stock or 0})")
     me = _me(session)
     item.current_stock = new_bal
-    item.updated_at = datetime.utcnow()
+    item.updated_at = datetime.now(_tz.utc)
     mv = StockMovement(item_id=item_id, change=body.change, reason=body.reason or "Adjustment",
                        reference=body.reference, balance_after=new_bal,
                        author_id=me.id if me else None, tenant_id=_tid() or item.tenant_id)

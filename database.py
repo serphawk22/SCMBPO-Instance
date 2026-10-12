@@ -6,9 +6,16 @@ from datetime import datetime, timezone
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+def _utcnow():
+    """Aware UTC "now" for the email-stack tables (same as utc_now). On sqlmodel 0.0.34 the column is
+    `timestamp without time zone` and values come back naive, so code reading these columns compares
+    through as_utc()-style helpers."""
+    return datetime.now(timezone.utc)
+
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship, create_engine, Session, JSON
-from sqlalchemy import Column, String, Index, DateTime, select, func, Text
+from sqlalchemy import Column, String, Index, DateTime, select, func, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 import os
 from dotenv import load_dotenv
@@ -148,6 +155,62 @@ class User(SQLModel, table=True):
     activities: List["ActivityLog"] = Relationship(back_populates="user")
     assigned_requests: List["ServiceRequest"] = Relationship(back_populates="assigned_employee")
     deals: List["Deal"] = Relationship(back_populates="assigned_user")
+
+
+class EmailAgentProfile(SQLModel, table=True):
+    """Email Agent sender profile — deliberately separate from the login record.
+
+    Holds the sender identity used for Email Agent generation/sending and the
+    email signature. Nothing here is used for authentication: the users.email /
+    users.password login credentials are never read or written through this
+    table. One row per user (user_id unique).
+    """
+    __tablename__ = "email_agent_profiles"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True, unique=True)
+    agent_name: Optional[str] = Field(default=None, max_length=255)
+    agent_email: Optional[str] = Field(default=None, max_length=255)
+    agent_phone: Optional[str] = Field(default=None, max_length=50)
+    signature: Optional[str] = Field(default=None, sa_column=Column(Text))
+    auto_append_signature: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    user: Optional[User] = Relationship()
+
+
+class UserEmailIntegration(SQLModel, table=True):
+    """Per-user Email Integration — SMTP/IMAP account used by the Email Agent.
+
+    Distinct from the tenant-level EmailSettings table (quotes/inbox) and from
+    the OAuth-based EmailIntegration tracker table. The app password is stored
+    ENCRYPTED (Fernet, key from EMAIL_CREDENTIAL_ENCRYPTION_KEY) and is never
+    returned by any API response.
+    """
+    __tablename__ = "user_email_integrations"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True, unique=True)
+    email: str = Field(max_length=255)
+    encrypted_app_password: str = Field(sa_column=Column(Text))
+    provider: str = Field(default="custom", max_length=50)
+    smtp_host: str = Field(max_length=255)
+    smtp_port: int = Field(default=587)
+    smtp_security: str = Field(default="starttls", max_length=20)  # ssl | starttls | none
+    imap_host: str = Field(max_length=255)
+    imap_port: int = Field(default=993)
+    imap_security: str = Field(default="ssl", max_length=20)  # ssl | starttls | none
+    is_active: bool = Field(default=True)
+    smtp_status: Optional[str] = Field(default="not_tested", max_length=20)  # connected | failed | not_tested
+    imap_status: Optional[str] = Field(default="not_tested", max_length=20)
+    last_tested_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    user: Optional[User] = Relationship()
 
 class PasswordResetToken(SQLModel, table=True):
     """One-time token used to reset a user's password."""
@@ -751,8 +814,228 @@ class SentEmail(SQLModel, table=True):
     recommended_services: Optional[str] = Field(default=None, sa_column=Column(Text))
     manual: Optional[bool] = Field(default=False)
     draft_json: Optional[str] = Field(default=None, sa_column=Column(Text))  # Store the whole draft as JSON
-    status: str = Field(default="Sent", max_length=50)  # Sent, Opened, Replied
+    status: str = Field(default="Sent", max_length=50)  # Sent, Delivered, Opened, Replied
     sent_at: datetime = Field(default_factory=utc_now)
+    opened_at: Optional[datetime] = Field(default=None)  # first-ever pixel hit, any timing
+    last_opened_at: Optional[datetime] = Field(default=None)  # most recent pixel hit
+    open_count: int = Field(default=0)
+    replied_at: Optional[datetime] = Field(default=None)
+    reply_from: Optional[str] = Field(default=None, max_length=255)
+    reply_subject: Optional[str] = Field(default=None, max_length=500)
+    reply_body: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+
+class EmailReply(SQLModel, table=True):
+    """
+    One row per inbound reply message, so a thread with several back-and-forth
+    replies keeps every message instead of a single sent_emails.reply_body
+    snapshot getting overwritten. `message_id` is the *inbound* message's own
+    Message-ID header, used to dedupe across IMAP poll cycles (the poller
+    re-scans the same date window every pass).
+    """
+    __tablename__ = "email_replies"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sent_email_id: int = Field(foreign_key="sent_emails.id", index=True)
+    message_id: Optional[str] = Field(default=None, max_length=998, index=True)
+    from_address: Optional[str] = Field(default=None, max_length=255)
+    subject: Optional[str] = Field(default=None, max_length=500)
+    body_text: Optional[str] = Field(default=None, sa_column=Column(Text))  # quote-stripped, for the default clean view
+    body_text_full: Optional[str] = Field(default=None, sa_column=Column(Text))  # raw, with quoted history
+    body_html: Optional[str] = Field(default=None, sa_column=Column(Text))  # sanitized, inline images embedded as data: URIs
+    received_at: datetime = Field(default_factory=_utcnow)
+
+
+class InboxMessage(SQLModel, table=True):
+    """
+    One row per inbound message synced from a CRM mailbox's IMAP INBOX, so the
+    in-app Inbox shows *every* received email — EmailReply only keeps the ones
+    that match a previously sent email. Outbound mail is not duplicated here;
+    the Inbox reads it straight from sent_emails.
+
+    lead_id / client_id / contact_id / sent_email_id are plain integers on
+    purpose (no FK constraint): deleting a lead or client must never be blocked
+    by its mail history, and a dangling id simply renders as "unlinked".
+    """
+    __tablename__ = "inbox_messages"
+    __table_args__ = (
+        UniqueConstraint("mailbox", "message_id", name="uq_inbox_messages_mailbox_message_id"),
+        Index("ix_inbox_messages_tenant_received", "tenant_id", "received_at"),
+    )
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    mailbox: str = Field(max_length=255)  # address of the synced mailbox
+    message_id: str = Field(max_length=998)  # RFC Message-ID header, or a synthesized stable key
+    imap_uid: Optional[int] = Field(default=None)
+    in_reply_to: Optional[str] = Field(default=None, max_length=998)
+    references_header: Optional[str] = Field(default=None, sa_column=Column(Text))
+    from_name: Optional[str] = Field(default=None, max_length=255)
+    from_address: str = Field(max_length=255, index=True)
+    to_addresses: Optional[str] = Field(default=None, sa_column=Column(Text))
+    cc_addresses: Optional[str] = Field(default=None, sa_column=Column(Text))
+    subject: Optional[str] = Field(default=None, max_length=500)
+    snippet: Optional[str] = Field(default=None, max_length=500)
+    body_text: Optional[str] = Field(default=None, sa_column=Column(Text))  # quote-stripped
+    body_text_full: Optional[str] = Field(default=None, sa_column=Column(Text))  # raw, with quoted history
+    body_html: Optional[str] = Field(default=None, sa_column=Column(Text))  # sanitized
+    attachments: Optional[List[dict]] = Field(default_factory=list, sa_column=Column(JSON))  # [{filename, size, content_type}]
+    received_at: datetime = Field(default_factory=_utcnow)
+
+    lead_id: Optional[int] = Field(default=None, index=True)
+    client_id: Optional[int] = Field(default=None, index=True)
+    contact_id: Optional[int] = Field(default=None)
+    sent_email_id: Optional[int] = Field(default=None, index=True)
+
+    # Shared team-inbox state (one flag per message, not per user)
+    is_read: bool = Field(default=False)
+    is_starred: bool = Field(default=False)
+    is_archived: bool = Field(default=False)
+    replied_at: Optional[datetime] = Field(default=None)  # set when answered from the CRM
+
+    # AI triage, filled in asynchronously after sync
+    ai_category: Optional[str] = Field(default=None, max_length=50, index=True)
+    ai_priority: Optional[str] = Field(default=None, max_length=20)
+    ai_sentiment: Optional[str] = Field(default=None, max_length=20)
+    ai_needs_reply: Optional[bool] = Field(default=None)
+    ai_summary: Optional[str] = Field(default=None, sa_column=Column(Text))
+    ai_classified_at: Optional[datetime] = Field(default=None)
+
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class FollowUp(SQLModel, table=True):
+    """
+    A dated follow-up with a lead, client, contact or bare email address. One table, two APIs:
+    routers/followups.py serves /follow-ups (the original SCM BPO screens) and /followups (inbox,
+    AI note scan, auto-send, campaigns). The columns are the original /follow-ups schema; the email
+    stack adds only what it has no column for (contact_*, source, ai_reason, email_*, auto_send...).
+
+    status: Pending | In Progress | Completed | Cancelled. "Overdue" / "due today" are derived from
+    due_at at read time. channel / priority use the capitalised values (Email, Medium...).
+    The reminder fires reminder_minutes before due_at (0 = at due_at).
+    lead_id / client_id / user ids are plain integers (no FK), like InboxMessage: deleting a lead,
+    client or user must not be blocked by its follow-up history.
+    """
+    __tablename__ = "follow_ups"
+    __table_args__ = (
+        Index("ix_follow_ups_tenant_status_due", "tenant_id", "status", "due_at"),
+    )
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=500)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))  # why / what was discussed
+    channel: str = Field(default="Email", max_length=30)  # Email | Call | Meeting | WhatsApp | Other
+    priority: str = Field(default="Medium", max_length=20)  # Low | Medium | High | Urgent
+    status: str = Field(default="Pending", max_length=20, index=True)
+    due_at: Optional[datetime] = Field(default=None, index=True)
+    timezone: Optional[str] = Field(default=None, max_length=64)  # tz the creator scheduled it in
+    reminder_minutes: int = Field(default=60)  # remind this long before due_at
+    reminder_sent_at: Optional[datetime] = Field(default=None)
+    overdue_notified_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    completion_note: Optional[str] = Field(default=None, sa_column=Column(Text))  # outcome
+    lead_id: Optional[int] = Field(default=None, index=True)
+    client_id: Optional[int] = Field(default=None, index=True)
+    contact_id: Optional[int] = Field(default=None, index=True)
+    owner_id: Optional[int] = Field(default=None, index=True)  # the salesperson it is assigned to
+    created_by: Optional[int] = Field(default=None)
+    last_email_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    # Email stack (/followups) — bare contacts, AI origin and the personalized follow-up email
+    contact_name: Optional[str] = Field(default=None, max_length=255)
+    contact_email: Optional[str] = Field(default=None, max_length=255)
+    company_name: Optional[str] = Field(default=None, max_length=255)
+    # Where it came from: manual | ai_suggested | ai_auto | campaign | completed_chain
+    source: Optional[str] = Field(default="manual", max_length=30)
+    source_ref: Optional[str] = Field(default=None, max_length=100)  # e.g. "note-12", "conv-4", "campaign-3"
+    ai_reason: Optional[str] = Field(default=None, sa_column=Column(Text))  # quote/explanation from the AI
+    email_subject: Optional[str] = Field(default=None, max_length=500)
+    email_body: Optional[str] = Field(default=None, sa_column=Column(Text))
+    auto_send: Optional[bool] = Field(default=False)  # send email_body to the contact automatically when due
+    email_sent_at: Optional[datetime] = Field(default=None)
+    sent_email_id: Optional[int] = Field(default=None)
+    last_error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    completed_by: Optional[int] = Field(default=None)
+
+
+class FollowUpNoteScan(SQLModel, table=True):
+    """Which notes / conversation logs the AI follow-up scanner has already read,
+    so each one is analysed exactly once ("note-12", "leadnote-3", "conv-7", "reply-9")."""
+    __tablename__ = "follow_up_note_scans"
+    __table_args__ = (UniqueConstraint("source_key", name="uq_follow_up_note_scans_source_key"),)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_key: str = Field(max_length=60)
+    follow_up_id: Optional[int] = Field(default=None)  # set when the scan created / updated one
+    scanned_at: datetime = Field(default_factory=_utcnow)
+
+
+class EmailCampaign(SQLModel, table=True):
+    """One Excel/CSV upload sent as personalized emails (routers/email_campaigns.py)."""
+    __tablename__ = "email_campaigns"
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=255)
+    source_filename: Optional[str] = Field(default=None, max_length=255)
+    columns: Optional[List[str]] = Field(default_factory=list, sa_column=Column(JSON))
+    mapping: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))  # {email, name, first_name, company}
+    subject_template: str = Field(max_length=500)
+    body_template: str = Field(sa_column=Column(Text))
+    ai_personalize: bool = Field(default=False)
+    ai_instructions: Optional[str] = Field(default=None, sa_column=Column(Text))
+    create_leads: bool = Field(default=True)
+    followup_days: Optional[int] = Field(default=None)  # create a follow-up N days after each send
+
+    # Sending account snapshot (the account itself is re-resolved at send time)
+    created_by: Optional[int] = Field(default=None, index=True)
+    sender_email: Optional[str] = Field(default=None, max_length=255)
+    sender_source: Optional[str] = Field(default=None, max_length=50)  # user_integration | tenant_settings
+
+    status: str = Field(default="Queued", max_length=20)  # Queued | Sending | Completed | Cancelled | Failed
+    total: int = Field(default=0)
+    sent_count: int = Field(default=0)
+    failed_count: int = Field(default=0)
+    skipped_count: int = Field(default=0)
+    last_error: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+    created_at: datetime = Field(default_factory=_utcnow)
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+
+
+class EmailCampaignRecipient(SQLModel, table=True):
+    """One row of the uploaded sheet = one personalized email, with its own delivery status."""
+    __tablename__ = "email_campaign_recipients"
+    __table_args__ = (
+        Index("ix_email_campaign_recipients_campaign_status", "campaign_id", "status"),
+    )
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    campaign_id: int = Field(foreign_key="email_campaigns.id", index=True)
+    row_number: int = Field(default=0)  # 1-based data row in the uploaded sheet
+    email: str = Field(max_length=255)
+    name: Optional[str] = Field(default=None, max_length=255)
+    company: Optional[str] = Field(default=None, max_length=255)
+    data: Optional[dict] = Field(default_factory=dict, sa_column=Column(JSON))  # the full row
+
+    subject: Optional[str] = Field(default=None, max_length=500)  # final rendered subject
+    body: Optional[str] = Field(default=None, sa_column=Column(Text))  # final rendered body
+    status: str = Field(default="Pending", max_length=20)  # Pending | Sending | Sent | Failed | Skipped
+    error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    attempts: int = Field(default=0)
+    claimed_at: Optional[datetime] = Field(default=None)
+    sent_at: Optional[datetime] = Field(default=None)
+    sent_email_id: Optional[int] = Field(default=None)
+    lead_id: Optional[int] = Field(default=None)
+    client_id: Optional[int] = Field(default=None)
+    follow_up_id: Optional[int] = Field(default=None)
 
 
 class SocialProfile(SQLModel, table=True):

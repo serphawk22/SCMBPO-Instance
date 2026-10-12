@@ -11,7 +11,7 @@ import { useLanguage } from '@/context/LanguageContext';
 
 interface AiCopilotPanelLeadProps {
   leadId: string | string[];
-  client: any;
+  lead?: any;
 }
 
 function HealthGauge({ score }: { score: number }) {
@@ -56,7 +56,7 @@ function HealthGauge({ score }: { score: number }) {
   );
 }
 
-export default function AiCopilotPanelLead({ leadId, client }: AiCopilotPanelLeadProps) {
+export default function AiCopilotPanelLead({ leadId }: AiCopilotPanelLeadProps) {
   const { language } = useLanguage();
   const [loading, setLoading] = useState(false);
   const [insights, setInsights] = useState<any>(null);

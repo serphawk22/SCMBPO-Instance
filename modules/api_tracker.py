@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import Session
 from contextvars import ContextVar
 
@@ -108,7 +108,7 @@ def track_api_call(
         success=success,
         content_type=content_type,
         request_meta=request_meta,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.utc)
     )
     
     try:

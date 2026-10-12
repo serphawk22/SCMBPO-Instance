@@ -38,6 +38,7 @@ interface Proposal {
   valid_until?: string;
   total_value?: number;
   signed_at?: string;
+  signed_by_ip?: string | null;
   creator_name?: string;
   created_at: string;
 }

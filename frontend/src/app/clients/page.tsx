@@ -937,7 +937,7 @@ export default function ClientsPage() {
                           <motion.div
                             layoutId={`client-${client.id}`}
                             draggable={true}
-                            onDragStart={e => {
+                            onDragStartCapture={(e: React.DragEvent<HTMLDivElement>) => {
                               e.dataTransfer.setData("clientId", String(client.id));
                             }}
                             onClick={() => router.push(`/admin/clients/${client.id}`)}
@@ -1052,7 +1052,7 @@ export default function ClientsPage() {
             </div>
           ) : viewMode === 'map' ? (
             <div className="p-6 h-[700px]">
-              <ClientMapView clients={filteredClients} />
+              <ClientMapView clients={filteredClients} statuses={statuses} />
             </div>
           ) : (
             <div className="overflow-x-auto w-full">
@@ -1111,7 +1111,7 @@ export default function ClientsPage() {
                                 value={client.assignedEmployeeId || ""}
                                 onChange={async (e) => {
                                   const empId = e.target.value ? Number(e.target.value) : null;
-                                  const empName = employees.find(emp => emp.id === empId)?.name || null;
+                                  const empName = employees.find(emp => emp.id === empId)?.name || undefined;
                                   setClients(prev => prev.map(c => c.id === client.id ? { ...c, assignedEmployeeId: empId, assignedEmployeeName: empName } : c));
                                   try {
                                     await fetch(`${API_BASE_URL}/clients/${client.id}`, {
@@ -1153,7 +1153,7 @@ export default function ClientsPage() {
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-[13px] text-slate-600 dark:text-slate-300">
-                            {client.website || client.websiteUrl ? (client.website || client.websiteUrl).replace(/^https?:\/\//, '') : '—'}
+                            {client.website || client.websiteUrl ? (client.website || client.websiteUrl || '').replace(/^https?:\/\//, '') : '—'}
                           </span>
                         </td>
                         <td className="px-6 py-4">
