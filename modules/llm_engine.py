@@ -149,6 +149,64 @@ CRITICAL: You are outputting JSON. You MUST properly escape all newlines in your
         }
 
 
+# Labels that appear in the scraped-text block fed to the LLM (see modules/scraper.py's
+# `final_content` build-up). Occasionally the model echoes one of these labels back
+# verbatim as a "found" value instead of returning empty when nothing was actually
+# found. Any extracted field matching one of these (with or without a trailing colon
+# and value) is treated as garbage and cleared.
+_EXTRACTION_LABEL_PREFIXES = (
+    "extracted emails",
+    "extracted phone number",
+    "extracted linkedin",
+    "extracted twitter",
+    "extracted instagram",
+    "extracted facebook",
+    "source url",
+)
+
+
+def _looks_like_label_leak(value) -> bool:
+    if not isinstance(value, str):
+        return False
+    v = value.strip().lower().rstrip(":").strip()
+    return any(v == p or v.startswith(p) for p in _EXTRACTION_LABEL_PREFIXES)
+
+
+def _clean_value(value):
+    if _looks_like_label_leak(value):
+        return None
+    return value
+
+
+def _sanitize_extracted_fields(result: dict) -> dict:
+    """Strip label-leak garbage (see `_looks_like_label_leak`) out of an LLM analysis dict."""
+    if not isinstance(result, dict):
+        return result
+
+    emails = result.get("extracted_emails")
+    if isinstance(emails, list):
+        result["extracted_emails"] = [e for e in emails if not _looks_like_label_leak(e)]
+    elif _looks_like_label_leak(emails):
+        result["extracted_emails"] = []
+
+    for key in ("extracted_phone_numbers", "extracted_linkedin", "extracted_twitter"):
+        if key in result:
+            cleaned = _clean_value(result.get(key))
+            result[key] = cleaned if cleaned is not None else ""
+
+    contacts = result.get("contacts")
+    if isinstance(contacts, list):
+        for c in contacts:
+            if not isinstance(c, dict):
+                continue
+            if _looks_like_label_leak(c.get("email")):
+                c["email"] = None
+            if _looks_like_label_leak(c.get("phone_number")):
+                c["phone_number"] = None
+
+    return result
+
+
 def analyze_content(text):
     """
     Analyzes website text using OpenAI.
@@ -199,6 +257,12 @@ def analyze_content(text):
 
         Look closely at the 'Extracted Emails', 'Extracted Phone Numbers', and any 'Social Links' in the company info below. Always prefer using the actual scraped links and emails instead of placeholders or guesses. Extract as many people/decision makers as possible.
 
+        IMPORTANT: If the 'Extracted Emails', 'Extracted Phone Numbers', 'Extracted LinkedIn Profiles', or
+        'Extracted Twitter Profiles' lines below are EMPTY (nothing after the colon), that means nothing
+        was found — return an empty array ([]) / empty string ("") / null for that field. Never return the
+        label text itself (e.g. never output the literal string "Extracted Emails:" or "Extracted Phone
+        Numbers:") as if it were a found value.
+
         Company Info:
         {text[:60000]}
         """
@@ -210,7 +274,7 @@ def analyze_content(text):
         )
 
         result = json.loads(response.choices[0].message.content)
-        return result
+        return _sanitize_extracted_fields(result)
     except Exception as e:
         print(f"Error in OpenAI analysis: {e}")
         return {

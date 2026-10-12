@@ -15,6 +15,7 @@ import AddFollowUpModal, { FollowUpTarget } from "@/components/AddFollowUpModal"
 interface Lead {
   id: number;
   company_name: string;
+  ai_analysis_results?: { website_form?: { form_name?: string } } | null;
   website?: string | null;
   industry?: string | null;
   email?: string | null;
@@ -529,7 +530,7 @@ export default function LeadsPage() {
                         key={lead.id}
                         layoutId={`lead-${lead.id}`}
                         draggable={true}
-                        onDragStart={e => {
+                        onDragStartCapture={(e: React.DragEvent<HTMLDivElement>) => {
                           e.dataTransfer.setData("leadId", String(lead.id));
                         }}
                         onClick={() => router.push(`/leads/${lead.id}`)}

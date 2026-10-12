@@ -3,7 +3,7 @@ from sqlmodel import Session, select, func
 from sqlalchemy import Integer
 from database import get_session, User, ClientProfile, ApiRequest
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 router = APIRouter(prefix="/api-intelligence", tags=["API Intelligence"])
 
@@ -24,7 +24,7 @@ def get_overview(request: Request, session: Session = Depends(get_session)):
     # Total API Calls
     total_calls = session.exec(base_query(func.count(ApiRequest.id))).one()
     
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=7)
     month_start = today_start.replace(day=1)
     
@@ -203,7 +203,7 @@ def get_requests(request: Request, limit: int = 50, session: Session = Depends(g
 @router.get("/charts/trend")
 def get_trend(session: Session = Depends(get_session)):
     # Get last 7 days of daily token and cost
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     labels = []
     tokens = []
     costs = []

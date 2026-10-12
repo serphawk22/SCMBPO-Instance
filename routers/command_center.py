@@ -272,8 +272,8 @@ class Data:
             rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since)).all())
         except Exception:
             try:
-                since_naive = datetime.utcnow() - timedelta(days=14)
-                rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since_naive)).all())
+                since = datetime.now(timezone.utc) - timedelta(days=14)
+                rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since)).all())
             except Exception:
                 rows = self._all(ActivityLog)
         uid = self.sc.uid

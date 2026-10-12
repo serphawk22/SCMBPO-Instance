@@ -97,7 +97,7 @@ export default function ProductsPage() {
   };
 
   const categories = useMemo(() => {
-    const cats = new Set(products.map(p => p.category).filter(Boolean));
+    const cats = new Set(products.map(p => p.category).filter((c): c is string => !!c));
     return ['All', 'Software', 'Service', 'Hardware', 'Consulting', 'Marketing', 'Support', 'Other', ...Array.from(cats)].filter((v, i, a) => a.indexOf(v) === i);
   }, [products]);
 

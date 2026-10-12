@@ -6,7 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, Legend, PieChart, Pie, Cell
 } from "recharts";
-import { FileText, Users, IndianRupee, TrendingUp, Target, Clock, Calendar, CheckCircle2, AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame, Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, BriefcaseBusiness, FileSpreadsheet, ShieldCheck } from "lucide-react";
+import { FileText, Users, IndianRupee, TrendingUp, TrendingDown, Target, Clock, Calendar, CheckCircle2, AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame, Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, BriefcaseBusiness, FileSpreadsheet, ShieldCheck } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
@@ -555,51 +555,57 @@ export default function ReportsPage() {
               label="Won Revenue"
               value={money(summary.won_revenue, currency)}
               sub={`${summary.won_deals_count || 0} deals closed`}
-              trend="up"
-              accent="#10b981"
+              icon={IndianRupee}
+              tone="emerald"
             />
             <Tile
               label="Pipeline Value"
               value={money(summary.pipeline_value, currency)}
               sub={`${summary.open_deals_count || 0} active deals`}
-              accent="#6366f1"
+              icon={Briefcase}
+              tone="indigo"
             />
             <Tile
               label="Operating Costs"
               value={money(summary.total_costs, currency)}
               sub="Payroll, tools & ops"
-              accent="#f43f5e"
+              icon={Layers}
+              tone="rose"
             />
             <Tile
               label="Net Operating Profit"
               value={money(summary.net_profit, currency)}
               sub={`${summary.margin_pct || summary.net_margin_pct || 0}% margin`}
-              trend={summary.net_profit >= 0 ? "up" : "down"}
-              accent={summary.net_profit >= 0 ? "#10b981" : "#f43f5e"}
+              icon={summary.net_profit >= 0 ? TrendingUp : TrendingDown}
+              tone={summary.net_profit >= 0 ? "emerald" : "rose"}
             />
             <Tile
               label="Conversion Rate"
               value={`${summary.conversion_rate || 0}%`}
               sub={`${summary.active_clients || 0} of ${summary.total_leads || 0} leads`}
-              accent="#8b5cf6"
+              icon={Target}
+              tone="violet"
             />
             <Tile
               label="Deal Win Rate"
               value={`${summary.win_rate || 0}%`}
               sub="Won vs handled"
-              accent="#06b6d4"
+              icon={Award}
+              tone="teal"
             />
             <Tile
               label="Active Clients"
               value={num(summary.active_clients)}
               sub="Paying accounts"
-              accent="#3b82f6"
+              icon={Building2}
+              tone="sky"
             />
             <Tile
               label="Sales Reps"
               value={num(summary.active_sales_reps || summary.active_reps || (data?.sales_reps?.length || data?.reps?.length || 0))}
               sub="On the front line"
-              accent="#f59e0b"
+              icon={UserCheck}
+              tone="amber"
             />
           </div>
 

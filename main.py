@@ -11,8 +11,17 @@ from sqlmodel import Session
 from modules.scraper import research_and_map_company
 from pydantic import BaseModel
 
-from database import engine, SentEmail
+from database import engine, SentEmail, EmailReply, utc_now
+from database import ContactClientLink, ContactLeadLink, ProjectTicketNote  # used by the contact-link and ticket-note routes
 from sqlmodel import select
+
+
+# Module level on purpose: with `from __future__ import annotations` FastAPI resolves a body model by
+# name from this module's globals, so a class defined inside the function below would be taken for a
+# query parameter (every bulk delete would fail with 422).
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
 
 def register_sent_emails_endpoint(app, get_session):
     from fastapi import Depends
@@ -27,12 +36,33 @@ def register_sent_emails_endpoint(app, get_session):
             query = query.where(SentEmail.client_id == client_id)
             total_query = total_query.where(SentEmail.client_id == client_id)
             manual_query = manual_query.where(SentEmail.client_id == client_id)
-        
+
         total_count = session.exec(total_query).first() or 0
         manual_count = session.exec(manual_query).first() or 0
         auto_count = total_count - manual_count
-        
+
         emails = session.exec(query.limit(limit)).all()
+
+        # One query for every reply across this page of emails, instead of N+1.
+        email_ids = [e.id for e in emails]
+        replies_by_email: dict[int, list] = {}
+        if email_ids:
+            all_replies = session.exec(
+                select(EmailReply)
+                .where(EmailReply.sent_email_id.in_(email_ids))
+                .order_by(EmailReply.received_at.asc())
+            ).all()
+            for r in all_replies:
+                replies_by_email.setdefault(r.sent_email_id, []).append({
+                    "id": r.id,
+                    "from_address": r.from_address,
+                    "subject": r.subject,
+                    "body_text": r.body_text,
+                    "body_text_full": r.body_text_full,
+                    "body_html": r.body_html,
+                    "received_at": r.received_at.isoformat() if r.received_at else None,
+                })
+
         return {
             "totalSent": total_count,
             "manualCount": manual_count,
@@ -49,11 +79,44 @@ def register_sent_emails_endpoint(app, get_session):
                     "manual": e.manual,
                     "draft_json": e.draft_json,
                     "status": e.status,
-                    "sent_at": e.sent_at.isoformat() if e.sent_at else None
+                    "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+                    "opened_at": e.opened_at.isoformat() if e.opened_at else None,
+                    "last_opened_at": e.last_opened_at.isoformat() if e.last_opened_at else None,
+                    "open_count": e.open_count,
+                    "replied_at": e.replied_at.isoformat() if e.replied_at else None,
+                    "reply_from": e.reply_from,
+                    "reply_subject": e.reply_subject,
+                    "reply_body": e.reply_body,
+                    "replies": replies_by_email.get(e.id, []),
                 }
                 for e in emails
             ]
         }
+
+    # The frontend's per-row trash icon and "Select All" bulk-delete have always
+    # called these two routes, but neither existed on the backend — delete was
+    # silently a no-op (optimistic UI removal that reverted on next refresh).
+    @app.delete("/sent-emails/{email_id}")
+    def delete_sent_email(email_id: int, session: Session = Depends(get_session)):
+        email = session.get(SentEmail, email_id)
+        if not email:
+            raise HTTPException(status_code=404, detail="Sent email not found")
+        session.delete(email)
+        session.commit()
+        return {"ok": True}
+
+    @app.post("/sent-emails/bulk-delete")
+    def bulk_delete_sent_emails(body: BulkDeleteRequest, session: Session = Depends(get_session)):
+        if not body.ids:
+            return {"ok": True, "deleted": 0}
+        deleted = 0
+        for email_id in body.ids:
+            email = session.get(SentEmail, email_id)
+            if email:
+                session.delete(email)
+                deleted += 1
+        session.commit()
+        return {"ok": True, "deleted": deleted}
 
 import hashlib
 import re
@@ -68,6 +131,15 @@ def _to_naive_dt(dt):
         except Exception:
             return dt.replace(tzinfo=None)
     return dt
+
+
+def _to_aware_dt(dt):
+    """Aware UTC for writes and query binds (sqlmodel 0.0.47 rejects naive datetimes); naive input is read as UTC."""
+    if dt is None:
+        return None
+    if getattr(dt, "tzinfo", None) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 from typing import Any, Dict, List, Optional, Union
 
@@ -129,6 +201,8 @@ from database import (
     Tenant,
     PageVisitTelemetry,
     User,
+    EmailAgentProfile,
+    UserEmailIntegration,
     create_db_and_tables,
     engine,
     InventoryItem,
@@ -544,6 +618,15 @@ app.include_router(email_tracking_router)
 from routers.leaderboard import router as leaderboard_router
 app.include_router(leaderboard_router)
 
+from routers.inbox import router as inbox_router
+app.include_router(inbox_router)
+
+from routers.followups import router as followups_router
+app.include_router(followups_router)
+
+from routers.email_campaigns import router as email_campaigns_router
+app.include_router(email_campaigns_router)
+
 # SCM2: lead sources, revenue & costs, negotiation, ownership, meeting history, timezone
 from routers.scm2_features import router as scm2_router, ensure_scm2_schema, resolve_lead_source, reassign_owner
 app.include_router(scm2_router)
@@ -560,17 +643,133 @@ def _scm2_startup():
     except Exception as e:
         print(f"[scm2] schema bootstrap failed: {e}")
 
-# Follow-ups: scheduling, AI-personalised emails, automatic reminders
-from routers.followups import router as followups_router, ensure_followup_schema, start_reminder_worker
-app.include_router(followups_router)
+# Follow-ups (/follow-ups): scheduling, AI-personalised emails, automatic reminders. Same follow_ups
+# table as the email stack's /followups router included above.
+from routers.follow_ups import router as follow_ups_router, ensure_followup_schema, start_reminder_worker
+app.include_router(follow_ups_router)
 
 @app.on_event("startup")
 def _followups_startup():
     try:
         ensure_followup_schema()
-        start_reminder_worker(60)
+        from modules.background import jobs_enabled
+        if jobs_enabled():
+            start_reminder_worker(60)
+        else:
+            print("[followups] BACKGROUND_JOBS=0: reminder worker NOT started.")
     except Exception as e:
         print(f"[followups] startup failed: {e}")
+
+def _ensure_email_tables(bind=None):
+    """Create the email-stack tables when missing. database.create_db_and_tables() only runs when
+    .migration_done is absent, and that file is tracked in git, so without this they would never appear
+    on a deployed database. Idempotent: create_all only creates what is missing.
+
+    create_all leaves a table that already exists alone, so an email table created earlier by another build
+    on the same database (e.g. an older follow_ups without contact_name) gets every model column it lacks
+    added here. Additive only: nothing is dropped, renamed or retyped, and added columns are nullable.
+    Returns the "table.column" names added."""
+    from sqlalchemy import inspect, text
+    from sqlmodel import SQLModel
+    from database import (EmailAgentProfile, EmailCampaign, EmailCampaignRecipient, EmailReply, FollowUp,
+                          FollowUpNoteScan, InboxMessage, UserEmailIntegration)
+    bind = bind or engine
+    tables = [m.__table__ for m in (EmailReply, InboxMessage, EmailAgentProfile, UserEmailIntegration, FollowUp,
+                                    FollowUpNoteScan, EmailCampaign, EmailCampaignRecipient)]
+    SQLModel.metadata.create_all(bind, tables=tables)
+
+    added = []
+    if_not_exists = "IF NOT EXISTS " if bind.dialect.name == "postgresql" else ""
+    insp = inspect(bind)
+    for table in tables:
+        existing = insp.get_columns(table.name)
+        have = {c["name"] for c in existing}
+        for col in table.columns:
+            if col.name in have:
+                continue
+            if col.primary_key:
+                print(f"[startup] email table {table.name} has no {col.name} primary key; left unchanged")
+                continue
+            ddl = (f'ALTER TABLE {table.name} ADD COLUMN {if_not_exists}"{col.name}" '
+                   f"{col.type.compile(dialect=bind.dialect)}")
+            try:
+                with bind.begin() as conn:
+                    conn.execute(text(ddl))
+                added.append(f"{table.name}.{col.name}")
+            except Exception as e:
+                print(f"[startup] could not add {table.name}.{col.name}: {type(e).__name__}: {e}")
+        # Columns the code doesn't know about stay; a NOT NULL one without a default would make inserts fail.
+        for c in existing:
+            if c["name"] not in table.columns and not c.get("nullable", True) and c.get("default") is None:
+                print(f"[startup] email table {table.name} has an extra NOT NULL column {c['name']} "
+                      f"without a default; inserts from this build will fail until it gets one")
+    if added:
+        print(f"[startup] email tables: added missing columns {', '.join(added)}")
+    return added
+
+
+def _email_stack_startup():
+    """Runs on every boot: email-stack tables and sent_emails columns, the database log line, and the
+    background pollers (unless BACKGROUND_JOBS=0)."""
+    from sqlalchemy import text
+    try:
+        _ensure_email_tables()
+    except Exception as e:
+        print(f"[startup] email-stack tables could not be created: {type(e).__name__}: {e}")
+
+    # Auto-migrate sent_emails open/reply tracking columns
+    email_tracking_migrations = [
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS opened_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS replied_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS last_opened_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS open_count INTEGER DEFAULT 0;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_from VARCHAR(255);",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_subject VARCHAR(500);",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_body TEXT;",
+    ]
+    for sql in email_tracking_migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+        except Exception as e:
+            print(f"Migration sent_emails tracking: {e}")
+
+    # Say which database this process is bound to (never the credentials), so two environments that
+    # accidentally share one database are easy to spot in the logs.
+    try:
+        print(f"[startup] database: {engine.url.get_backend_name()} host={engine.url.host or 'local file'} "
+              f"name={engine.url.database}")
+    except Exception:
+        pass
+
+    # Background pollers. BACKGROUND_JOBS=0 turns them all off (modules/background.py): only one
+    # environment per database should run them.
+    from modules.background import jobs_enabled
+    if not jobs_enabled():
+        print("[startup] BACKGROUND_JOBS=0: inbox sync, reply checker and follow-up scheduler are NOT started.")
+        return
+    # Detect replies to sent emails (IMAP-based).
+    try:
+        from modules.email_sender import start_reply_checker_thread
+        start_reply_checker_thread()
+    except Exception as e:
+        print(f"Reply checker thread failed to start: {e}")
+
+    # Mirror every inbound email into inbox_messages for the in-app Inbox (+ AI triage).
+    try:
+        from modules.inbox_sync import start_inbox_sync_thread
+        start_inbox_sync_thread()
+    except Exception as e:
+        print(f"Inbox sync thread failed to start: {e}")
+
+    # Follow-up reminders, automatic follow-up emails, AI note scanning and campaign resume.
+    try:
+        from modules.followups_core import start_followup_scheduler_thread
+        start_followup_scheduler_thread()
+    except Exception as e:
+        print(f"Follow-up scheduler failed to start: {e}")
+
 
 def _run_startup_migrations():
     from sqlalchemy import text
@@ -731,6 +930,10 @@ def on_startup():
         except Exception as e:
             print(f"[startup] migrations skipped: {e}")
     
+    # Email stack: unconditional, after the gated block above (.migration_done is tracked in git, so
+    # deploys never run create_db_and_tables / _run_startup_migrations).
+    _email_stack_startup()
+
     # Ensure SuperAdmin exists
     try:
         from sqlmodel import Session, select
@@ -1322,49 +1525,62 @@ def send_manual(body: SendManualRequest, session: Session = Depends(get_session)
         draft_json=_draft_json_payload,
         manual=body.manual if body.manual is not None else True,
         status="Draft" if body.action_type == "Draft" else "Sent",
-        sent_at=datetime.utcnow(),
+        sent_at=utc_now(),
     )
     session.add(sent_email)
     session.commit()
     session.refresh(sent_email)
 
-    # Step 3.5: Send the actual email (unless skip_send is True).
-    # Primary path is direct SMTP via the configured crm@serphawk.in mailbox.
+    # Step 3.5: Send the actual email (unless skip_send is True) from the sender's mailbox chain (D3):
+    # their own Email Integration, else the company mailbox (Settings -> SMTP), else the server mailbox.
     # The N8N webhook is still fired best-effort for follow-up automation.
     if not body.skip_send:
         import os
         import httpx
-        sender = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "contact@scmbpo.com")
-        password = os.getenv("EMAIL_AGENT_PASSWORD") or os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD", "")
-        smtp_server = os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER", "mail.serphawk.in")
-        smtp_port = os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT", 587)
+        from modules import company_mailer
+        sender_profile = _email_agent_sender(session)
+        _sig = sender_profile.get("signature") if sender_profile.get("auto_append") else ""
+        try:
+            account = _email_agent_account(session)
+        except company_mailer.MailAccountError as e:
+            if str(e) != company_mailer.NOT_CONFIGURED_MESSAGE:
+                raise HTTPException(status_code=500, detail={
+                    "code": "email_integration_decrypt_failed",
+                    "message": "Unable to decrypt stored email credentials. Please re-save your Email Integration settings.",
+                })
+            account = None
+        sender_email = account.email if account else None
 
         try:
             bodies = [b for b in [body.english_body, body.spanish_body] if b and b.strip()]
             full_body = "\n\n---\n\n".join(bodies) if bodies else ""
 
-            # Send directly over SMTP from crm@serphawk.in so mail goes out even if n8n is down.
-            if sender and password:
-                from modules.email_sender import send_email_outlook
-                send_email_outlook(
-                    to_email=body.to_email,
-                    subject=body.subject,
-                    body=full_body or body.english_body or body.spanish_body or "",
-                    sender_email=sender,
-                    sender_password=password,
-                    smtp_server=smtp_server,
-                    smtp_port=int(smtp_port),
-                )
-                print(f"Email sent via SMTP to {body.to_email} from {sender}")
+            # Send directly over SMTP from the configured mailbox so mail goes out even if n8n is down.
+            if account is not None:
+                try:
+                    company_mailer.send_via(
+                        account,
+                        to=body.to_email,
+                        subject=body.subject,
+                        body=_apply_signature(full_body or body.english_body or body.spanish_body or "", _sig),
+                        tracking_id=sent_email.id,
+                    )
+                except Exception as send_err:
+                    print(f"Email send failed via SMTP: {send_err}")
+                    raise HTTPException(status_code=502, detail={
+                        "code": "email_integration_send_failed",
+                        "message": f"Unable to send email: {company_mailer.friendly_smtp_error(send_err)}",
+                    })
+                print(f"Email sent via SMTP to {body.to_email} from {sender_email} ({account.source})")
             else:
-                print("SMTP not configured (missing EMAIL_SENDER/EMAIL_PASSWORD) - skipping direct send")
+                print("SMTP not configured (missing credentials) - skipping direct send")
 
             # Fire the N8N webhook best-effort for follow-up automation (never blocks the reply).
             webhook_url = os.getenv("N8N_EMAIL_WEBHOOK_URL", "https://primary-production-d40bc.up.railway.app/webhook/trigger-cold-email")
             payload = {
                 "event": "email_sent",
                 "email_id": sent_email.id,
-                "sender": sender,
+                "sender": sender_email,
                 "to_email": body.to_email,
                 "subject": body.subject,
                 "body": full_body,
@@ -1382,6 +1598,8 @@ def send_manual(body: SendManualRequest, session: Session = Depends(get_session)
                     print(f"Webhook successfully triggered and responded from manual send to {webhook_url}")
             except Exception as e:
                 print(f"Manual Email send failed via webhook: {e}")
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Manual Email send failed: {e}")
 
@@ -2018,6 +2236,179 @@ def _verify_password(plain: str, user: User) -> bool:
 def _user_dict(u: User) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "phone": getattr(u, "phone", None), "role": _normalize_role(u.role), "tenant_id": u.tenant_id}
 
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _generate_signature(name, email, phone) -> str:
+    """Build the default email signature from the agent profile values.
+
+    Missing values are omitted entirely (never rendered as undefined/null).
+    """
+    lines = ["Best Regards,"]
+    if (name or "").strip():
+        lines.append(name.strip())
+    if (email or "").strip():
+        lines.append(f"Email: {email.strip()}")
+    if (phone or "").strip():
+        lines.append(f"Phone: {phone.strip()}")
+    return "\n".join(lines)
+
+
+def _get_agent_profile(session: Session, user: User) -> Optional[EmailAgentProfile]:
+    """Read-only lookup of the user's Email Agent profile row (no writes)."""
+    if not user or not user.id:
+        return None
+    return session.exec(select(EmailAgentProfile).where(EmailAgentProfile.user_id == user.id)).first()
+
+
+def _agent_profile_dict(prof: Optional[EmailAgentProfile], user: Optional[User], integ: Optional[UserEmailIntegration] = None) -> dict:
+    """Serialize the agent profile, falling back to the configured SMTP email or login record READ-ONLY
+    for display defaults when no agent profile email is set."""
+    name = (prof.agent_name if prof else None) or (user.name if user else None) or ""
+    email = (prof.agent_email if prof else None) or (integ.email if integ and integ.email else None) or (user.email if user else None) or ""
+    phone = (prof.agent_phone if prof else None) or (getattr(user, "phone", None) if user else None) or ""
+    return {
+        "agent_name": name,
+        "agent_email": email,
+        "agent_phone": phone,
+        "signature": (prof.signature if prof else None) or "",
+        "auto_append_signature": bool(prof.auto_append_signature) if prof else True,
+    }
+
+
+def _email_agent_sender(session: Session) -> dict:
+    """Resolve the authenticated user's sender identity for the Email Agent.
+
+    Source of truth is the email_agent_profiles table (sender name/email/phone/
+    signature/auto-append), fully separate from login credentials. When no agent
+    profile row exists yet, the login record is used READ-ONLY as a display
+    fallback — it is never written from this path. SMTP credentials always stay
+    on the configured mailbox. Fallbacks: the user's name, else "SCMHub Logistics"
+    (the default From name); the sending mailbox's address; no phone.
+    """
+    user_id = current_salesperson_id.get()
+    user = session.get(User, user_id) if user_id else None
+    server_address = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL") or ""
+    if not user:
+        return {
+            "name": "SCMHub Logistics",
+            "email": server_address,
+            "phone": "",
+            "signature": "",
+            "auto_append": False,
+        }
+    integ = _get_user_email_integration(session, user_id)
+    prof = _get_agent_profile(session, user)
+    d = _agent_profile_dict(prof, user, integ)
+    return {
+        "name": (d["agent_name"] or "").strip() or "SCMHub Logistics",
+        "email": (d["agent_email"] or "").strip() or server_address,
+        "phone": (d["agent_phone"] or "").strip(),
+        "signature": d["signature"] or "",
+        "auto_append": d["auto_append_signature"],
+    }
+
+def _email_agent_server_account():
+    """Server-mailbox step of the Email Agent chain, with this backend's existing env names and defaults:
+    EMAIL_AGENT_SENDER / EMAIL_AGENT_PASSWORD (a dedicated Email Agent mailbox) win over EMAIL_SENDER."""
+    from modules.company_mailer import MailAccount
+    sender = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL")
+    password = os.getenv("EMAIL_AGENT_PASSWORD") or os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD")
+    if not (sender and password):
+        return None
+    return MailAccount(
+        email=sender, password=password,
+        smtp_host=os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER") or "mail.serphawk.in",
+        smtp_port=int(os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT") or 587),
+        source="server_env", imap_host=os.getenv("IMAP_SERVER") or None,
+    )
+
+def _email_agent_account(session: Session):
+    """The mailbox a person's Email Agent mail (send-manual, auto-send) goes out from (D3): their own
+    Email Integration, else the company mailbox (Settings -> SMTP), else the server mailbox.
+    Raises company_mailer.MailAccountError: NOT_CONFIGURED_MESSAGE when there is none, another
+    message when the person's stored app password can't be decrypted."""
+    from modules import company_mailer
+    user_id = current_salesperson_id.get()
+    user = session.get(User, user_id) if user_id else None
+    tenant_id = user.tenant_id if user else None
+    try:
+        return company_mailer.resolve_account(session, user_id, tenant_id)
+    except company_mailer.MailAccountError as e:
+        if str(e) != company_mailer.NOT_CONFIGURED_MESSAGE:
+            raise
+    account = _email_agent_server_account()
+    if account is None:
+        raise company_mailer.MailAccountError(company_mailer.NOT_CONFIGURED_MESSAGE)
+    if user:
+        prof = _get_agent_profile(session, user)
+        account.from_name = (prof.agent_name if prof else None) or user.name or None
+    return account
+
+
+def _get_user_email_integration(session: Session, user_id: Optional[int]) -> Optional[UserEmailIntegration]:
+    """Read the authenticated user's Email Integration row — never another user's."""
+    if not user_id:
+        return None
+    return session.exec(select(UserEmailIntegration).where(UserEmailIntegration.user_id == user_id)).first()
+
+
+def _email_integration_safe_dict(row: Optional[UserEmailIntegration]) -> dict:
+    """Serialize integration config WITHOUT any credential material."""
+    if not row:
+        return {"configured": False, "smtp_status": "not_configured", "imap_status": "not_configured"}
+    return {
+        "configured": True,
+        "email": row.email,
+        "provider": row.provider,
+        "smtp_host": row.smtp_host,
+        "smtp_port": row.smtp_port,
+        "smtp_security": row.smtp_security,
+        "imap_host": row.imap_host,
+        "imap_port": row.imap_port,
+        "imap_security": row.imap_security,
+        "is_active": bool(row.is_active),
+        "smtp_status": row.smtp_status or "not_tested",
+        "imap_status": row.imap_status or "not_tested",
+        "last_tested_at": row.last_tested_at.isoformat() if row.last_tested_at else None,
+    }
+
+
+_DEFAULT_SIGNOFF_GREETING_RE = re.compile(
+    r"^\s*(?:Best regards,?|Saludos cordiales,?|Saludos,?|Warm regards,?|Best,?|Regards,?)\s*$",
+    re.IGNORECASE,
+)
+
+_SIGNOFF_SHAPE_RE = re.compile(
+    r"scm\s*(?:bpo|hub|shipping)|dapros|(?:^|\s)[^@\s]+@[^@\s]+\.[^@\s]+|^(?:Email|Phone):\s",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _apply_signature(body: str, signature: str) -> str:
+    """Idempotently apply the user's saved email signature to a generated body.
+
+    - Empty signature: body unchanged.
+    - Signature already present in the body: unchanged (never appended twice).
+    - Otherwise: strip a trailing sign-off block (a greeting line followed by up
+      to 4 lines shaped like a signature — mentioning SCM BPO / SCMHub / SCM Shipping / Dapros, an email
+      address, or Email:/Phone: lines) and append the signature with line
+      breaks preserved exactly. This also handles a signature that changed
+      after a draft was written, so only one sign-off is ever sent.
+    """
+    if not body or not signature or not signature.strip():
+        return body
+    if signature.strip() in body:
+        return body
+    lines = body.rstrip().split("\n")
+    for i in range(len(lines) - 1, max(len(lines) - 6, 0) - 1, -1):
+        if _DEFAULT_SIGNOFF_GREETING_RE.match(lines[i]):
+            block = lines[i + 1:]
+            if block and _SIGNOFF_SHAPE_RE.search("\n".join(block)):
+                lines = lines[:i]
+                break
+    return "\n".join(lines).rstrip() + "\n\n" + signature.rstrip()
 
 def _client_dict(cp: ClientProfile, session: Session, users: Optional[Dict[int, User]] = None, last_activities: Optional[Dict[int, ActivityLog]] = None) -> dict:
     # Batch lookups: callers rendering many clients (e.g. /clients list) pass in
@@ -2669,7 +3060,7 @@ def forgot_password(body: ForgotPasswordRequest, session: Session = Depends(get_
         session.add(PasswordResetToken(
             user_id=user.id,
             token=token,
-            expires_at=datetime.utcnow() + timedelta(hours=1),
+            expires_at=utc_now() + timedelta(hours=1),
         ))
         session.commit()
 
@@ -2707,7 +3098,7 @@ def reset_password(body: ResetPasswordRequest, session: Session = Depends(get_se
             PasswordResetToken.token == body.token,
         )
     ).first()
-    if not rec or rec.used or rec.expires_at < _dt.utcnow():
+    if not rec or rec.used or _to_naive_dt(rec.expires_at) < _dt.utcnow():
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
 
     if not body.new_password or len(body.new_password) < 6:
@@ -2841,6 +3232,347 @@ def update_current_user(body: UserUpdateMe, session: Session = Depends(get_sessi
     session.refresh(user)
     return {"user": _user_dict(user)}
 
+
+class AgentProfileUpdate(BaseModel):
+    agent_name: Optional[str] = None
+    agent_email: Optional[str] = None
+    agent_phone: Optional[str] = None
+    signature: Optional[str] = None
+    auto_append_signature: Optional[bool] = None
+
+@app.get("/users/me/agent-profile")
+def get_email_agent_profile(session: Session = Depends(get_session)):
+    """Email Agent sender profile (separate from the login record)."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    integ = _get_user_email_integration(session, user_id)
+    return {"agent_profile": _agent_profile_dict(_get_agent_profile(session, user), user, integ)}
+
+@app.put("/users/me/agent-profile")
+def update_email_agent_profile(body: AgentProfileUpdate, session: Session = Depends(get_session)):
+    """Update the Email Agent sender profile.
+
+    Writes ONLY to email_agent_profiles — the users table (login email,
+    password) is never touched. When any sender field changes, the signature is
+    regenerated from the NEW values in the same transaction; an explicit
+    `signature` in the payload (manual Save Signature) wins over regeneration.
+    Agent emails are sender identities, not accounts, so no uniqueness check
+    applies.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prof = _get_agent_profile(session, user)
+    if prof is None:
+        integ = _get_user_email_integration(session, user_id)
+        fallback_email = (integ.email if integ and integ.email else None) or user.email
+        prof = EmailAgentProfile(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            agent_name=user.name,
+            agent_email=fallback_email,
+            agent_phone=getattr(user, "phone", None),
+            signature=getattr(user, "signature", None),
+            auto_append_signature=bool(getattr(user, "auto_append_signature", True)),
+        )
+        session.add(prof)
+
+    profile_touched = body.agent_name is not None or body.agent_email is not None or body.agent_phone is not None
+
+    if body.agent_email is not None:
+        new_email = body.agent_email.strip()
+        if new_email and not _EMAIL_RE.match(new_email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        prof.agent_email = new_email
+    if body.agent_name is not None:
+        prof.agent_name = body.agent_name
+    if body.agent_phone is not None:
+        prof.agent_phone = body.agent_phone
+
+    if profile_touched:
+        name = (prof.agent_name or "").strip() or (user.name or "")
+        email = (prof.agent_email or "").strip() or (user.email or "")
+        phone = (prof.agent_phone or "").strip() or (getattr(user, "phone", None) or "")
+        prof.signature = _generate_signature(name, email, phone)
+
+    if body.signature is not None:
+        prof.signature = body.signature
+    if body.auto_append_signature is not None:
+        prof.auto_append_signature = bool(body.auto_append_signature)
+
+    session.commit()
+    session.refresh(prof)
+    integ = _get_user_email_integration(session, user_id)
+    return {"agent_profile": _agent_profile_dict(prof, user, integ)}
+
+
+class SignatureUpdate(BaseModel):
+    signature: Optional[str] = None
+
+@app.put("/users/me/signature")
+def update_current_user_signature(body: SignatureUpdate, session: Session = Depends(get_session)):
+    """Alias kept for compatibility — writes the signature to the agent profile
+    table (never to the login record)."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prof = _get_agent_profile(session, user)
+    if prof is None:
+        prof = EmailAgentProfile(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            agent_name=user.name,
+            agent_email=user.email,
+            agent_phone=getattr(user, "phone", None),
+            signature=getattr(user, "signature", None),
+            auto_append_signature=bool(getattr(user, "auto_append_signature", True)),
+        )
+        session.add(prof)
+    prof.signature = body.signature
+    session.commit()
+    session.refresh(prof)
+    return {"ok": True}
+
+
+_EMAIL_INTEGRATION_PROVIDERS = {"gmail", "outlook", "yahoo", "zoho", "custom"}
+_EMAIL_INTEGRATION_SECURITY_ALIASES = {"ssl": "ssl", "ssltls": "ssl", "tls": "ssl", "starttls": "starttls", "none": "none", "": "none"}
+
+
+def _normalize_integration_security(value: Optional[str], label: str) -> Optional[str]:
+    if value is None:
+        return None
+    v = str(value).strip().lower().replace(" ", "").replace("/", "").replace("_", "")
+    if v not in _EMAIL_INTEGRATION_SECURITY_ALIASES:
+        raise HTTPException(status_code=400, detail=f"Invalid {label} security value. Use ssl, starttls, or none.")
+    return _EMAIL_INTEGRATION_SECURITY_ALIASES[v]
+
+
+def _validate_integration_port(port: Optional[int], label: str) -> Optional[int]:
+    if port is None:
+        return None
+    if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
+        raise HTTPException(status_code=400, detail=f"Invalid {label} port. Use a number between 1 and 65535.")
+    return port
+
+
+class EmailIntegrationUpdate(BaseModel):
+    email: Optional[str] = None
+    app_password: Optional[str] = None
+    provider: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_security: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_security: Optional[str] = None
+
+
+@app.get("/users/me/email-integration")
+def get_email_integration(session: Session = Depends(get_session)):
+    """Safe view of the authenticated user's Email Integration. No credentials returned."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    row = _get_user_email_integration(session, user_id)
+    return {"integration": _email_integration_safe_dict(row)}
+
+
+@app.put("/users/me/email-integration")
+def update_email_integration(body: EmailIntegrationUpdate, session: Session = Depends(get_session)):
+    """Create/update the authenticated user's Email Integration.
+
+    The app password is encrypted at rest and NEVER returned. Server/port/
+    security fields can be updated without re-entering the password.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    row = _get_user_email_integration(session, user_id)
+    creating = row is None
+    if creating:
+        row = UserEmailIntegration(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            email="",
+            encrypted_app_password="",
+            smtp_host="",
+            imap_host="",
+        )
+        session.add(row)
+
+    if body.email is not None:
+        email = body.email.strip()
+        if not _EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        row.email = email
+    if body.provider is not None:
+        provider = body.provider.strip().lower()
+        if provider not in _EMAIL_INTEGRATION_PROVIDERS:
+            raise HTTPException(status_code=400, detail="Invalid provider. Use gmail, outlook, yahoo, zoho, or custom.")
+        row.provider = provider
+    if body.smtp_host is not None:
+        host = body.smtp_host.strip()
+        if not host:
+            raise HTTPException(status_code=400, detail="SMTP server is required.")
+        row.smtp_host = host
+    if body.imap_host is not None:
+        host = body.imap_host.strip()
+        if not host:
+            raise HTTPException(status_code=400, detail="IMAP server is required.")
+        row.imap_host = host
+    if body.smtp_port is not None:
+        row.smtp_port = _validate_integration_port(body.smtp_port, "SMTP")
+    if body.imap_port is not None:
+        row.imap_port = _validate_integration_port(body.imap_port, "IMAP")
+    sec = _normalize_integration_security(body.smtp_security, "SMTP")
+    if sec is not None:
+        row.smtp_security = sec
+    sec = _normalize_integration_security(body.imap_security, "IMAP")
+    if sec is not None:
+        row.imap_security = sec
+    if body.app_password is not None:
+        if not body.app_password:
+            raise HTTPException(status_code=400, detail="App password cannot be empty.")
+        from modules.email_crypto import encrypt_app_password, EmailCredentialEncryptionError
+        try:
+            row.encrypted_app_password = encrypt_app_password(body.app_password)
+        except EmailCredentialEncryptionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if creating:
+        missing = []
+        if not row.email:
+            missing.append("email address")
+        if not row.encrypted_app_password:
+            missing.append("app password")
+        if not row.smtp_host:
+            missing.append("SMTP server")
+        if not row.imap_host:
+            missing.append("IMAP server")
+        if missing:
+            session.rollback()
+            raise HTTPException(status_code=400, detail="Missing required fields for a new configuration: " + ", ".join(missing) + ".")
+        row.smtp_status = "not_tested"
+        row.imap_status = "not_tested"
+
+    from database import _utcnow as _db_utcnow
+    row.updated_at = _db_utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return {"integration": _email_integration_safe_dict(row)}
+
+
+class EmailIntegrationTestRequest(BaseModel):
+    scope: Optional[str] = "all"  # smtp | imap | all
+    # Optional UNSAVED overrides (test-before-save). A temporary app_password is
+    # used for the test only and is NEVER persisted.
+    email: Optional[str] = None
+    app_password: Optional[str] = None
+    provider: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_security: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_security: Optional[str] = None
+
+
+@app.post("/users/me/email-integration/test")
+def test_email_integration(body: EmailIntegrationTestRequest, session: Session = Depends(get_session)):
+    """Run a REAL SMTP/IMAP connection test against the saved configuration.
+
+    Optional override fields (including a temporary app_password) test form
+    values BEFORE saving; those credentials are discarded and never stored.
+    Status is persisted only when the saved configuration itself was tested.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    row = _get_user_email_integration(session, user_id)
+
+    scope = (body.scope or "all").lower()
+    if scope not in ("smtp", "imap", "all"):
+        raise HTTPException(status_code=400, detail="Invalid test scope. Use smtp, imap, or all.")
+
+    overrides = {k: v for k, v in body.model_dump().items() if k != "scope" and v is not None}
+    has_overrides = bool(overrides)
+
+    email = overrides.get("email") or (row.email if row else None)
+    password = overrides.get("app_password")
+    password_from_stored = False
+    if password is None and row is not None and row.encrypted_app_password:
+        from modules.email_crypto import decrypt_app_password, EmailCredentialEncryptionError
+        try:
+            password = decrypt_app_password(row.encrypted_app_password)
+            password_from_stored = True
+        except EmailCredentialEncryptionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    smtp_host = overrides.get("smtp_host") or (row.smtp_host if row else None)
+    smtp_port = overrides.get("smtp_port") or (row.smtp_port if row else None)
+    smtp_security = _normalize_integration_security(overrides.get("smtp_security") or (row.smtp_security if row else None), "SMTP")
+    imap_host = overrides.get("imap_host") or (row.imap_host if row else None)
+    imap_port = overrides.get("imap_port") or (row.imap_port if row else None)
+    imap_security = _normalize_integration_security(overrides.get("imap_security") or (row.imap_security if row else None), "IMAP")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email Integration is not configured. Save your email account and app password before testing.")
+
+    from modules.email_integration import test_smtp_connection, test_imap_connection
+
+    result: dict = {"smtp": None, "imap": None, "last_tested_at": None}
+    failures = []
+
+    if scope in ("smtp", "all"):
+        if not smtp_host or not smtp_port:
+            result["smtp"] = {"ok": False, "message": "SMTP server and port are required."}
+        else:
+            ok, message = test_smtp_connection(email, password, smtp_host, int(smtp_port), smtp_security or "starttls")
+            result["smtp"] = {"ok": ok, "message": message}
+            if not ok:
+                failures.append(message)
+
+    if scope in ("imap", "all"):
+        if not imap_host or not imap_port:
+            result["imap"] = {"ok": False, "message": "IMAP server and port are required."}
+        else:
+            ok, message = test_imap_connection(email, password, imap_host, int(imap_port), imap_security or "ssl")
+            result["imap"] = {"ok": ok, "message": message}
+            if not ok:
+                failures.append(message)
+
+    # Persist status ONLY when the saved configuration itself was tested.
+    if row is not None and not has_overrides:
+        from database import _utcnow as _db_utcnow
+        row.last_tested_at = _db_utcnow()
+        if result["smtp"] is not None:
+            row.smtp_status = "connected" if result["smtp"]["ok"] else "failed"
+        if result["imap"] is not None:
+            row.imap_status = "connected" if result["imap"]["ok"] else "failed"
+        session.add(row)
+        session.commit()
+        result["last_tested_at"] = row.last_tested_at.isoformat()
+
+    result["ok"] = not failures
+    return result
 
 @app.get("/users")
 def list_users(role: Optional[str] = None, session: Session = Depends(get_session)):
@@ -3931,20 +4663,20 @@ def patch_client_status(client_id: int, body: Dict[str, Any] = Body(...), sessio
             for d in deals:
                 d.stage = deal_stage_map[status]
                 if status == "Won":
-                    d.won_at = datetime.utcnow()
+                    d.won_at = utc_now()
                     if d.value and not d.final_value:
                         d.final_value = d.value
                 elif status != "Won":
                     d.won_at = None
-                d.updated_at = datetime.utcnow()
+                d.updated_at = utc_now()
                 session.add(d)
         if status in prop_status_map:
             props = session.exec(select(Proposal).where(Proposal.client_id == client_id)).all()
             for pr in props:
                 pr.status = prop_status_map[status]
                 if status == "Won":
-                    pr.signed_at = datetime.utcnow()
-                pr.updated_at = datetime.utcnow()
+                    pr.signed_at = utc_now()
+                pr.updated_at = utc_now()
                 session.add(pr)
 
     if "assignedEmployeeId" in body:
@@ -4262,7 +4994,7 @@ def update_client_note(client_id: int, note_id: int, body: ClientNoteUpdateReque
         note.tags = body.tags
     if body.is_pinned is not None:
         note.is_pinned = body.is_pinned
-    note.updated_at = datetime.utcnow()
+    note.updated_at = utc_now()
     session.add(note)
     session.commit()
     
@@ -4479,7 +5211,7 @@ def trigger_full_analysis(client_id: int, session: Session = Depends(get_session
                 rec.pain_points = _j2.dumps(icps) if icps else None
                 rec.business_goals = _j2.dumps(data.get("gtm_recommendations", {})) if data.get("gtm_recommendations") else None
                 rec.competitors = _j2.dumps(data.get("competitive_landscape", {})) if data.get("competitive_landscape") else None
-                rec.updated_at = __import__('datetime').datetime.utcnow()
+                rec.updated_at = utc_now()
                 sess.add(rec)
                 sess.commit()
             print(f"[FullAnalysis] Done for client {client_id}")
@@ -4541,7 +5273,7 @@ def upsert_client_research(client_id: int, body: ClientResearchUpdateRequest, se
         research = ClientResearch(client_id=client_id)
     for field, val in body.model_dump(exclude_unset=True).items():
         setattr(research, field, val)
-    research.updated_at = datetime.utcnow()
+    research.updated_at = utc_now()
     session.add(research)
     session.commit()
     return {"ok": True}
@@ -4764,7 +5496,8 @@ def generate_outbound_draft(client_id: int, session: Session = Depends(get_sessi
             spanish_body=data.get("spanish_body", ""),
             draft_json=_json.dumps(data),
             manual=True,
-            sent_at=datetime.utcnow()
+            status="Draft",  # generated, never sent — keeps it out of the Inbox's Sent view
+            sent_at=utc_now()
         )
         session.add(draft)
         
@@ -4979,7 +5712,10 @@ def get_ai_insights(client_id: int, session: Session = Depends(get_session)):
 
     days_since_contact = None
     if last_contact:
-        days_since_contact = (datetime.utcnow() - last_contact).days
+        # sqlmodel>=0.0.4x returns tz-aware datetimes; utcnow() is naive and the subtraction raised (500)
+        if last_contact.tzinfo is None:
+            last_contact = last_contact.replace(tzinfo=timezone.utc)
+        days_since_contact = (datetime.now(timezone.utc) - last_contact).days
 
     prompt = f"""You are an AI Sales Copilot analyzing a CRM client record. Provide actionable insights.
 
@@ -5078,7 +5814,10 @@ def get_lead_ai_insights(lead_id: int, session: Session = Depends(get_session)):
 
     days_since_contact = None
     if last_contact:
-        days_since_contact = (datetime.utcnow() - last_contact).days
+        # sqlmodel>=0.0.4x returns tz-aware datetimes; utcnow() is naive and the subtraction raised (500)
+        if last_contact.tzinfo is None:
+            last_contact = last_contact.replace(tzinfo=timezone.utc)
+        days_since_contact = (datetime.now(timezone.utc) - last_contact).days
 
     prompt = f"""You are an AI Sales Copilot analyzing a CRM lead. Provide actionable insights.
 
@@ -5571,7 +6310,7 @@ def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
     for field, val in body.model_dump(exclude_unset=True).items():
         setattr(p, field, val)
-    p.updatedAt = datetime.utcnow()
+    p.updatedAt = utc_now()
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -5757,7 +6496,7 @@ def send_quote(body: QuoteRequest, session: Session = Depends(get_session)):
     sr.team_info = body.team_info
     sr.quote_doc_url = body.quote_doc_url
     sr.status = "Quoted"
-    sr.quote_sent_at = datetime.utcnow()
+    sr.quote_sent_at = utc_now()
     if body.assigned_employee_id:
         sr.assigned_employee_id = body.assigned_employee_id
     session.add(sr)
@@ -5772,7 +6511,7 @@ def accept_quote(request_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Request not found")
     sr.status = "Accepted"
     sr.client_accepted_quote = True
-    sr.accepted_at = datetime.utcnow()
+    sr.accepted_at = utc_now()
     session.add(sr)
     session.commit()
     return {"ok": True}
@@ -6149,7 +6888,7 @@ def create_scheduled_call(body: ScheduledCallCreateRequest, session: Session = D
     dt = None
     if body.scheduled_at:
         try:
-            dt = datetime.fromisoformat(body.scheduled_at)
+            dt = _to_aware_dt(datetime.fromisoformat(body.scheduled_at))
         except Exception:
             dt = None
 
@@ -6322,6 +7061,8 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
         from database import SentEmail
         import json
         session = next(get_session())
+        profile_sender = _email_agent_sender(session)
+        _sig = profile_sender.get("signature") if profile_sender.get("auto_append") else ""
 
         # --- Static Email Template ---
         OUTREACH_SUBJECT = "Let's grow {company_name} together!"
@@ -6375,48 +7116,17 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             inbound_body_en = inbound_llm.get("english_body") or INBOUND_BODY_EN.format(company_name=company_name, services=services)
             inbound_body_es = inbound_llm.get("spanish_body") or INBOUND_BODY_ES.format(company_name=company_name, services=services)
 
-        sender = body.sender_email or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "crm@serphawk.in")
-        password = os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD", "")
-        smtp_server = os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT", 587)
-        imap_server = os.getenv("IMAP_SERVER")
+        # Auto-send goes out from the sender's mailbox chain (D3): own Email Integration, then the
+        # company mailbox (Settings -> SMTP), then the server mailbox.
+        from modules import company_mailer
+        account = None
+        account_error = None
+        try:
+            account = _email_agent_account(session)
+        except company_mailer.MailAccountError as e:
+            account_error = e
+        sender = account.email if account else (body.sender_email or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "crm@serphawk.in"))
 
-        # Only send the email if manual is False and all required fields are present
-        if not body.manual and all([body.to_email, body.subject, body.body, sender, password]):
-            try:
-                send_email_outlook(
-                    to_email=body.to_email,
-                    subject=body.subject,
-                    body=body.body,
-                    sender_email=sender,
-                    sender_password=password,
-                    smtp_server=smtp_server,
-                    smtp_port=smtp_port,
-                    imap_server=imap_server
-                )
-                
-                # --- Trigger n8n Webhook ---
-                try:
-                    import httpx
-                    webhook_url = "http://localhost:5678/webhook-test/serphawk-followup"
-                    payload = {
-                        "event": "email_sent",
-                        "sender": sender,
-                        "to_email": body.to_email,
-                        "subject": body.subject,
-                        "company": company_name,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    httpx.post(webhook_url, json=payload, timeout=5.0)
-                    print(f"Webhook successfully triggered to {webhook_url}")
-                except Exception as wh_e:
-                    print(f"Webhook trigger failed: {wh_e}")
-                    
-            except Exception as e:
-                print(f"Email send failed: {e}")
-        # If any required field is missing, skip sending and just generate the draft
-
-        # Only save to database if required fields are present
         # Provide default subject and content if missing, so frontend always gets a visible draft
         # Build the draft object for both outreach and inbound
         draft_obj = {
@@ -6465,13 +7175,66 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             "recommended_services": draft_obj.get("services") or "",
             "manual": body.manual,
             "draft_json": json.dumps(draft_obj),
-            "sent_at": draft_obj["sent_at"],
+            "sent_at": _to_aware_dt(datetime.fromisoformat(draft_obj["sent_at"])),  # a datetime, not the ISO string
             "client_id": client_id
         }
         sent_email = SentEmail(**email_db_obj)
         session.add(sent_email)
         session.commit()
         session.refresh(sent_email)
+
+        # Only send the email if manual is False and all required fields are present.
+        # The SentEmail row above already exists, so its id can be embedded as an
+        # open-tracking pixel in the outgoing HTML.
+        if not body.manual and account is None:
+            if account_error is not None and str(account_error) != company_mailer.NOT_CONFIGURED_MESSAGE:
+                raise HTTPException(status_code=500, detail={
+                    "code": "email_integration_decrypt_failed",
+                    "message": "Unable to decrypt stored email credentials. Please re-save your Email Integration settings.",
+                })
+            raise HTTPException(status_code=400, detail={
+                "code": "email_integration_not_configured",
+                "message": company_mailer.NOT_CONFIGURED_MESSAGE,
+            })
+        if not body.manual and all([body.to_email, body.subject, body.body]):
+            try:
+                try:
+                    company_mailer.send_via(
+                        account,
+                        to=body.to_email,
+                        subject=body.subject,
+                        body=_apply_signature(body.body, _sig),
+                        tracking_id=sent_email.id,
+                    )
+                except Exception as send_err:
+                    print(f"Email send failed for user {current_salesperson_id.get()} from {account.email}: {send_err}")
+                    raise HTTPException(status_code=502, detail={
+                        "code": "email_integration_send_failed",
+                        "message": f"Unable to send email: {company_mailer.friendly_smtp_error(send_err)}",
+                    })
+
+                # --- Trigger n8n Webhook ---
+                try:
+                    import httpx
+                    webhook_url = "http://localhost:5678/webhook-test/serphawk-followup"
+                    payload = {
+                        "event": "email_sent",
+                        "sender": sender,
+                        "to_email": body.to_email,
+                        "subject": body.subject,
+                        "company": company_name,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    httpx.post(webhook_url, json=payload, timeout=5.0)
+                    print(f"Webhook successfully triggered to {webhook_url}")
+                except Exception as wh_e:
+                    print(f"Webhook trigger failed: {wh_e}")
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"Email send failed: {e}")
+        # If any required field is missing, skip sending and just generate the draft
 
         # --- Log activity for this client ---
         from database import ActivityLog
@@ -6490,6 +7253,8 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             background_tasks.add_task(generate_llm_draft_task, sent_email.id, body.dict())
 
         return {"ok": True, "email_id": sent_email.id, "draft": draft_obj, "client_id": client_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -7191,8 +7956,8 @@ def monitor_stats(session: Session = Depends(get_session)):
     # Weekly activity counts (last 10 weeks)
     weekly_activity = []
     for i in range(9, -1, -1):
-        start = datetime.utcnow() - timedelta(weeks=i + 1)
-        end = datetime.utcnow() - timedelta(weeks=i)
+        start = utc_now() - timedelta(weeks=i + 1)
+        end = utc_now() - timedelta(weeks=i)
         count = len(session.exec(
             select(ActivityLog).where(ActivityLog.createdAt >= start, ActivityLog.createdAt < end)
         ).all())
@@ -7578,7 +8343,7 @@ def update_task(task_id: int, body: TaskUpdateRequest, session: Session = Depend
         updates["status"] = _normalize_task_status(updates["status"])
     for field, val in updates.items():
         setattr(t, field, val)
-    t.updated_at = datetime.utcnow()
+    t.updated_at = utc_now()
     session.add(t)
     session.commit()
     session.refresh(t)
@@ -7667,7 +8432,7 @@ def update_task_sheet_entry(entry_id: int, body: TaskSheetEntryRequest, session:
         raise HTTPException(status_code=404, detail="Task-sheet entry not found")
     for field, value in body.model_dump().items():
         setattr(entry, field, value)
-    entry.updated_at = datetime.utcnow()
+    entry.updated_at = utc_now()
     session.add(entry)
     session.commit()
     session.refresh(entry)
@@ -8096,8 +8861,8 @@ def update_invoice(
     if "amount" in updates or "tax" in updates:
         inv.total = round((inv.amount or 0) + (inv.tax or 0), 2)
     if updates.get("status") == "Paid":
-        inv.paid_at = datetime.utcnow()
-    inv.updated_at = datetime.utcnow()
+        inv.paid_at = utc_now()
+    inv.updated_at = utc_now()
     session.add(inv)
     session.commit()
     session.refresh(inv)
@@ -8533,7 +9298,7 @@ def respond_nps(survey_id: int, body: NPSRespondRequest, session: Session = Depe
         raise HTTPException(status_code=404, detail="Survey not found")
     s.score = body.score
     s.feedback = body.feedback
-    s.responded_at = datetime.utcnow()
+    s.responded_at = utc_now()
     session.add(s)
     session.commit()
     return {"ok": True}
@@ -9511,7 +10276,7 @@ async def ws_chat(websocket: WebSocket, thread_id: int):
                             m = session.get(ChatMessage, mid)
                             if m and not m.is_read and m.sender_id != data.get("user_id"):
                                 m.is_read = True
-                                m.read_at = datetime.utcnow()
+                                m.read_at = utc_now()
                                 session.add(m)
                         session.commit()
                     await ws_manager.broadcast(
@@ -9544,7 +10309,7 @@ def change_password(body: PasswordChangeRequest, session: Session = Depends(get_
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
     user.password = _hash_password(body.new_password)
-    user.updatedAt = datetime.utcnow()
+    user.updatedAt = utc_now()
     session.add(user)
     session.commit()
     return {"ok": True, "message": "Password updated successfully"}
@@ -9730,7 +10495,7 @@ Return ONLY valid JSON, no markdown."""
         existing.keyword_gap_data = analysis.get("keyword_gap", {})
         existing.backlink_comparison = analysis.get("backlink_estimate", {})
         existing.content_benchmarks = analysis.get("content_analysis", {})
-        existing.last_updated = datetime.utcnow()
+        existing.last_updated = utc_now()
         session.add(existing)
     else:
         ca = CompetitorAnalysis(
@@ -9873,7 +10638,7 @@ def create_deal(body: DealCreateRequest, session: Session = Depends(get_session)
         stage=body.stage,
         expected_close_date=body.expected_close_date,
         currency=body.currency or "INR",
-        won_at=datetime.utcnow() if body.stage == "Closed Won" else None,
+        won_at=utc_now() if body.stage == "Closed Won" else None,
     )
     session.add(deal)
     session.commit()
@@ -9893,7 +10658,7 @@ def update_deal(deal_id: int, body: DealUpdateRequest, session: Session = Depend
     if body.stage is not None:
         # SCM2-58: stamp the moment a deal is won so revenue lands in the right month
         if body.stage == "Closed Won" and deal.stage != "Closed Won":
-            deal.won_at = datetime.utcnow()
+            deal.won_at = utc_now()
             if deal.value and not deal.final_value:
                 deal.final_value = deal.value
         elif body.stage != "Closed Won":
@@ -9925,14 +10690,14 @@ def update_deal(deal_id: int, body: DealUpdateRequest, session: Session = Depend
                 for pr in props:
                     pr.status = prop_status_map[body.stage]
                     if body.stage == "Closed Won":
-                        pr.signed_at = datetime.utcnow()
-                    pr.updated_at = datetime.utcnow()
+                        pr.signed_at = utc_now()
+                    pr.updated_at = utc_now()
                     session.add(pr)
 
     if body.expected_close_date is not None: deal.expected_close_date = body.expected_close_date
     if body.final_value is not None: deal.final_value = body.final_value
     if body.currency is not None: deal.currency = body.currency
-    deal.updated_at = datetime.utcnow()
+    deal.updated_at = utc_now()
     session.add(deal)
     session.commit()
     return {"ok": True}
@@ -10502,7 +11267,7 @@ def update_marketplace_service(
         raise HTTPException(status_code=404, detail="Service not found")
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(svc, field, value)
-    svc.updated_at = datetime.utcnow()
+    svc.updated_at = utc_now()
     session.add(svc)
     session.commit()
     session.refresh(svc)
@@ -10519,7 +11284,7 @@ def delete_marketplace_service(
     if not svc:
         raise HTTPException(status_code=404, detail="Service not found")
     svc.is_active = False
-    svc.updated_at = datetime.utcnow()
+    svc.updated_at = utc_now()
     session.add(svc)
     session.commit()
     return {"success": True}
@@ -10581,7 +11346,7 @@ Respond with ONLY valid JSON (no markdown):
         if data.get("estimated_cost_usd") is not None:
             svc.estimated_cost = float(data["estimated_cost_usd"])
             svc.cost_is_estimated = data.get("cost_is_estimated", True)
-        svc.updated_at = datetime.utcnow()
+        svc.updated_at = utc_now()
         session.add(svc)
         session.commit()
         session.refresh(svc)
@@ -12062,7 +12827,8 @@ def generate_lead_outbound_draft(lead_id: int, session: Session = Depends(get_se
             spanish_body=data.get("spanish_body", ""),
             draft_json=_json.dumps(data),
             manual=True,
-            sent_at=datetime.utcnow()
+            status="Draft",  # generated, never sent — keeps it out of the Inbox's Sent view
+            sent_at=utc_now()
         )
         session.add(draft)
         
@@ -12713,7 +13479,7 @@ def add_lead_followup(lead_id: int, body: ClientFollowUpRequest, session: Sessio
         lead_id=lead_id,
         action="Added Follow-up Note",
         details=body.content,
-        timestamp=datetime.utcnow()
+        timestamp=utc_now()
     )
     session.add(activity)
 
@@ -12779,7 +13545,7 @@ def add_lead_note(lead_id: int, body: LeadNoteRequest, session: Session = Depend
         raise HTTPException(status_code=400, detail="Note cannot be empty")
 
     from datetime import datetime
-    now = datetime.utcnow()
+    now = utc_now()
     author_id = current_salesperson_id.get()
 
     note = LeadNote(
@@ -12856,7 +13622,7 @@ class MeetingUpdateRequest(BaseModel):
 
 
 def _meeting_to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[datetime]:
-    """SCM2-74: parse a datetime string and normalise to naive UTC.
+    """SCM2-74: parse a datetime string and normalise to UTC (aware, so sqlmodel 0.0.47 accepts it).
 
     - Strings with an explicit offset/Z are converted directly.
     - Naive strings are interpreted in `tz_name` (organiser's timezone).
@@ -12874,10 +13640,8 @@ def _meeting_to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[da
         try:
             dt = dt.replace(tzinfo=ZoneInfo(tz_name))
         except Exception:
-            return dt
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(_utc_mod.utc).replace(tzinfo=None)
-    return dt
+            return _to_aware_dt(dt)
+    return _to_aware_dt(dt)
 
 
 def _meeting_local(m: Meeting) -> Optional[datetime]:
@@ -13153,7 +13917,7 @@ def update_meeting(meeting_id: int, body: MeetingUpdateRequest, session: Session
         updates["scheduled_at"] = _meeting_to_utc(updates["scheduled_at"], updates.get("timezone", m.timezone))
     for k, v in updates.items():
         setattr(m, k, v)
-    m.updated_at = datetime.utcnow()
+    m.updated_at = utc_now()
     session.add(m)
     session.commit()
     session.refresh(m)
@@ -13283,7 +14047,7 @@ def update_product(product_id: int, body: ProductUpdateRequest, session: Session
         raise HTTPException(status_code=404, detail="Product not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
-    p.updated_at = datetime.utcnow()
+    p.updated_at = utc_now()
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -13526,7 +14290,7 @@ def _notify_admins_and_salesperson(
                 type=notif_type,
                 link=link,
                 is_read=False,
-                created_at=datetime.utcnow()
+                created_at=utc_now()
             )
             session.add(n)
         except Exception as e:
@@ -13647,7 +14411,7 @@ def add_proposal_comment(uuid: str, body: ProposalCommentCreateRequest, session:
         deal = session.get(Deal, q.deal_id) if q.deal_id else None
         if deal:
             deal.stage = "Negotiation"
-            deal.updated_at = datetime.utcnow()
+            deal.updated_at = utc_now()
             session.add(deal)
 
         # Notify admin and assigned salesperson
@@ -13685,7 +14449,7 @@ def add_proposal_comment(uuid: str, body: ProposalCommentCreateRequest, session:
         deal = session.get(Deal, prop.deal_id) if prop.deal_id else None
         if deal:
             deal.stage = "Negotiation"
-            deal.updated_at = datetime.utcnow()
+            deal.updated_at = utc_now()
             session.add(deal)
 
         # Notify admin and assigned salesperson
@@ -13798,7 +14562,7 @@ def reject_public_proposal(uuid: str, body: Optional[Dict[str, Any]] = Body(None
             deal = session.get(Deal, q.deal_id)
             if deal:
                 deal.stage = "Closed Lost"
-                deal.updated_at = datetime.utcnow()
+                deal.updated_at = utc_now()
                 session.add(deal)
 
         _notify_admins_and_salesperson(
@@ -13827,7 +14591,7 @@ def reject_public_proposal(uuid: str, body: Optional[Dict[str, Any]] = Body(None
             deal = session.get(Deal, prop.deal_id)
             if deal:
                 deal.stage = "Closed Lost"
-                deal.updated_at = datetime.utcnow()
+                deal.updated_at = utc_now()
                 session.add(deal)
 
         _notify_admins_and_salesperson(
@@ -13975,14 +14739,23 @@ def _quote_email_content(q: CRMQuote, session: Session, recipient_name=None):
 
 
 def _quote_smtp_sender(session: Session):
-    """Resolve the sender mailbox used for quote emails (per-tenant settings first,
-    then env vars). Returns (sender_email, password, smtp_server, smtp_port)."""
+    """Resolve the sender mailbox used for quote / order / PO emails: the user's own Email Integration,
+    then per-tenant settings, then env vars. Returns (sender_email, password, smtp_server, smtp_port)."""
     import os
 
     sender = None
     password = None
     smtp_server = None
     smtp_port = None
+
+    # The logged-in user's own Email Integration (Email Agent → Settings) comes first.
+    integ = _get_user_email_integration(session, current_salesperson_id.get())
+    if integ is not None and integ.is_active and integ.email and integ.encrypted_app_password and integ.smtp_host:
+        try:
+            from modules.email_crypto import decrypt_app_password
+            return integ.email, decrypt_app_password(integ.encrypted_app_password), integ.smtp_host, int(integ.smtp_port or 587)
+        except Exception as e:
+            print(f"[mail] could not use the user's Email Integration, falling back: {type(e).__name__}")
 
     tenant_id = current_tenant_id.get()
     if tenant_id:
@@ -14127,7 +14900,7 @@ def update_quote(quote_id: int, body: QuoteCreateRequest, session: Session = Dep
         raise HTTPException(status_code=404, detail="Quote not found")
     for k, v in body.model_dump(exclude_unset=True, exclude={"items", "send_email"}).items():
         setattr(q, k, v)
-    q.updated_at = datetime.utcnow()
+    q.updated_at = utc_now()
     # Automatically sync deal and salesperson
     _sync_proposal_or_quote_to_deal(q, session, is_status_update=True)
     session.add(q)
@@ -14285,7 +15058,7 @@ def update_sales_order(order_id: int, body: SalesOrderCreateRequest, session: Se
         raise HTTPException(status_code=404, detail="Sales order not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(o, k, v)
-    o.updated_at = datetime.utcnow()
+    o.updated_at = utc_now()
     session.add(o)
     session.commit()
     session.refresh(o)
@@ -14366,7 +15139,7 @@ def update_purchase_order(order_id: int, body: PurchaseOrderCreateRequest, sessi
         raise HTTPException(status_code=404, detail="Purchase order not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(o, k, v)
-    o.updated_at = datetime.utcnow()
+    o.updated_at = utc_now()
     session.add(o)
     session.commit()
     session.refresh(o)
@@ -15001,10 +15774,10 @@ def update_case(case_id: int, body: CaseUpdateRequest, session: Session = Depend
     updates = body.model_dump(exclude_unset=True)
     old_status = c.status
     if updates.get("status") in ("Resolved", "Closed") and not c.resolved_at:
-        c.resolved_at = datetime.utcnow()
+        c.resolved_at = utc_now()
     for k, v in updates.items():
         setattr(c, k, v)
-    c.updated_at = datetime.utcnow()
+    c.updated_at = utc_now()
     session.add(c)
     session.commit()
     session.refresh(c)
@@ -15100,7 +15873,7 @@ def update_solution(solution_id: int, body: SolutionUpdateRequest, session: Sess
         raise HTTPException(status_code=404, detail="Solution not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(s, k, v)
-    s.updated_at = datetime.utcnow()
+    s.updated_at = utc_now()
     session.add(s)
     session.commit()
     session.refresh(s)
@@ -15294,8 +16067,8 @@ def get_work_queue(
         else:
             target_date = today_date
             
-        start_dt = datetime.combine(target_date, datetime.min.time())
-        end_dt = datetime.combine(target_date, datetime.max.time())
+        start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
+        end_dt = datetime.combine(target_date, datetime.max.time(), tzinfo=timezone.utc)
         
         # Work Queue is personal by design. Admins can inspect the same personal
         # queue by selecting their own account; do not leak the whole workspace.
@@ -15318,7 +16091,7 @@ def get_work_queue(
         user_owner_names = {str(user_id).lower()}
         if current_user:
             user_owner_names.update({(current_user.name or "").strip().lower(), (current_user.email or "").strip().lower()})
-        calls = [call for call in calls_q.all() if call.scheduled_at and start_dt <= call.scheduled_at <= end_dt and (call.assigned_to or "").strip().lower() in user_owner_names]
+        calls = [call for call in calls_q.all() if call.scheduled_at and _to_naive_dt(start_dt) <= _to_naive_dt(call.scheduled_at) <= _to_naive_dt(end_dt) and (call.assigned_to or "").strip().lower() in user_owner_names]
         
         # 4. Leads (using created_at as proxy for activity if followup doesn't exist, wait Lead has no followup_date)
         # We'll just show leads created on that day
@@ -15556,7 +16329,7 @@ def sync_email_integration(integration_id: int, session: Session = Depends(get_s
         session.add(new_email)
         extracted.append(new_email)
         
-    integration.last_synced_at = datetime.utcnow()
+    integration.last_synced_at = utc_now()
     session.commit()
     
     # Refresh objects so they have DB IDs
@@ -15713,7 +16486,7 @@ async def whatsapp_webhook(
                 from datetime import datetime as _dt
                 ws_session.pending_action = None
                 ws_session.action_data = None
-                ws_session.created_at = _dt.utcnow()
+                ws_session.created_at = utc_now()
                 session.add(ws_session)
                 try:
                     session.commit()
@@ -17058,7 +17831,7 @@ def update_inventory_item(item_id: int, data: InventoryItemCreate, session: Sess
         raise HTTPException(status_code=404, detail="Item not found")
     for k, v in data.dict(exclude_unset=True).items():
         setattr(item, k, v)
-    item.updated_at = datetime.utcnow()
+    item.updated_at = utc_now()
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -17351,7 +18124,7 @@ def supplier_update_stock(supplier_record_id: int, current_stock: float, session
     item = session.get(InventoryItem, s.item_id)
     if item:
         item.current_stock = current_stock
-        item.updated_at = datetime.utcnow()
+        item.updated_at = utc_now()
         session.add(item)
         session.commit()
     return {"ok": True}
@@ -18075,7 +18848,7 @@ def save_email_settings(body: EmailSettingsRequest, otp_verified: bool = False, 
     else:
         for k, v in body.dict().items():
             setattr(settings, k, v)
-        settings.updated_at = datetime.utcnow()
+        settings.updated_at = utc_now()
         session.add(settings)
     
     session.commit()
@@ -18127,7 +18900,7 @@ def send_email_otp(body: SendEmailOTPRequest, session: Session = Depends(get_ses
         email=body.email,
         otp_code=otp_code,
         purpose=body.purpose,
-        expires_at=datetime.utcnow() + timedelta(minutes=10),
+        expires_at=utc_now() + timedelta(minutes=10),
     ))
     session.commit()
 
@@ -18165,7 +18938,7 @@ def verify_email_otp(body: VerifyEmailOTPRequest, session: Session = Depends(get
         )
     ).first()
 
-    if not rec or rec.verified or rec.expires_at < _dt.utcnow():
+    if not rec or rec.verified or _to_naive_dt(rec.expires_at) < _dt.utcnow():
         raise HTTPException(status_code=400, detail="Invalid or expired OTP code.")
 
     rec.verified = True
@@ -18195,7 +18968,25 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
         .where(SentEmail.lead_id == lead_id)
         .order_by(SentEmail.sent_at.desc())
     ).all()
-    return {"emails": [e.dict() for e in emails]}
+    email_ids = [e.id for e in emails]
+    replies_by_email: dict[int, list] = {}
+    if email_ids:
+        all_replies = session.exec(
+            select(EmailReply)
+            .where(EmailReply.sent_email_id.in_(email_ids))
+            .order_by(EmailReply.received_at.asc())
+        ).all()
+        for r in all_replies:
+            replies_by_email.setdefault(r.sent_email_id, []).append({
+                "id": r.id,
+                "from_address": r.from_address,
+                "subject": r.subject,
+                "body_text": r.body_text,
+                "body_text_full": r.body_text_full,
+                "body_html": r.body_html,
+                "received_at": r.received_at.isoformat() if r.received_at else None,
+            })
+    return {"emails": [{**e.dict(), "replies": replies_by_email.get(e.id, [])} for e in emails]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -18463,151 +19254,8 @@ def get_salesperson_history(client_id: int, session: Session = Depends(get_sessi
     return {"history": result}
 
 
-# ── 5. Excel/CSV Campaign Upload ───────────────────────────────────────────────
-@app.post("/email-campaigns/excel-upload")
-async def excel_campaign_upload(
-    background_tasks: BackgroundTasks,
-    campaign_name: str = "Unnamed Campaign",
-    template_subject: str = "Hello from {{company}}",
-    template_body: str = "Hi {{name}},\n\nWe'd love to connect.\n\nBest Regards",
-    file: "UploadFile" = None,  # type: ignore
-    session: Session = Depends(get_session),
-):
-    """
-    Accept an Excel/CSV file with columns: name, email, company.
-    Creates a campaign record and sends personalised emails in the background.
-    """
-    from database import ExcelCampaign, ExcelCampaignRecord
-    from fastapi import UploadFile
-    import io
-
-    uid = current_salesperson_id.get()
-    tenant_id = current_tenant_id.get() or 1
-
-    if file is None:
-        raise HTTPException(status_code=400, detail="No file uploaded")
-
-    contents = await file.read()
-    records_data = []
-
-    filename_lower = (file.filename or "").lower()
-    if filename_lower.endswith(".csv"):
-        import csv
-        reader = csv.DictReader(io.StringIO(contents.decode("utf-8-sig", errors="replace")))
-        for row in reader:
-            records_data.append({"name": row.get("name",""), "email": row.get("email",""), "company": row.get("company","")})
-    else:
-        try:
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(contents))
-            ws = wb.active
-            headers = [str(c.value or "").lower().strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                rowdict = dict(zip(headers, row))
-                records_data.append({"name": str(rowdict.get("name","") or ""), "email": str(rowdict.get("email","") or ""), "company": str(rowdict.get("company","") or "")})
-        except ImportError:
-            raise HTTPException(status_code=400, detail="openpyxl not installed. Use CSV format or install openpyxl.")
-
-    records_data = [r for r in records_data if r.get("email","").strip()]
-
-    campaign = ExcelCampaign(
-        tenant_id=tenant_id,
-        campaign_name=campaign_name,
-        template_subject=template_subject,
-        template_body=template_body,
-        total_records=len(records_data),
-        status="Queued",
-        created_by=uid,
-    )
-    session.add(campaign)
-    session.commit()
-    session.refresh(campaign)
-
-    for rd in records_data:
-        rec = ExcelCampaignRecord(
-            campaign_id=campaign.id,
-            email=rd["email"],
-            name=rd["name"],
-            company=rd["company"],
-            status="Pending",
-        )
-        session.add(rec)
-    session.commit()
-
-    def _send_campaign(campaign_id: int, records: list, subj_tpl: str, body_tpl: str):
-        from modules.email_sender import send_email
-        import re
-        sent = 0
-        failed = 0
-        with Session(engine) as s:
-            cam = s.get(ExcelCampaign, campaign_id)
-            if not cam:
-                return
-            cam.status = "Sending"
-            s.add(cam)
-            s.commit()
-            for rec in records:
-                db_rec = s.exec(select(ExcelCampaignRecord).where(
-                    ExcelCampaignRecord.campaign_id == campaign_id,
-                    ExcelCampaignRecord.email == rec["email"],
-                    ExcelCampaignRecord.status == "Pending",
-                )).first()
-                if not db_rec:
-                    continue
-                try:
-                    def _fill(tpl: str, r: dict) -> str:
-                        for k, v in r.items():
-                            tpl = tpl.replace(f"{{{{{k}}}}}", v or "")
-                        return tpl
-                    subj = _fill(subj_tpl, rec)
-                    body = _fill(body_tpl, rec)
-                    ok = send_email(rec["email"], subj, f"<pre>{body}</pre>")
-                    db_rec.status = "Sent" if ok else "Failed"
-                    db_rec.sent_at = datetime.utcnow()
-                    if not ok:
-                        db_rec.error_message = "Email delivery failed"
-                        failed += 1
-                    else:
-                        sent += 1
-                except Exception as ex:
-                    db_rec.status = "Failed"
-                    db_rec.error_message = str(ex)
-                    failed += 1
-                s.add(db_rec)
-                s.commit()
-            cam.sent_count = sent
-            cam.failed_count = failed
-            cam.status = "Completed"
-            cam.completed_at = datetime.utcnow()
-            s.add(cam)
-            s.commit()
-
-    background_tasks.add_task(_send_campaign, campaign.id, records_data, template_subject, template_body)
-    return {"campaign_id": campaign.id, "total_records": len(records_data), "status": "Queued", "message": "Campaign started in background"}
-
-
-@app.get("/email-campaigns")
-def list_email_campaigns(session: Session = Depends(get_session)):
-    from database import ExcelCampaign
-    rows = session.exec(select(ExcelCampaign).order_by(ExcelCampaign.created_at.desc())).all()
-    result = []
-    for r in rows:
-        d = r.model_dump() if hasattr(r, "model_dump") else {}
-        d["created_at"] = r.created_at.isoformat() if r.created_at else None
-        d["completed_at"] = r.completed_at.isoformat() if r.completed_at else None
-        result.append(d)
-    return {"campaigns": result}
-
-
-@app.get("/email-campaigns/{campaign_id}/records")
-def get_campaign_records(campaign_id: int, session: Session = Depends(get_session)):
-    from database import ExcelCampaignRecord
-    rows = session.exec(
-        select(ExcelCampaignRecord)
-        .where(ExcelCampaignRecord.campaign_id == campaign_id)
-        .order_by(ExcelCampaignRecord.created_at.asc())
-    ).all()
-    return {"records": [r.model_dump() for r in rows]}
+# ── 5. Excel/CSV Campaign Upload: replaced by routers/email_campaigns.py (Email Agent → Bulk Excel
+# Upload). The old excel_campaigns / excel_campaign_records tables and their rows are kept.
 
 
 # ── 6. Management Dashboard ────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ interface Lead   { id: number; company_name?: string; contact_name?: string; ema
 interface Client { id: number; companyName?: string; assignedEmployeeId?: number; assignedEmployeeName?: string; }
 interface CatalogItem {
   id: number; name: string; sku: string; category: string;
-  unit_price: number; description?: string;
+  unit_price: number; description?: string; photo_url?: string | null;
 }
 interface CartItem { product_id: number; product_name: string; quantity: number; unit_price: number; unit: string; provider: string; }
 

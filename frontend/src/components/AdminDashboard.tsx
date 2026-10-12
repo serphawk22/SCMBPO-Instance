@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
+import type { Variants } from "framer-motion";
 import { Users, Send, Briefcase, Target, Activity, Phone, GraduationCap, ArrowUpRight, CheckCircle2, TrendingUp, IndianRupee, Timer, AlertTriangle, Sparkles, Loader2, Printer, Plus, ChevronUp, ChevronDown, Bot, X, MapPin, Zap, Mail, Globe, Trophy, Lightbulb, BarChart2, FolderKanban } from "lucide-react";
 import Link from "next/link";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell, RadialBarChart, RadialBar } from "recharts";
@@ -11,6 +12,7 @@ import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ShieldAlert, LockKeyhole } from "lucide-react";
+import FollowUpsWidget from "@/components/followups/FollowUpsWidget";
 
 // ─── Agent Data Pretty Viewer ──────────────────────────────────────────────────
 function AgentDataViewer({ data, overview }: { data?: string | null; overview?: string | null }) {
@@ -122,7 +124,7 @@ function AgentDataViewer({ data, overview }: { data?: string | null; overview?: 
 }
 
 // Data comes from adminStats from the backend
-const itemVariants = {
+const itemVariants: Variants = {
   hidden: { opacity: 0, y: 20 },
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100 } }
 };
@@ -241,6 +243,11 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
           </motion.div>
         ))}
       </div>
+
+      {/* FOLLOW-UPS: pending / overdue / due today / completed */}
+      <motion.div variants={itemVariants}>
+        <FollowUpsWidget />
+      </motion.div>
 
       {/* CALL PITCH WIDGET */}
       <CallPitchWidget />
@@ -600,7 +607,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             </Link>
           </div>
           <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {adminStats.projectsData.map((proj) => {
+            {adminStats.projectsData.map((proj: { id: number; name: string; status: string; progress: number; ticket_done: number; ticket_in_progress: number; ticket_total: number }) => {
               const statusColor: Record<string, string> = {
                 Planning: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
                 "In Progress": "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400",

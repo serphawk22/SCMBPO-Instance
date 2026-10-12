@@ -1,19 +1,23 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Users, Send, Briefcase, Target, Activity, CheckCircle2, TrendingUp, IndianRupee, Timer, AlertTriangle, ArrowUpRight, FolderKanban, Shield, Lock, Eye, CheckCircle, Globe, ChevronRight, MessageCircle, Clock } from "lucide-react";
+import type { Variants } from "framer-motion";
+import { 
+  Users, Send, Briefcase, Target, Activity, CheckCircle2, TrendingUp, IndianRupee, Timer, 
+  AlertTriangle, ArrowUpRight, FolderKanban, Shield, Lock, Eye, CheckCircle, Globe, ChevronRight, MessageCircle, Clock
+} from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import PageGuide from "@/components/PageGuide";
 import { useRole } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
 
-const itemVariants = {
+const itemVariants: Variants = {
   hidden: { opacity: 0, y: 20 },
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100 } }
 };
 
-const containerVariants = {
+const containerVariants: Variants = {
   hidden: { opacity: 0 },
   show: { opacity: 1, transition: { staggerChildren: 0.07, delayChildren: 0.1 } },
 };

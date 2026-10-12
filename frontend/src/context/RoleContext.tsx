@@ -12,6 +12,7 @@ interface User {
   name: string;
   role: Role;
   client_id?: number;
+  tenant_id?: number | null;
 }
 
 interface RoleContextType {
@@ -19,7 +20,7 @@ interface RoleContextType {
   email: string;
   isAuthenticated: boolean;
   user: User | null;
-  login: (email: string, pass: string) => Promise<{ success: boolean; message?: string }>;
+  login: (email: string, pass: string) => Promise<{ success: boolean; message?: string; is_new_user?: boolean }>;
   logout: () => void;
   loading: boolean;
 }
