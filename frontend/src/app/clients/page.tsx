@@ -140,6 +140,7 @@ const CLIENT_STATUS_STYLE: Record<string, string> = {
 export default function ClientsPage() {
   const { t, language } = useLanguage();
   const { role, user } = useRole();
+  const isAdmin = role === 'Admin' || role === 'SuperAdmin';
   const [clients, setClients] = useState<Client[]>([]);
   const [statuses, setStatuses] = useState<ClientStatusOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -923,10 +924,14 @@ export default function ClientsPage() {
                                 salespersonName: client.assignedEmployeeName
                               })
                             },
-                            { label: 'Reassign Salesperson', icon: <UserCheck className="w-4 h-4 text-violet-500" />, onClick: () => setReassignClient(client) },
+                            ...(isAdmin ? [
+                              { label: 'Reassign Salesperson', icon: <UserCheck className="w-4 h-4 text-violet-500" />, onClick: () => setReassignClient(client) },
+                            ] : []),
                             { label: 'AI Call Pitch', icon: <Phone className="w-4 h-4" />, onClick: () => handleSimulateCall(client.id) },
                             { label: 'Mark as Dropped', icon: <UserX className="w-4 h-4 text-rose-500" />, onClick: () => { setDropClientTarget(client); setIsDropModalOpen(true); } },
-                            { label: 'Delete Client', icon: <XCircle className="w-4 h-4" />, danger: true, onClick: () => handleDeleteClient(client.id) },
+                            ...(isAdmin ? [
+                              { label: 'Delete Client', icon: <XCircle className="w-4 h-4" />, danger: true, onClick: () => handleDeleteClient(client.id) },
+                            ] : []),
                           ]}
                         >
                           <motion.div
@@ -1100,40 +1105,51 @@ export default function ClientsPage() {
                           </select>
                         </td>
                         <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-1.5">
-                            <select
-                              value={client.assignedEmployeeId || ""}
-                              onChange={async (e) => {
-                                const empId = e.target.value ? Number(e.target.value) : null;
-                                const empName = employees.find(emp => emp.id === empId)?.name || null;
-                                setClients(prev => prev.map(c => c.id === client.id ? { ...c, assignedEmployeeId: empId, assignedEmployeeName: empName } : c));
-                                try {
-                                  await fetch(`${API_BASE_URL}/clients/${client.id}`, {
-                                    method: "PATCH",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ assignedEmployeeId: empId, employee_id: empId }),
-                                  });
-                                } catch (err) {
-                                  fetchClients();
-                                }
-                              }}
-                              className="text-[12px] font-medium bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[145px]"
-                              title="Assign Salesperson"
-                            >
-                              <option value="">Unassigned</option>
-                              {employees.map(emp => (
-                                <option key={emp.id} value={emp.id}>{emp.name}</option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              onClick={() => setReassignClient(client)}
-                              title="View reassignment audit history"
-                              className="p-1 rounded hover:bg-violet-100 dark:hover:bg-violet-900/30 text-violet-500 transition-colors"
-                            >
-                              <UserCheck className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
+                          {isAdmin ? (
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={client.assignedEmployeeId || ""}
+                                onChange={async (e) => {
+                                  const empId = e.target.value ? Number(e.target.value) : null;
+                                  const empName = employees.find(emp => emp.id === empId)?.name || null;
+                                  setClients(prev => prev.map(c => c.id === client.id ? { ...c, assignedEmployeeId: empId, assignedEmployeeName: empName } : c));
+                                  try {
+                                    await fetch(`${API_BASE_URL}/clients/${client.id}`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ assignedEmployeeId: empId, employee_id: empId }),
+                                    });
+                                  } catch (err) {
+                                    fetchClients();
+                                  }
+                                }}
+                                className="text-[12px] font-medium bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[145px]"
+                                title="Assign Salesperson"
+                              >
+                                <option value="">Unassigned</option>
+                                {employees.map(emp => (
+                                  <option key={emp.id} value={emp.id}>{emp.name}</option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => setReassignClient(client)}
+                                title="View reassignment audit history"
+                                className="p-1 rounded hover:bg-violet-100 dark:hover:bg-violet-900/30 text-violet-500 transition-colors"
+                              >
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 py-1">
+                              <div className="w-6 h-6 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                                {(client.assignedEmployeeName || 'U').charAt(0).toUpperCase()}
+                              </div>
+                              <span className="text-[12px] font-semibold text-slate-700 dark:text-zinc-300 truncate max-w-[130px]">
+                                {client.assignedEmployeeName || 'Unassigned'}
+                              </span>
+                            </div>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-[13px] text-slate-600 dark:text-slate-300">
@@ -1182,9 +1198,11 @@ export default function ClientsPage() {
                             >
                               <CalendarClock className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); setReassignClient(client); }} title="Reassign Salesperson" className="p-1.5 rounded-lg hover:bg-violet-100 dark:hover:bg-violet-900/30 text-slate-400 hover:text-violet-600 transition-colors">
-                              <UserCheck className="w-3.5 h-3.5" />
-                            </button>
+                            {isAdmin && (
+                              <button onClick={(e) => { e.stopPropagation(); setReassignClient(client); }} title="Reassign Salesperson" className="p-1.5 rounded-lg hover:bg-violet-100 dark:hover:bg-violet-900/30 text-slate-400 hover:text-violet-600 transition-colors">
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button disabled={actionLoading[client.id] === 'call'} onClick={(e) => { e.stopPropagation(); handleSimulateCall(client.id); }} title="AI Call Pitch" className="p-1.5 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/30 text-slate-400 hover:text-green-600 transition-colors disabled:opacity-50">
                               {actionLoading[client.id] === 'call' ? <Loader2 className="w-3.5 h-3.5 animate-spin text-green-500" /> : <Phone className="w-3.5 h-3.5" />}
                             </button>
@@ -1194,9 +1212,11 @@ export default function ClientsPage() {
                             <button onClick={(e) => { e.stopPropagation(); window.open(`/admin/clients/${client.id}`, '_blank'); }} title="Open in New Tab" className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-slate-400 hover:text-blue-600 transition-colors">
                               <ExternalLink className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); handleDeleteClient(client.id); }} title="Delete Client" className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-500 transition-colors">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {isAdmin && (
+                              <button onClick={(e) => { e.stopPropagation(); handleDeleteClient(client.id); }} title="Delete Client" className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-500 transition-colors">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </motion.tr>

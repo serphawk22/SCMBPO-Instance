@@ -1388,7 +1388,7 @@ export default function AdminClientDetailPage() {
             <AiCopilotPanel clientId={id} client={client} />
 
             {/* Assign Salesperson Card */}
-            {role === 'Admin' && (
+            {(role === 'Admin' || role === 'SuperAdmin') ? (
               <div className="rounded-2xl border border-slate-200 dark:border-zinc-700  bg-white dark:bg-zinc-900  p-4 shadow-sm">
                 <p className="text-xs font-black uppercase tracking-wider text-slate-400  mb-3">{language === 'es' ? 'Asignar Vendedor' : 'Assign Salesperson'}</p>
                 <select
@@ -1419,6 +1419,21 @@ export default function AdminClientDetailPage() {
                     <option key={e.id} value={e.id}>{e.name} — {e.role}</option>
                   ))}
                 </select>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4 shadow-sm">
+                <p className="text-xs font-black uppercase tracking-wider text-slate-400 mb-2">Assigned Account Representative</p>
+                <div className="flex items-center gap-2.5 px-3 py-2.5 bg-slate-50 dark:bg-zinc-800/60 rounded-xl border border-slate-100 dark:border-zinc-700">
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-black flex-shrink-0">
+                    {(employees.find((e: any) => String(e.id) === String(client?.assignedEmployeeId))?.name || user?.name || '?').charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                      {employees.find((e: any) => String(e.id) === String(client?.assignedEmployeeId))?.name || user?.name || 'Assigned to You'}
+                    </p>
+                    <p className="text-[10px] text-slate-400">Account Executive</p>
+                  </div>
+                </div>
               </div>
             )}
 

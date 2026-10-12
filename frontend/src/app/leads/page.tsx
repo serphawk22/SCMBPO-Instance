@@ -76,6 +76,7 @@ export default function LeadsPage() {
   const { t } = useLanguage();
   const { role, user } = useRole();
   const router = useRouter();
+  const isAdmin = role === 'Admin' || role === 'SuperAdmin';
 
   useEffect(() => {
     if (role && role !== 'Admin' && role !== 'Employee' && role !== 'Intern' && role !== 'SalesManager' && role !== 'Demo') {
@@ -279,10 +280,21 @@ export default function LeadsPage() {
         setShowModal(false);
         fetchLeads();
       } else {
-        // New lead: show sales assign modal
-        setPendingLeadForm({ ...form });
-        setShowModal(false);
-        setShowSalesAssign(true);
+        if (!isAdmin) {
+          // Salesperson creates lead: automatically assign to themselves
+          const payload = { ...form, owner_id: user?.id || null };
+          await fetch(`${API_BASE_URL}/leads`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          setShowModal(false);
+          fetchLeads();
+        } else {
+          // New lead: show sales assign modal for admins
+          setPendingLeadForm({ ...form });
+          setShowModal(false);
+          setShowSalesAssign(true);
+        }
       }
     } finally { setSaving(false); }
   };
@@ -395,15 +407,17 @@ export default function LeadsPage() {
             >
               <Download className="w-4 h-4" /> Export CSV
             </button>
-            <button
-              onClick={handleAutoAssignLeads}
-              disabled={autoAssigning}
-              title="Automatically distribute unassigned leads by round-robin with conversion rate tie-breaker"
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-violet-600 hover:bg-violet-700 text-white shadow-sm transition-all hover:shadow-md active:scale-95 disabled:opacity-50"
-            >
-              {autoAssigning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-amber-300" />}
-              Auto-Assign Leads
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleAutoAssignLeads}
+                disabled={autoAssigning}
+                title="Automatically distribute unassigned leads by round-robin with conversion rate tie-breaker"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-violet-600 hover:bg-violet-700 text-white shadow-sm transition-all hover:shadow-md active:scale-95 disabled:opacity-50"
+              >
+                {autoAssigning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-amber-300" />}
+                Auto-Assign Leads
+              </button>
+            )}
             <Link href="/import" className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors">
               <Upload className="w-4 h-4" /> {t("leads.import")}
             </Link>
@@ -662,19 +676,30 @@ export default function LeadsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
-                      <select
-                        value={lead.owner_id || ""}
-                        onChange={e => handleAssignSalesperson(lead.id, e.target.value ? Number(e.target.value) : null)}
-                        className="text-[12px] font-medium bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[145px]"
-                        title="Assign Salesperson"
-                      >
-                        <option value="">Unassigned</option>
-                        {employees.map(emp => (
-                          <option key={emp.id} value={emp.id}>
-                            {emp.name}
-                          </option>
-                        ))}
-                      </select>
+                      {isAdmin ? (
+                        <select
+                          value={lead.owner_id || ""}
+                          onChange={e => handleAssignSalesperson(lead.id, e.target.value ? Number(e.target.value) : null)}
+                          className="text-[12px] font-medium bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg px-2 py-1 text-slate-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer max-w-[145px]"
+                          title="Assign Salesperson"
+                        >
+                          <option value="">Unassigned</option>
+                          {employees.map(emp => (
+                            <option key={emp.id} value={emp.id}>
+                              {emp.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="flex items-center gap-2 py-1">
+                          <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                            {(lead.salesperson_name || lead.owner_name || 'U').charAt(0).toUpperCase()}
+                          </div>
+                          <span className="text-[12px] font-semibold text-slate-700 dark:text-zinc-300 truncate max-w-[130px]">
+                            {lead.salesperson_name || lead.owner_name || 'Unassigned'}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
@@ -733,9 +758,11 @@ export default function LeadsPage() {
                         <button onClick={e => openEdit(lead, e)} title={t("leads.edit_lead")} className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-slate-400 hover:text-blue-600 transition-colors">
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={e => handleDelete(lead.id, e)} title={t("leads.delete_lead")} className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-500 transition-colors">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {isAdmin && (
+                          <button onClick={e => handleDelete(lead.id, e)} title={t("leads.delete_lead")} className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-slate-400 hover:text-red-500 transition-colors">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </motion.tr>

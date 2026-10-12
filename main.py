@@ -11527,6 +11527,12 @@ def auto_assign_unassigned_leads(session: Session = Depends(get_session)):
     Auto-assign unassigned leads using round-robin distribution,
     breaking ties based on sales reps' historical conversion rate and performance.
     """
+    caller_id = current_salesperson_id.get()
+    if caller_id:
+        caller = session.get(User, caller_id)
+        if caller and caller.role not in ["Admin", "SuperAdmin"]:
+            raise HTTPException(status_code=403, detail="Only Admins can trigger auto-assigning leads.")
+
     tenant_id = current_tenant_id.get()
     q_reps = select(User).where(User.role.in_(["SalesManager", "Employee", "Admin"]), User.is_active == True)
     if tenant_id and tenant_id != 1:

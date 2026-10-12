@@ -88,7 +88,7 @@ const defaultSidebarSections = [
     items: [
       { id: "item-teams", name: "Team Directory", icon: "Users", href: "/teams", roles: ["Admin", "Demo"] },
       { id: "item-leaderboard", name: "Leaderboard", icon: "Trophy", href: "/admin/leaderboard", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-ownership", name: "Ownership Report", icon: "Users", href: "/ownership", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-ownership", name: "Ownership Report", icon: "Users", href: "/ownership", roles: ["Admin", "Demo"] },
     ],
   },
   {
