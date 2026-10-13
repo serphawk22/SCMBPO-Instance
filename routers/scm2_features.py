@@ -16,8 +16,16 @@ stay tenant-safe.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, timezone as _tz
 from typing import Optional, List, Dict, Any
+
+
+def _to_naive_dt(dt: Any) -> Optional[datetime]:
+    if dt is None or not isinstance(dt, datetime):
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -954,7 +962,8 @@ def meeting_history(entity_type: str, entity_id: int, session: Session = Depends
     now = datetime.utcnow()
 
     def is_upcoming(m: Meeting) -> bool:
-        return bool(m.scheduled_at and m.scheduled_at >= now and m.status == "Scheduled")
+        sch = _to_naive_dt(m.scheduled_at)
+        return bool(sch and sch >= now and m.status == "Scheduled")
 
     upcoming = [d for m, d in zip(rows, items) if is_upcoming(m)]
     past = [d for m, d in zip(rows, items) if not is_upcoming(m)]

@@ -162,7 +162,16 @@ def _to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[datetime]:
     return dt
 
 
+def _to_naive_dt(dt: Any) -> Optional[datetime]:
+    if dt is None or not isinstance(dt, datetime):
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt
+
+
 def _local_label(dt: Optional[datetime], tz_name: Optional[str]) -> Optional[str]:
+    dt = _to_naive_dt(dt)
     if not dt:
         return None
     try:
@@ -174,17 +183,19 @@ def _local_label(dt: Optional[datetime], tz_name: Optional[str]) -> Optional[str
 
 
 def _iso_z(dt: Optional[datetime]) -> Optional[str]:
+    dt = _to_naive_dt(dt)
     return (dt.isoformat() + "Z") if dt else None
 
 
 def _bucket(f: FollowUp, now: datetime) -> str:
     if f.status == "Completed":
         return "completed"
-    if f.due_at is None:
+    due_at = _to_naive_dt(f.due_at)
+    if due_at is None:
         return "pending"
-    if f.due_at < now:
+    if due_at < now:
         return "overdue"
-    if f.due_at <= now + timedelta(hours=PENDING_WINDOW_HOURS):
+    if due_at <= now + timedelta(hours=PENDING_WINDOW_HOURS):
         return "pending"
     return "upcoming"
 
@@ -214,10 +225,11 @@ def _fu_dict(f: FollowUp, maps: Dict[str, Dict[int, Any]], now: datetime) -> dic
     entity_type = "client" if client else "lead" if lead else "contact" if contact else None
     entity_name = (client.companyName if client else lead.company_name if lead else _contact_name(contact) if contact else None)
     local_str = None
-    if f.due_at and f.timezone:
+    due_at = _to_naive_dt(f.due_at)
+    if due_at and f.timezone:
         try:
             from zoneinfo import ZoneInfo
-            local_str = f.due_at.replace(tzinfo=_tz.utc).astimezone(ZoneInfo(f.timezone)).strftime("%Y-%m-%dT%H:%M")
+            local_str = due_at.replace(tzinfo=_tz.utc).astimezone(ZoneInfo(f.timezone)).strftime("%Y-%m-%dT%H:%M")
         except Exception:
             local_str = None
     return {
@@ -226,7 +238,7 @@ def _fu_dict(f: FollowUp, maps: Dict[str, Dict[int, Any]], now: datetime) -> dic
         "due_at": _iso_z(f.due_at), "due_at_local": local_str, "timezone": f.timezone,
         "reminder_minutes": f.reminder_minutes, "reminder_sent": bool(f.reminder_sent_at),
         "completed_at": _iso_z(f.completed_at), "completion_note": f.completion_note,
-        "minutes_until_due": int((f.due_at - now).total_seconds() // 60) if f.due_at else None,
+        "minutes_until_due": int((due_at - now).total_seconds() // 60) if due_at else None,
         "lead_id": f.lead_id, "client_id": f.client_id, "contact_id": f.contact_id,
         "entity_type": entity_type, "entity_name": entity_name,
         "owner_id": f.owner_id, "owner_name": owner.name if owner else None,
@@ -356,7 +368,9 @@ def followup_summary(scope: Optional[str] = None, session: Session = Depends(get
     for r in rows:
         b = _bucket(r, now)
         counts[b] += 1
-        if b in ("pending", "upcoming") and r.due_at and (next_due is None or r.due_at < next_due.due_at):
+        r_due = _to_naive_dt(r.due_at)
+        next_due_dt = _to_naive_dt(next_due.due_at) if next_due else None
+        if b in ("pending", "upcoming") and r_due and (next_due is None or r_due < next_due_dt):
             next_due = r
     return {
         "counts": counts, "total": len(rows), "open": counts["upcoming"] + counts["pending"] + counts["overdue"],
@@ -803,6 +817,9 @@ def process_due_reminders() -> int:
         ).all()
         for f in open_rows:
             try:
+                due_at = _to_naive_dt(f.due_at)
+                if not due_at:
+                    continue
                 owner = session.get(User, f.owner_id) if f.owner_id else None
                 entity = ""
                 if f.client_id:
@@ -811,12 +828,12 @@ def process_due_reminders() -> int:
                 elif f.lead_id:
                     l = session.get(Lead, f.lead_id)
                     entity = l.company_name if l else ""
-                label = _local_label(f.due_at, (owner.timezone if owner and getattr(owner, "timezone", None) else f.timezone))
+                label = _local_label(due_at, (owner.timezone if owner and getattr(owner, "timezone", None) else f.timezone))
                 rows = [("Follow-up", f.title), ("Due", label), ("With", entity), ("Channel", f.channel),
                         ("Priority", f.priority), ("Notes", (f.notes or "")[:300])]
 
                 # 1) overdue notice
-                if f.due_at < now and not f.overdue_notified_at:
+                if due_at < now and not f.overdue_notified_at:
                     if _claim(session, f.id, "overdue_notified_at", now):
                         _notify(session, f.owner_id, f.tenant_id, f"⚠️ Overdue follow-up: {f.title}",
                                 f"Was due {label}" + (f" · {entity}" if entity else ""), "warning")
@@ -829,9 +846,9 @@ def process_due_reminders() -> int:
 
                 # 2) upcoming reminder
                 lead_time = timedelta(minutes=f.reminder_minutes or 0)
-                if f.reminder_minutes and not f.reminder_sent_at and f.due_at - lead_time <= now < f.due_at:
+                if f.reminder_minutes and not f.reminder_sent_at and due_at - lead_time <= now < due_at:
                     if _claim(session, f.id, "reminder_sent_at", now):
-                        mins = max(1, int((f.due_at - now).total_seconds() // 60))
+                        mins = max(1, int((due_at - now).total_seconds() // 60))
                         when = f"in {mins} min" if mins < 120 else f"in {mins // 60} h"
                         _notify(session, f.owner_id, f.tenant_id, f"⏰ Follow-up due {when}: {f.title}",
                                 f"{label}" + (f" · {entity}" if entity else ""), "info")
