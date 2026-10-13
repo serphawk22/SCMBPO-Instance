@@ -137,6 +137,23 @@ export default function ReportsPage() {
   const [classicLoading, setClassicLoading] = useState<boolean>(false);
   const [classicError, setClassicError] = useState<string>("");
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    if (typeof window !== "undefined") {
+      const token = localStorage.getItem("token");
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const savedUser = localStorage.getItem("crm_user");
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          if (parsed?.id) headers["X-User-ID"] = String(parsed.id);
+          if (parsed?.tenant_id && parsed.role !== "SuperAdmin") headers["X-Tenant-ID"] = String(parsed.tenant_id);
+        } catch {}
+      }
+    }
+    return headers;
+  };
+
   // Load Executive Data
   const loadExecutiveData = async () => {
     setLoading(true);
@@ -159,7 +176,9 @@ export default function ReportsPage() {
         query = `?months=36`;
       }
 
-      const res = await fetch(`${API_BASE_URL}/reports/executive-dossier${query}`);
+      const res = await fetch(`${API_BASE_URL}/reports/executive-dossier${query}`, {
+        headers: getAuthHeaders(),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detail || "Failed to load executive dossier");
       setData(json);
@@ -176,7 +195,9 @@ export default function ReportsPage() {
     setClassicError("");
     try {
       const params = new URLSearchParams({ start_date: classicStart, end_date: classicEnd });
-      const response = await fetch(`${API_BASE_URL}/reports/summary?${params.toString()}`);
+      const response = await fetch(`${API_BASE_URL}/reports/summary?${params.toString()}`, {
+        headers: getAuthHeaders(),
+      });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "Unable to load reports");
       setClassicData(payload);
@@ -316,44 +337,47 @@ export default function ReportsPage() {
     const macro = [
       ["Won Revenue", money(data.summary?.won_revenue, currency)],
       ["Pipeline Value", money(data.summary?.pipeline_value, currency)],
-      ["Operating Costs", money(data.summary?.total_costs, currency)],
-      ["Net Operating Profit", money(data.summary?.net_profit, currency)],
-      ["Operating Margin %", `${data.summary?.net_margin_pct || 0}%`],
-      ["Lead Conversion %", `${data.summary?.conversion_rate || 0}%`],
-      ["Active Clients", String(data.summary?.active_clients || 0)],
-      ["Sales Representatives", String(data.summary?.active_sales_reps || 0)],
+      ["Won Deals Closed", String(summary.won_deals_count || summary.won_deals || 0)],
+      ["Operating Costs", money(summary.total_costs, currency)],
+      ["Net Operating Profit", money(summary.net_profit, currency)],
+      ["Operating Margin %", `${summary.margin_pct || summary.net_margin_pct || 0}%`],
+      ["Lead Conversion %", `${summary.conversion_rate || 0}%`],
+      ["Active Clients", String(summary.active_clients || 0)],
+      ["Sales Representatives", String(summary.active_sales_reps || summary.active_reps || 0)],
     ];
     let y = drawPdfTable(doc, ["Macro KPI", "Value"], macro, 34);
 
     doc.addPage();
     doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(15, 23, 42);
     doc.text("Sales Team Workload & Production Dossier", 14, 18);
-    const repRows = (data.sales_reps || []).map((r: any) => [
+    const repList = data.sales_reps || data.reps || [];
+    const repRows = repList.map((r: any) => [
       r.name,
-      String(r.live?.active_leads_count || 0),
-      String(r.live?.active_clients_count || 0),
-      money(r.live?.open_pipeline_value, currency),
-      money(r.results?.won_revenue, currency),
-      `${r.results?.win_rate || 0}%`,
-      `${r.results?.lead_conversion_rate || 0}%`,
+      String(r.live?.active_leads_count ?? r.active_leads ?? 0),
+      String(r.live?.active_clients_count ?? r.active_clients ?? 0),
+      money(r.live?.open_pipeline_value ?? r.open_pipeline_value, currency),
+      money(r.results?.won_revenue ?? r.won_revenue, currency),
+      `${r.results?.win_rate ?? r.win_rate ?? 0}%`,
+      `${r.results?.lead_conversion_rate ?? r.conversion_rate ?? 0}%`,
     ]);
     drawPdfTable(doc, ["Rep", "Active Leads", "Active Clients", "Open Pipeline", "Won Rev", "Win %", "Conv %"], repRows, 28);
     doc.save(`executive-dossier-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
-  const filteredReps = useMemo(() => {
-    if (!data?.sales_reps) return [];
-    if (!repSearch) return data.sales_reps;
-    const q = repSearch.toLowerCase();
-    return data.sales_reps.filter((r: any) =>
-      r.name?.toLowerCase().includes(q) || r.email?.toLowerCase().includes(q)
-    );
-  }, [data?.sales_reps, repSearch]);
-
-  const summary = data?.summary || {};
+  const summary = data?.summary || data?.kpis || {};
   const financials = data?.financials || {};
   const leadSources = data?.lead_sources || [];
   const stages = data?.deal_stages || [];
+
+  const filteredReps = useMemo(() => {
+    const list = data?.sales_reps || data?.reps || [];
+    if (!list.length) return [];
+    if (!repSearch) return list;
+    const q = repSearch.toLowerCase();
+    return list.filter((r: any) =>
+      r.name?.toLowerCase().includes(q) || r.email?.toLowerCase().includes(q)
+    );
+  }, [data?.sales_reps, data?.reps, repSearch]);
   const classicSummary = classicData?.summary || {};
   const staffRows = useMemo(() => (classicData?.staff_performance || []).map((item: any) => [
     item.name, item.role, item.total_work, item.calls, item.meetings, item.completed_tasks, item.tickets, item.cases
@@ -546,7 +570,7 @@ export default function ReportsPage() {
             <Tile
               label="Net Operating Profit"
               value={money(summary.net_profit, currency)}
-              sub={`${summary.net_margin_pct || 0}% margin`}
+              sub={`${summary.margin_pct || summary.net_margin_pct || 0}% margin`}
               trend={summary.net_profit >= 0 ? "up" : "down"}
               accent={summary.net_profit >= 0 ? "#10b981" : "#f43f5e"}
             />
@@ -570,7 +594,7 @@ export default function ReportsPage() {
             />
             <Tile
               label="Sales Reps"
-              value={num(summary.active_sales_reps)}
+              value={num(summary.active_sales_reps || summary.active_reps || (data?.sales_reps?.length || data?.reps?.length || 0))}
               sub="On the front line"
               accent="#f59e0b"
             />
@@ -787,8 +811,8 @@ export default function ReportsPage() {
                   <p className="text-xs text-slate-500 dark:text-zinc-400">
                     Net cash flow analysis comparing closed commercial revenue against operating burn.
                   </p>
-                  <div className="mt-6 h-72 w-full min-w-0 min-h-[288px]">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={250}>
+                  <div className="mt-6 h-[280px] w-full min-w-0">
+                    <ResponsiveContainer width="100%" height={280}>
                       <AreaChart data={financials.monthly_trend || []}>
                         <defs>
                           <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
@@ -820,11 +844,11 @@ export default function ReportsPage() {
                     Breakdown of business expenses across departments and software.
                   </p>
                   <div className="mt-5 space-y-3">
-                    {(financials.cost_categories || []).map((c: any) => (
-                      <div key={c.category} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-800/40">
+                    {((financials.cost_categories || financials.cost_breakdown) || []).map((c: any) => (
+                      <div key={c.category || c.name} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-800/40">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-extrabold text-slate-800 dark:text-zinc-200">{c.category}</span>
-                          <span className="font-black text-slate-900 dark:text-white">{money(c.amount, currency)}</span>
+                          <span className="font-extrabold text-slate-800 dark:text-zinc-200">{c.category || c.name}</span>
+                          <span className="font-black text-slate-900 dark:text-white">{money(c.amount || c.value, currency)}</span>
                         </div>
                         <div className="mt-2">
                           <Meter value={c.pct} max={100} color="#6366f1" height={4} />
