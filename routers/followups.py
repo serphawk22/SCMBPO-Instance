@@ -173,48 +173,55 @@ def _to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[datetime]:
             else:
                 dt = dt.replace(tzinfo=_tz.utc)
     if dt.tzinfo is not None:
-        dt = dt.astimezone(_tz.utc).replace(tzinfo=None)
+        dt = dt.astimezone(_tz.utc)
+    else:
+        dt = dt.replace(tzinfo=_tz.utc)
     return dt
 
 
-def _to_naive_dt(dt: Any) -> Optional[datetime]:
+def _to_aware_utc(dt: Any) -> Optional[datetime]:
     if dt is None or not isinstance(dt, datetime):
         return None
     if dt.tzinfo is not None:
-        return dt.astimezone(_tz.utc).replace(tzinfo=None)
-    return dt
+        return dt.astimezone(_tz.utc)
+    return dt.replace(tzinfo=_tz.utc)
+
+
+def _to_naive_dt(dt: Any) -> Optional[datetime]:
+    return _to_aware_utc(dt)
 
 
 def _local_label(dt: Optional[datetime], tz_name: Optional[str]) -> Optional[str]:
-    dt = _to_naive_dt(dt)
+    dt = _to_aware_utc(dt)
     if not dt:
         return None
     try:
         from zoneinfo import ZoneInfo
-        local = dt.replace(tzinfo=_tz.utc).astimezone(ZoneInfo(tz_name)) if tz_name else dt
+        local = dt.astimezone(ZoneInfo(tz_name)) if tz_name else dt
         return local.strftime("%b %d, %Y %I:%M %p") + (f" ({tz_name})" if tz_name else " UTC")
     except Exception:
         low = (tz_name or "").lower()
         if "kolkata" in low or "calcutta" in low or "ist" in low:
-            local = dt + timedelta(hours=5, minutes=30)
+            local = dt.astimezone(_tz(timedelta(hours=5, minutes=30)))
             return local.strftime("%b %d, %Y %I:%M %p") + f" ({tz_name})"
         return dt.strftime("%b %d, %Y %I:%M %p") + " UTC"
 
 
 def _iso_z(dt: Optional[datetime]) -> Optional[str]:
-    dt = _to_naive_dt(dt)
-    return (dt.isoformat() + "Z") if dt else None
+    dt = _to_aware_utc(dt)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
 
 
-def _bucket(f: FollowUp, now: datetime) -> str:
+def _bucket(f: FollowUp, now: Optional[datetime] = None) -> str:
     if f.status == "Completed":
         return "completed"
-    due_at = _to_naive_dt(f.due_at)
+    now_aware = _to_aware_utc(now) or datetime.now(_tz.utc)
+    due_at = _to_aware_utc(f.due_at)
     if due_at is None:
         return "pending"
-    if due_at < now:
+    if due_at < now_aware:
         return "overdue"
-    if due_at <= now + timedelta(hours=PENDING_WINDOW_HOURS):
+    if due_at <= now_aware + timedelta(hours=PENDING_WINDOW_HOURS):
         return "pending"
     return "upcoming"
 
@@ -384,7 +391,7 @@ def _clean_choice(value: Optional[str], allowed: List[str], default: str) -> str
 @router.get("/follow-ups/summary")
 def followup_summary(scope: Optional[str] = None, session: Session = Depends(get_session)):
     me = _require_me(session)
-    now = datetime.utcnow()
+    now = datetime.now(_tz.utc)
     rows = _scoped_rows(session, me, scope)
     counts = {"upcoming": 0, "pending": 0, "overdue": 0, "completed": 0}
     next_due: Optional[FollowUp] = None
@@ -507,7 +514,7 @@ def create_followup(body: FollowUpBody, session: Session = Depends(get_session))
                 _email_html("📅 Follow-up Scheduled", rows, f"An automatic reminder email will be delivered {f.reminder_minutes // 60 if f.reminder_minutes >= 60 else f.reminder_minutes} hour before this scheduled follow-up.")
             )
 
-    now = datetime.utcnow()
+    now = datetime.now(_tz.utc)
     return {"follow_up": _fu_dict(f, _name_maps(session, [f]), now)}
 
 
@@ -833,14 +840,14 @@ def _claim(session: Session, follow_up_id: int, column: str, now: datetime) -> b
 def process_due_reminders() -> int:
     """Send due-soon and overdue reminders. Safe to call repeatedly. Returns #reminders sent."""
     sent = 0
-    now = datetime.utcnow()
+    now = datetime.now(_tz.utc)
     with Session(engine) as session:
         open_rows = session.exec(
             select(FollowUp).where(FollowUp.status == "Pending", FollowUp.due_at.is_not(None))
         ).all()
         for f in open_rows:
             try:
-                due_at = _to_naive_dt(f.due_at)
+                due_at = _to_aware_utc(f.due_at)
                 if not due_at:
                     continue
                 owner = session.get(User, f.owner_id) if f.owner_id else None

@@ -7434,6 +7434,17 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/seed-demo-data")
+@app.post("/api/seed-demo-data")
+def api_seed_demo_data():
+    try:
+        from seed_full_demo_data import seed
+        res = seed()
+        return {"status": "ok", "message": "Enterprise demo data seeded successfully", "summary": res}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tasks & Kanban Board
 # ─────────────────────────────────────────────────────────────────────────────

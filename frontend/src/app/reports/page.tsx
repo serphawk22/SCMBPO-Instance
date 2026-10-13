@@ -787,8 +787,8 @@ export default function ReportsPage() {
                   <p className="text-xs text-slate-500 dark:text-zinc-400">
                     Net cash flow analysis comparing closed commercial revenue against operating burn.
                   </p>
-                  <div className="mt-6 h-72">
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className="mt-6 h-72 w-full min-w-0 min-h-[288px]">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={250}>
                       <AreaChart data={financials.monthly_trend || []}>
                         <defs>
                           <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
