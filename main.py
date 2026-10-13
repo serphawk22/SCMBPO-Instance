@@ -57,7 +57,18 @@ def register_sent_emails_endpoint(app, get_session):
 
 import hashlib
 import re
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
+
+def _to_naive_dt(dt):
+    if dt is None:
+        return None
+    if getattr(dt, "tzinfo", None) is not None:
+        try:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception:
+            return dt.replace(tzinfo=None)
+    return dt
+
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Form, UploadFile, File, Body
@@ -6823,9 +6834,9 @@ def dashboard_stats(
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
         labels.append(day.strftime("%b %d"))
-        activity_chart.append(sum(1 for a in all_activities if a.createdAt and day_start <= a.createdAt < day_end))
-        email_chart.append(sum(1 for e in all_emails if e.sent_at and day_start <= e.sent_at < day_end))
-        call_chart.append(sum(1 for c in all_calls_list if c.createdAt and day_start <= c.createdAt < day_end))
+        activity_chart.append(sum(1 for a in all_activities if a.createdAt and day_start <= _to_naive_dt(a.createdAt) < day_end))
+        email_chart.append(sum(1 for e in all_emails if e.sent_at and day_start <= _to_naive_dt(e.sent_at) < day_end))
+        call_chart.append(sum(1 for c in all_calls_list if c.createdAt and day_start <= _to_naive_dt(c.createdAt) < day_end))
 
     import calendar
     all_invoices = session.exec(select(Invoice)).all()
@@ -6856,7 +6867,7 @@ def dashboard_stats(
         month_end = datetime(next_year, next_month, 1)
         
         def _in_month(row):
-            v = getattr(row, "created_at", None)
+            v = _to_naive_dt(getattr(row, "created_at", None))
             return bool(v and month_start <= v < month_end)
         
         # Money in: quotes + paid invoices + sales orders + Closed Won deals
@@ -15362,7 +15373,8 @@ async def whatsapp_webhook(
     # 2.0 Check Session Expiration (24h)
     if ws_session:
         from datetime import datetime, timedelta
-        if datetime.utcnow() - ws_session.created_at > timedelta(hours=24):
+        _wsc = _to_naive_dt(getattr(ws_session, "created_at", None))
+        if _wsc and (datetime.utcnow() - _wsc) > timedelta(hours=24):
             try:
                 session.delete(ws_session)
                 session.commit()
