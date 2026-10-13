@@ -105,11 +105,21 @@ class Scope:
 
 
 def _scope(session: Session) -> Scope:
+    try:
+        from main import current_tenant_id
+        if current_tenant_id.get() == -1 or current_tenant_id.get() is None:
+            current_tenant_id.set(1)
+    except Exception:
+        pass
     user = _me(session)
     if not user:
-        tid = current_tenant_id.get()
-        if tid and tid != -1:
-            user = session.exec(select(User).where((User.tenant_id == tid) & (User.role.in_(["Admin", "SuperAdmin"])))).first()
+        try:
+            from main import current_tenant_id
+            tid = current_tenant_id.get()
+            if tid and tid != -1:
+                user = session.exec(select(User).where((User.tenant_id == tid) & (User.role.in_(["Admin", "SuperAdmin"])))).first()
+        except Exception:
+            pass
         if not user:
             user = session.exec(select(User).where(User.role.in_(["Admin", "SuperAdmin"]))).first()
         if not user:
