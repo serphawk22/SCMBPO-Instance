@@ -1255,3 +1255,201 @@ def build_overview(d: Data, months: int) -> Dict[str, Any]:
 def command_center_overview(months: int = Query(6, ge=3, le=24), session: Session = Depends(get_session)):
     sc = _scope(session)
     return build_overview(Data(session, sc), months)
+
+
+def build_executive_dossier(d: Data, start_str: Optional[str] = None, end_str: Optional[str] = None, months: int = 12) -> Dict[str, Any]:
+    now = datetime.utcnow()
+    today = now.date()
+    is_admin = d.sc.is_admin
+
+    start = _to_date(start_str)
+    end = _to_date(end_str)
+
+    def in_range(dt: Any) -> bool:
+        if not dt:
+            return not (start or end)
+        n = _n(dt)
+        if not n:
+            return not (start or end)
+        return (not start or n.date() >= start) and (not end or n.date() <= end)
+
+    users_list = list(d.users.values())
+    staff_users = [u for u in users_list if (u.role or "").strip().lower() in ("admin", "superadmin", "salesmanager", "employee", "intern")]
+    if not staff_users:
+        staff_users = users_list
+
+    leads = d.leads
+    deals = d.deals
+    clients = d.all_clients
+    tasks = d.tasks
+    followups = d.followups
+    meetings = d.meetings
+    calls = d.calls
+    emails = d.emails
+    activities = d.activities
+
+    in_14_days = today + timedelta(days=14)
+
+    reps_data = []
+    for u in staff_users:
+        uid = u.id
+        uname = u.name or u.email
+
+        rep_leads_all = [l for l in leads if l.owner_id == uid]
+        rep_leads_period = [l for l in rep_leads_all if in_range(l.created_at)]
+        rep_leads_active = [l for l in rep_leads_all if not _is_converted(l) and (l.status or "").lower() not in ("negative", "lost", "archived")]
+        rep_converted_period = [l for l in rep_leads_period if _is_converted(l)]
+
+        rep_clients_all = [c for c in clients if c.assignedEmployeeId == uid or any(l.converted_client_id == c.id for l in rep_leads_all if l.converted_client_id)]
+        rep_clients_active = [c for c in rep_clients_all if (c.status or "").lower() == "active"]
+
+        rep_deals_all = [x for x in deals if x.assigned_to == uid]
+        rep_deals_period = [x for x in rep_deals_all if in_range(x.created_at or x.won_at)]
+        rep_won_period = [x for x in rep_deals_period if x.stage == "Closed Won"]
+        rep_lost_period = [x for x in rep_deals_period if x.stage == "Closed Lost"]
+        rep_open_deals = [x for x in rep_deals_all if x.stage not in ("Closed Won", "Closed Lost")]
+        rep_pipeline_val = sum(float(x.value or 0) for x in rep_open_deals)
+        rep_won_rev = sum(_deal_amount(x) for x in rep_won_period)
+
+        rep_open_tasks = [t for t in tasks if str(t.assigned_to) == str(uid) and (t.status or "").lower() not in ("done", "completed")]
+        rep_overdue_tasks = [t for t in rep_open_tasks if _to_date(t.due_date) and _to_date(t.due_date) < today]
+        
+        rep_pending_followups = [f for f in followups if f.owner_id == uid and (f.status or "") == "Pending"]
+        rep_overdue_followups = [f for f in rep_pending_followups if f.due_at and _n(f.due_at) < now]
+        
+        rep_acts = [a for a in activities if a.userId == uid]
+        last_act = sorted(rep_acts, key=lambda a: _n(a.createdAt) or datetime.min, reverse=True)[0] if rep_acts else None
+
+        rep_meetings_up = [
+            {"id": m.id, "title": m.title, "type": m.meeting_type, "scheduled_at": _iso(m.scheduled_at), "location": m.location}
+            for m in sorted([m for m in meetings if m.host_id == uid and (m.status or "") == "Scheduled" and m.scheduled_at and _n(m.scheduled_at) >= now and _n(m.scheduled_at).date() <= in_14_days], key=lambda m: _n(m.scheduled_at))[:5]
+        ]
+        sorted_next_fu = sorted([f for f in rep_pending_followups if f.due_at and _n(f.due_at) >= now], key=lambda f: _n(f.due_at))
+        next_fu_item = {
+            "id": sorted_next_fu[0].id, "title": sorted_next_fu[0].title, "due_at": _iso(sorted_next_fu[0].due_at), "channel": sorted_next_fu[0].channel, "priority": sorted_next_fu[0].priority,
+        } if sorted_next_fu else None
+
+        rep_closing_soon = [
+            {"id": x.id, "title": x.title, "stage": x.stage, "value": _r(x.value or 0), "close_date": _to_date(x.expected_close_date).isoformat() if _to_date(x.expected_close_date) else None, "client": d.client_names.get(x.client_id)}
+            for x in rep_open_deals if _to_date(x.expected_close_date) and today <= _to_date(x.expected_close_date) <= in_14_days
+        ]
+
+        rep_negotiating = [
+            {"id": x.id, "title": x.title, "value": _r(x.value or 0), "client": d.client_names.get(x.client_id)}
+            for x in rep_open_deals if x.stage == "Negotiation"
+        ]
+
+        calls_cnt = sum(1 for c in calls if str(c.assigned_to) == str(uid) or c.assigned_to == uname)
+        emails_cnt = sum(1 for e in emails if e.lead_id in {l.id for l in rep_leads_all})
+
+        closed_cnt = len(rep_won_period) + len(rep_lost_period)
+        win_rate = _pct(len(rep_won_period), closed_cnt) if closed_cnt else 0.0
+        leads_total_eval = len(rep_leads_period) or len(rep_leads_all)
+        conv_eval = len(rep_converted_period) or sum(1 for l in rep_leads_all if _is_converted(l))
+        conv_rate = _pct(conv_eval, leads_total_eval) if leads_total_eval else 0.0
+
+        reps_data.append({
+            "user_id": uid,
+            "name": uname,
+            "email": u.email,
+            "role": u.role,
+            "active_leads": len(rep_leads_active),
+            "active_clients": len(rep_clients_active),
+            "open_deals": len(rep_open_deals),
+            "open_pipeline_value": _r(rep_pipeline_val),
+            "open_tasks": len(rep_open_tasks),
+            "overdue_tasks": len(rep_overdue_tasks),
+            "pending_followups": len(rep_pending_followups),
+            "overdue_followups": len(rep_overdue_followups),
+            "last_active_at": _iso(last_act.createdAt) if last_act else None,
+            "last_action": last_act.action if last_act else None,
+            "upcoming_meetings": rep_meetings_up,
+            "next_followup": next_fu_item,
+            "closing_soon_deals": rep_closing_soon,
+            "in_negotiation_deals": rep_negotiating,
+            "total_leads_handled": len(rep_leads_all),
+            "converted_leads": conv_eval,
+            "conversion_rate": conv_rate,
+            "total_clients_handled": len(rep_clients_all),
+            "total_deals_handled": len(rep_deals_all),
+            "won_deals": len(rep_won_period),
+            "won_revenue": _r(rep_won_rev),
+            "lost_deals": len(rep_lost_period),
+            "win_rate": win_rate,
+            "avg_deal_size": _r(rep_won_rev / len(rep_won_period)) if rep_won_period else 0.0,
+            "activities_count": len(rep_acts),
+            "calls_count": calls_cnt,
+            "emails_count": emails_cnt,
+        })
+
+    reps_data.sort(key=lambda r: (-r["won_revenue"], -r["open_pipeline_value"]))
+
+    engine = SourceEngine(d, start_str, end_str, months)
+    src_summary = engine.summary()
+
+    mkeys = _month_range(months)
+    costs_by_cat: Dict[str, float] = defaultdict(float)
+    total_costs_val = 0.0
+    for c in d.costs:
+        for mk in _cost_months(c, mkeys):
+            costs_by_cat[c.category] += c.amount or 0
+            total_costs_val += c.amount or 0
+
+    won_deals_all = [x for x in deals if x.stage == "Closed Won"]
+    tot_won_rev = sum(_deal_amount(x) for x in won_deals_all)
+    tot_pipeline_val = sum(float(x.value or 0) for x in deals if x.stage not in ("Closed Won", "Closed Lost"))
+
+    stage_map = defaultdict(lambda: {"count": 0, "value": 0.0})
+    for x in deals:
+        stage_map[x.stage]["count"] += 1
+        stage_map[x.stage]["value"] += _deal_amount(x) if x.stage == "Closed Won" else float(x.value or 0)
+
+    stages_report = [
+        {"stage": s, "count": stage_map[s]["count"], "value": _r(stage_map[s]["value"]), "probability": int(STAGE_PROB.get(s, 0.2) * 100), "weighted": _r(stage_map[s]["value"] * STAGE_PROB.get(s, 0.2))}
+        for s in DEAL_STAGES
+    ]
+
+    exec_kpis = {
+        "won_revenue": _r(tot_won_rev),
+        "pipeline_value": _r(tot_pipeline_val),
+        "total_costs": _r(total_costs_val) if is_admin else None,
+        "net_profit": _r(tot_won_rev - total_costs_val) if is_admin else None,
+        "margin_pct": round((tot_won_rev - total_costs_val) / tot_won_rev * 100, 1) if (is_admin and tot_won_rev) else None,
+        "total_leads": len(leads),
+        "converted_leads": sum(1 for l in leads if _is_converted(l)),
+        "conversion_rate": _pct(sum(1 for l in leads if _is_converted(l)), len(leads)),
+        "total_clients": len(clients),
+        "active_clients": sum(1 for c in clients if (c.status or "").lower() == "active"),
+        "total_deals": len(deals),
+        "won_deals": len(won_deals_all),
+        "win_rate": _pct(len(won_deals_all), len(won_deals_all) + sum(1 for x in deals if x.stage == "Closed Lost")),
+        "avg_deal_size": _r(tot_won_rev / len(won_deals_all)) if won_deals_all else 0.0,
+        "active_reps": len([r for r in reps_data if r["active_leads"] > 0 or r["open_deals"] > 0 or r["won_deals"] > 0]),
+        "total_staff": len(staff_users),
+    }
+
+    return {
+        "generated_at": now.isoformat(),
+        "range": {"start": start_str, "end": end_str, "months": months},
+        "kpis": exec_kpis,
+        "reps": reps_data,
+        "deal_stages": stages_report,
+        "lead_sources": src_summary["sources"],
+        "lead_source_totals": src_summary["totals"],
+        "lead_source_highlights": src_summary["highlights"],
+        "cost_categories": [{"name": k, "value": _r(v), "pct": _pct(v, total_costs_val)} for k, v in sorted(costs_by_cat.items(), key=lambda kv: -kv[1])] if is_admin else [],
+        "monthly_trend": src_summary["trend"],
+        "can_see_finance": is_admin,
+    }
+
+
+@router.get("/reports/executive-dossier")
+def get_executive_dossier(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    months: int = Query(12, ge=1, le=36),
+    session: Session = Depends(get_session),
+):
+    sc = _scope(session)
+    return build_executive_dossier(Data(session, sc), start_date, end_date, months)
+

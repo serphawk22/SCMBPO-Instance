@@ -1,212 +1,707 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CalendarDays, Download, RefreshCw, TrendingUp, Users, Target, BriefcaseBusiness, CheckCircle2, Phone, Video } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area, Legend, PieChart, Pie, Cell
+} from "recharts";
+import {
+  FileText, Users, DollarSign, TrendingUp, Target, Clock, Calendar, CheckCircle2,
+  AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame,
+  Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert,
+  ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers
+} from "lucide-react";
 import { jsPDF } from "jspdf";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
-
-type ReportData = {
-  range: { start_date: string; end_date: string };
-  summary: Record<string, number>;
-  sales: { deals: any[]; won_value: number };
-  daily: any[];
-  monthly: any[];
-  staff_performance: any[];
-  lead_sources: any[];
-  calls: any[];
-  meetings: any[];
-  onboarding: Record<string, number>;
-};
-
-const tabs = [
-  ["overview", "Overview"], ["sales", "Sales Report"], ["calls", "Calls"],
-  ["meetings", "Meetings"], ["daily", "Daily Report"], ["monthly", "Monthly Report"],
-  ["staff_performance", "Staff Performance"],
-  ["lead_sources", "Lead Sources"], ["onboarding", "Client Onboarding"],
-] as const;
-const today = new Date().toISOString().slice(0, 10);
-const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
-
-function Stat({ label, value, icon, tone }: { label: string; value: string | number; icon: React.ReactNode; tone: string }) {
-  return <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900"><div className={`mb-4 flex h-10 w-10 items-center justify-center rounded-xl text-white ${tone}`}>{icon}</div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">{label}</p><p className="mt-1 text-2xl font-black text-slate-900 dark:text-white">{value}</p></div>;
-}
-
-function Table({ headers, rows }: { headers: string[]; rows: React.ReactNode[][] }) {
-  return <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-zinc-800"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:bg-zinc-950"><tr>{headers.map(header => <th key={header} className="whitespace-nowrap px-4 py-3">{header}</th>)}</tr></thead><tbody className="divide-y divide-slate-100 dark:divide-zinc-800">{rows.length ? rows.map((row, index) => <tr key={index} className="hover:bg-slate-50 dark:hover:bg-zinc-800/40">{row.map((cell, cellIndex) => <td key={cellIndex} className="whitespace-nowrap px-4 py-3 text-slate-700 dark:text-zinc-300">{cell}</td>)}</tr>) : <tr><td colSpan={headers.length} className="px-4 py-12 text-center text-sm text-slate-400">No records in this date range.</td></tr>}</tbody></table></div>;
-}
-
-function drawPdfTable(pdf: jsPDF, headers: string[], rows: string[][], startY: number) {
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const left = 14;
-  const tableWidth = pageWidth - 28;
-  const columnWidth = tableWidth / headers.length;
-  const lineHeight = 4.5;
-  let y = startY;
-
-  const drawHeader = () => {
-    pdf.setFillColor(30, 64, 175);
-    pdf.setTextColor(255, 255, 255);
-    pdf.rect(left, y, tableWidth, 9, "F");
-    headers.forEach((header, index) => pdf.text(header, left + index * columnWidth + 2, y + 6));
-    pdf.setTextColor(30, 41, 59);
-    y += 9;
-  };
-
-  drawHeader();
-  rows.forEach((row, rowIndex) => {
-    const wrappedCells = row.map(cell => pdf.splitTextToSize(cell, columnWidth - 4));
-    const rowHeight = Math.max(...wrappedCells.map(lines => lines.length), 1) * lineHeight + 4;
-    if (y + rowHeight > pageHeight - 18) {
-      pdf.addPage();
-      y = 18;
-      drawHeader();
-    }
-    if (rowIndex % 2 === 0) {
-      pdf.setFillColor(241, 245, 249);
-      pdf.rect(left, y, tableWidth, rowHeight, "F");
-    }
-    wrappedCells.forEach((lines, index) => pdf.text(lines, left + index * columnWidth + 2, y + 5));
-    pdf.setDrawColor(226, 232, 240);
-    pdf.line(left, y + rowHeight, left + tableWidth, y + rowHeight);
-    y += rowHeight;
-  });
-  return y;
-}
+import {
+  Currency, useCurrency, money, num, pctf, PALETTE, TOOLTIP_STYLE, AXIS_TICK,
+  Tile, Card, Pill, Skeleton, CurrencyToggle, Segmented, relTime, statusColor, Meter
+} from "@/components/analytics/kit";
 
 export default function ReportsPage() {
-  const { role } = useRole();
-  const [tab, setTab] = useState<string>("overview");
-  const [startDate, setStartDate] = useState(monthStart);
-  const [endDate, setEndDate] = useState(today);
-  const [data, setData] = useState<ReportData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { role, loading: roleLoading } = useRole();
+  const [currency, setCurrency] = useCurrency();
 
-  const load = async () => {
-    setLoading(true); setError("");
+  const [rangePreset, setRangePreset] = useState<string>("12m");
+  const [customStart, setCustomStart] = useState<string>("");
+  const [customEnd, setCustomEnd] = useState<string>("");
+  const [showCustom, setShowCustom] = useState<boolean>(false);
+
+  const [activeTab, setActiveTab] = useState<"reps" | "financials" | "sources" | "pipeline">("reps");
+  const [repSearch, setRepSearch] = useState<string>("");
+  const [selectedRepId, setSelectedRepId] = useState<number | null>(null);
+
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
-      const response = await fetch(`${API_BASE_URL}/reports/summary?${params.toString()}`);
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || "Unable to load reports");
-      setData(payload);
-    } catch (err) { setError(err instanceof Error ? err.message : "Unable to load reports"); }
-    finally { setLoading(false); }
+      let query = "";
+      if (rangePreset === "custom" && customStart && customEnd) {
+        query = `?start_date=${customStart}&end_date=${customEnd}`;
+      } else if (rangePreset === "30d") {
+        const d = new Date(); d.setDate(d.getDate() - 30);
+        query = `?start_date=${d.toISOString().slice(0, 10)}`;
+      } else if (rangePreset === "90d") {
+        const d = new Date(); d.setDate(d.getDate() - 90);
+        query = `?start_date=${d.toISOString().slice(0, 10)}`;
+      } else if (rangePreset === "6m") {
+        query = `?months=6`;
+      } else if (rangePreset === "12m") {
+        query = `?months=12`;
+      } else if (rangePreset === "all") {
+        query = `?months=36`;
+      }
+
+      const res = await fetch(`${API_BASE_URL}/reports/executive-dossier${query}`);
+      if (!res.ok) {
+        throw new Error(`Failed to load executive report (${res.status})`);
+      }
+      const json = await res.json();
+      setData(json);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to load report data");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    if (role && startDate && endDate && startDate <= endDate) load();
-  }, [role, startDate, endDate]);
-
-  const download = () => {
-    if (!data) return;
-    const pdf = new jsPDF();
-    const reportNames: Record<string, string> = Object.fromEntries(tabs);
-    const format = (value: unknown) => value == null ? "-" : typeof value === "object" ? JSON.stringify(value) : String(value);
-    let headers: string[];
-    let rows: string[][];
-    if (tab === "overview") {
-      headers = ["Metric", "Value"];
-      rows = Object.entries(data.summary).map(([key, value]) => [key.replaceAll("_", " "), format(value)]);
-    } else if (tab === "sales") {
-      headers = ["Deal", "Stage", "Value", "Owner"];
-      rows = data.sales.deals.map(deal => [format(deal.title), format(deal.stage), format(deal.value), format(deal.assigned_to)]);
-    } else if (tab === "calls") {
-      headers = ["Date", "Phone", "Agent", "Duration", "Follow-up", "Notes"];
-      rows = data.calls.map(call => [fmtDate(call.date), format(call.phone_number), format(call.assigned_to), fmtMinutes(call.duration_seconds), call.followup_needed ? format(call.followup_date || "Yes") : "No", format(call.summary)]);
-    } else if (tab === "meetings") {
-      headers = ["When", "Title", "Type", "Status", "Host", "Duration", "Location", "Outcome"];
-      rows = data.meetings.map(meeting => [fmtDate(meeting.scheduled_at), format(meeting.title), format(meeting.meeting_type), format(meeting.status), format(meeting.host), meeting.duration_minutes ? `${meeting.duration_minutes}m` : "-", format(meeting.location), format(meeting.outcome)]);
-    } else if (tab === "daily") {
-      headers = ["Date", "Leads", "Onboarded", "Deals won", "Emails", "Activities", "Calls", "Meetings", "Tasks", "Tickets", "Cases"];
-      rows = data.daily.map(item => [format(item.date), format(item.leads), format(item.clients_onboarded), format(item.deals_won), format(item.emails), format(item.activities), format(item.calls), format(item.meetings), format(item.task_entries), format(item.tickets), format(item.cases_resolved)]);
-    } else if (tab === "monthly") {
-      headers = ["Month", "Leads", "Onboarded", "Deals won", "Emails", "Calls", "Meetings"];
-      rows = data.monthly.map(item => [format(item.month), format(item.leads), format(item.clients_onboarded), format(item.deals_won), format(item.emails), format(item.calls), format(item.meetings)]);
-    } else if (tab === "staff_performance") {
-      headers = ["Staff member", "Role", "Total work", "Calls", "Meetings", "Completed", "Tickets", "Cases"];
-      rows = data.staff_performance.map(item => [format(item.name), format(item.role), format(item.total_work), format(item.calls), format(item.meetings), format(item.completed_tasks), format(item.tickets), format(item.cases)]);
-    } else if (tab === "lead_sources") {
-      headers = ["Lead source", "Leads", "Converted", "Conversion %"];
-      rows = data.lead_sources.map(item => [format(item.source), format(item.leads), format(item.converted), `${format(item.conversion_percentage)}%`]);
-    } else {
-      headers = ["Metric", "Count"];
-      rows = Object.entries(data.onboarding).map(([key, value]) => [key.replaceAll("_", " "), format(value)]);
+    if (!roleLoading) {
+      loadData();
     }
-    pdf.setProperties({ title: `${reportNames[tab]} report` });
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(18);
-    pdf.setTextColor(15, 23, 42);
-    pdf.text(reportNames[tab] || "Report", 14, 18);
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(10);
-    pdf.setTextColor(71, 85, 105);
-    pdf.text(`Reporting period: ${startDate} to ${endDate}`, 14, 26);
-    drawPdfTable(pdf, headers, rows, 36);
-    const pageCount = pdf.getNumberOfPages();
-    for (let page = 1; page <= pageCount; page += 1) {
-      pdf.setPage(page);
-      pdf.setFontSize(8);
-      pdf.setTextColor(100, 116, 139);
-      pdf.text(`Page ${page} of ${pageCount}`, 14, pdf.internal.pageSize.getHeight() - 8);
-    }
-    pdf.save(`${tab}-report-${startDate}-to-${endDate}.pdf`);
-  };
+  }, [roleLoading, rangePreset, customStart, customEnd]);
 
-  const downloadFullReport = () => {
-    if (!data) return;
-    const pdf = new jsPDF();
-    const format = (value: unknown) => value == null ? "-" : typeof value === "object" ? JSON.stringify(value) : String(value);
-    const sections: Array<{ title: string; headers: string[]; rows: string[][] }> = [
-      { title: "Overview", headers: ["Metric", "Value"], rows: Object.entries(data.summary).map(([key, value]) => [key.replaceAll("_", " "), format(value)]) },
-      { title: "Sales Report", headers: ["Deal", "Stage", "Value", "Owner"], rows: data.sales.deals.map(deal => [format(deal.title), format(deal.stage), format(deal.value), format(deal.assigned_to)]) },
-      { title: "Calls", headers: ["Date", "Phone", "Agent", "Duration", "Follow-up", "Notes"], rows: data.calls.map(call => [fmtDate(call.date), format(call.phone_number), format(call.assigned_to), fmtMinutes(call.duration_seconds), call.followup_needed ? format(call.followup_date || "Yes") : "No", format(call.summary)]) },
-      { title: "Meetings", headers: ["When", "Title", "Type", "Status", "Host", "Duration", "Location", "Outcome"], rows: data.meetings.map(meeting => [fmtDate(meeting.scheduled_at), format(meeting.title), format(meeting.meeting_type), format(meeting.status), format(meeting.host), meeting.duration_minutes ? `${meeting.duration_minutes}m` : "-", format(meeting.location), format(meeting.outcome)]) },
-      { title: "Daily Report", headers: ["Date", "Leads", "Onboarded", "Deals won", "Emails", "Activities", "Calls", "Meetings", "Tasks", "Tickets", "Cases"], rows: data.daily.map(item => [format(item.date), format(item.leads), format(item.clients_onboarded), format(item.deals_won), format(item.emails), format(item.activities), format(item.calls), format(item.meetings), format(item.task_entries), format(item.tickets), format(item.cases_resolved)]) },
-      { title: "Monthly Report", headers: ["Month", "Leads", "Onboarded", "Deals won", "Emails", "Calls", "Meetings"], rows: data.monthly.map(item => [format(item.month), format(item.leads), format(item.clients_onboarded), format(item.deals_won), format(item.emails), format(item.calls), format(item.meetings)]) },
-      { title: "Staff Performance", headers: ["Staff", "Role", "Total work", "Calls", "Meetings", "Completed", "Tickets", "Cases"], rows: data.staff_performance.map(item => [format(item.name), format(item.role), format(item.total_work), format(item.calls), format(item.meetings), format(item.completed_tasks), format(item.tickets), format(item.cases)]) },
-      { title: "Lead Sources", headers: ["Source", "Leads", "Converted", "Conversion %"], rows: data.lead_sources.map(item => [format(item.source), format(item.leads), format(item.converted), `${format(item.conversion_percentage)}%`]) },
-      { title: "Client Onboarding", headers: ["Metric", "Count"], rows: Object.entries(data.onboarding).map(([key, value]) => [key.replaceAll("_", " "), format(value)]) },
+  const kpis = data?.kpis || {};
+  const reps = data?.reps || [];
+  const sources = data?.lead_sources || [];
+  const stages = data?.deal_stages || [];
+  const costs = data?.cost_categories || [];
+  const trend = data?.monthly_trend || [];
+
+  // Filtered reps
+  const filteredReps = useMemo(() => {
+    if (!repSearch.trim()) return reps;
+    const q = repSearch.toLowerCase();
+    return reps.filter((r: any) =>
+      (r.name || "").toLowerCase().includes(q) ||
+      (r.email || "").toLowerCase().includes(q) ||
+      (r.role || "").toLowerCase().includes(q)
+    );
+  }, [reps, repSearch]);
+
+  const selectedRep = useMemo(() => {
+    if (selectedRepId === null) return null;
+    return reps.find((r: any) => r.user_id === selectedRepId) || null;
+  }, [reps, selectedRepId]);
+
+  // Export to PDF
+  const exportPDF = () => {
+    const doc = new jsPDF("p", "mm", "a4");
+    const pageWidth = doc.internal.pageSize.getWidth();
+    let y = 20;
+
+    // Header
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, 0, pageWidth, 28, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("SerpHawk Executive CRM Dossier", 14, 14);
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Generated: ${new Date().toLocaleDateString()} | Range: ${rangePreset.toUpperCase()}`, 14, 22);
+
+    y = 38;
+    doc.setTextColor(30, 41, 59);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("Executive Summary KPIs", 14, y);
+    y += 8;
+
+    // KPI Summary table
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    const kpiLines = [
+      `Total Won Revenue: ${money(kpis.won_revenue, currency)} | Pipeline Value: ${money(kpis.pipeline_value, currency)}`,
+      `Total Leads: ${num(kpis.total_leads)} | Converted: ${num(kpis.converted_leads)} (${pctf(kpis.conversion_rate)})`,
+      `Total Deals: ${num(kpis.total_deals)} | Won Deals: ${num(kpis.won_deals)} (Win Rate: ${pctf(kpis.win_rate)})`,
+      `Active Clients: ${num(kpis.active_clients)} | Active Reps: ${num(kpis.active_reps)} / ${num(kpis.total_staff)} staff`,
     ];
-    sections.forEach((section, index) => {
-      if (index > 0) pdf.addPage();
-      pdf.setFont("helvetica", "bold"); pdf.setFontSize(18); pdf.setTextColor(15, 23, 42);
-      pdf.text(section.title, 14, 18);
-      pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(71, 85, 105);
-      pdf.text(`Reporting period: ${startDate} to ${endDate}`, 14, 26);
-      drawPdfTable(pdf, section.headers, section.rows, 36);
-    });
-    const pageCount = pdf.getNumberOfPages();
-    for (let page = 1; page <= pageCount; page += 1) {
-      pdf.setPage(page); pdf.setFontSize(8); pdf.setTextColor(100, 116, 139);
-      pdf.text(`Page ${page} of ${pageCount}`, 14, pdf.internal.pageSize.getHeight() - 8);
+    if (kpis.total_costs !== null) {
+      kpiLines.push(`Total Operating Spend: ${money(kpis.total_costs, currency)} | Net Profit: ${money(kpis.net_profit, currency)} (Margin: ${pctf(kpis.margin_pct)})`);
     }
-    pdf.setProperties({ title: "Complete sales report" });
-    pdf.save(`complete-sales-report-${startDate}-to-${endDate}.pdf`);
+
+    kpiLines.forEach((line) => {
+      doc.text(line, 14, y);
+      y += 6;
+    });
+
+    y += 6;
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text("Salesperson Performance & Live Workload", 14, y);
+    y += 8;
+
+    // Reps list
+    reps.forEach((r: any, idx: number) => {
+      if (y > 270) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.text(`${idx + 1}. ${r.name} (${r.role || "Sales Rep"})`, 14, y);
+      y += 5;
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text(
+        `Current: Handling ${r.active_leads} active leads, ${r.active_clients} active clients, ${r.open_deals} deals (${money(r.open_pipeline_value, currency)} pipeline)`,
+        18, y
+      );
+      y += 4.5;
+      doc.text(
+        `Results: Won ${r.won_deals} deals (${money(r.won_revenue, currency)}) | Win Rate: ${pctf(r.win_rate)} | Conversion: ${pctf(r.conversion_rate)}`,
+        18, y
+      );
+      y += 4.5;
+      doc.text(
+        `Workload: ${r.open_tasks} open tasks (${r.overdue_tasks} overdue) | ${r.pending_followups} follow-ups (${r.overdue_followups} overdue)`,
+        18, y
+      );
+      y += 7;
+    });
+
+    doc.save(`SerpHawk_Executive_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
-  const summary = data?.summary || {};
-  const staffRows = useMemo(() => (data?.staff_performance || []).map(item => [item.name, item.role, item.total_work, item.calls, item.meetings, item.completed_tasks, item.tickets, item.cases]), [data]);
-  const fmtMinutes = (seconds: number | null | undefined) => seconds == null ? "–" : ((seconds / 60) < 1 ? `${seconds}s` : `${Math.round(seconds / 60)}m`);
-  const fmtDate = (iso: string) => iso ? new Date(iso).toLocaleDateString() + " " + new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "–";
-  if (role !== "Admin" && role !== "SuperAdmin") return <div className="p-10 text-center font-bold text-slate-500">Reports are available to administrators only.</div>;
-  return <div className="mx-auto max-w-[1500px] space-y-6">
-    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-black uppercase tracking-[0.2em] text-indigo-500">Decision center</p><h1 className="text-3xl font-black text-slate-900 dark:text-white">Reports</h1><p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">One consistent view of sales, delivery, staff output, sources, and onboarding.</p></div><div className="flex flex-wrap items-center gap-2"><label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold dark:border-zinc-800 dark:bg-zinc-900"><CalendarDays size={16} className="text-indigo-500" /><input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label><span className="text-slate-400">to</span><input type="date" value={endDate} onChange={event => setEndDate(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold dark:border-zinc-800 dark:bg-zinc-900" /><button onClick={load} className="rounded-xl bg-indigo-600 p-2.5 text-white" title="Refresh"><RefreshCw size={17} /></button><button onClick={download} disabled={!data} className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Download size={16} /> Download PDF</button><button onClick={downloadFullReport} disabled={!data} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"><Download size={16} /> Full Sales Report</button></div></div>
-    <div className="flex gap-1 overflow-x-auto rounded-2xl bg-slate-100 p-1 dark:bg-zinc-900">{tabs.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`whitespace-nowrap rounded-xl px-4 py-2.5 text-xs font-black transition-colors ${tab === key ? "bg-white text-indigo-600 shadow-sm dark:bg-zinc-800" : "text-slate-500"}`}>{label}</button>)}</div>
-    {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm font-bold text-rose-700">{error}</div>}
-    {loading ? <div className="grid grid-cols-2 gap-4 md:grid-cols-4">{[1, 2, 3, 4].map(item => <div key={item} className="h-32 animate-pulse rounded-2xl bg-slate-100 dark:bg-zinc-900" />)}</div> : data && <>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-8"><Stat label="Leads" value={summary.leads} icon={<TrendingUp size={18} />} tone="bg-indigo-600" /><Stat label="Clients onboarded" value={summary.clients_onboarded} icon={<Users size={18} />} tone="bg-emerald-600" /><Stat label="Total clients" value={summary.total_clients} icon={<Users size={18} />} tone="bg-sky-600" /><Stat label="Won revenue" value={summary.won_value} icon={<BriefcaseBusiness size={18} />} tone="bg-amber-600" /><Stat label="Deals won" value={summary.deals_won} icon={<CheckCircle2 size={18} />} tone="bg-teal-600" /><Stat label="Conversion" value={`${summary.conversion_percentage}%`} icon={<Target size={18} />} tone="bg-rose-600" /><Stat label="Win rate" value={`${summary.deal_win_rate}%`} icon={<BarChart3 size={18} />} tone="bg-violet-600" /><Stat label="Calls" value={summary.calls} icon={<Phone size={18} />} tone="bg-cyan-600" /><Stat label="Meetings" value={summary.meetings} icon={<CalendarDays size={18} />} tone="bg-fuchsia-600" /><Stat label="Work items" value={(summary.activities || 0) + (summary.tickets || 0) + (summary.task_entries || 0)} icon={<BarChart3 size={18} />} tone="bg-slate-700" /></div>
-      {tab === "overview" && <div className="grid gap-6 lg:grid-cols-2"><div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"><h2 className="mb-4 text-lg font-black dark:text-white">Report coverage</h2><p className="text-sm leading-6 text-slate-500">The selected range is <strong>{data.range.start_date}</strong> through <strong>{data.range.end_date}</strong>. Conversion is calculated from all tenant leads marked converted; activity KPIs use records created inside the selected range.</p></div><div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900"><h2 className="mb-4 text-lg font-black dark:text-white">Client onboarding</h2><div className="grid grid-cols-2 gap-3 text-sm"><p>Active <strong>{data.onboarding.active}</strong></p><p>Pending <strong>{data.onboarding.pending}</strong></p><p>Hold <strong>{data.onboarding.hold}</strong></p><p>New in range <strong>{data.onboarding.new_in_range}</strong></p></div></div></div>}
-      {tab === "sales" && <Table headers={["Deal", "Stage", "Value", "Owner"]} rows={data.sales.deals.map(deal => [deal.title, deal.stage, deal.value, deal.assigned_to])} />}
-      {tab === "calls" && <Table headers={["Date", "Phone", "Agent", "Duration", "Follow-up", "Notes"]} rows={data.calls.map((call: any) => [fmtDate(call.date), call.phone_number, call.assigned_to, fmtMinutes(call.duration_seconds), call.followup_needed ? (call.followup_date || "Yes") : "No", call.summary || "–"])} />}
-      {tab === "meetings" && <Table headers={["When", "Title", "Type", "Status", "Host", "Duration", "Location", "Outcome"]} rows={data.meetings.map((meeting: any) => [fmtDate(meeting.scheduled_at), meeting.title, meeting.meeting_type, meeting.status, meeting.host, meeting.duration_minutes ? `${meeting.duration_minutes}m` : "–", meeting.location || "–", meeting.outcome || "–"])} />}
-      {tab === "daily" && <Table headers={["Date", "Leads", "Onboarded", "Deals won", "Emails", "Activities", "Calls", "Meetings", "Tasks", "Tickets", "Cases resolved"]} rows={data.daily.map(item => [item.date, item.leads, item.clients_onboarded, item.deals_won, item.emails, item.activities, item.calls, item.meetings, item.task_entries, item.tickets, item.cases_resolved])} />}
-      {tab === "monthly" && <Table headers={["Month", "Leads", "Clients onboarded", "Deals won", "Emails", "Calls", "Meetings"]} rows={data.monthly.map(item => [item.month, item.leads, item.clients_onboarded, item.deals_won, item.emails, item.calls, item.meetings])} />}
-      {tab === "staff_performance" && <Table headers={["Staff member", "Role", "Total work", "Calls", "Meetings", "Completed tasks", "Tickets", "Cases"]} rows={staffRows} />}
-      {tab === "lead_sources" && <Table headers={["Lead source", "Leads", "Converted", "Conversion %"]} rows={data.lead_sources.map(item => [item.source, item.leads, item.converted, `${item.conversion_percentage}%`])} />}
-      {tab === "onboarding" && <Table headers={["Metric", "Count"]} rows={Object.entries(data.onboarding).map(([key, value]) => [key.replaceAll("_", " "), value])} />}
-    </>}
-  </div>;
+  return (
+    <div className="space-y-6 pb-20">
+      {/* ── TOP HEADER & CONTROLS ─────────────────────────────────── */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between border-b border-[var(--border)] pb-5">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <span className="p-2.5 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 text-white shadow-md">
+              <FileText className="h-6 w-6" />
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-black tracking-tight text-[var(--text-primary)]">
+                  Executive Business Intelligence & Reports
+                </h1>
+                <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-500 text-[10px] font-extrabold uppercase tracking-wider">
+                  Owner Suite
+                </span>
+              </div>
+              <p className="text-xs font-semibold text-[var(--text-secondary)] mt-0.5">
+                Complete transparency for business owners: what each rep is doing, what they will do, won revenue, deals, lead sources, and profitability.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Segmented
+            value={rangePreset}
+            onChange={(v) => {
+              setRangePreset(v);
+              if (v !== "custom") setShowCustom(false);
+              else setShowCustom(true);
+            }}
+            options={[
+              { value: "30d", label: "30 Days" },
+              { value: "90d", label: "90 Days" },
+              { value: "6m", label: "6 Months" },
+              { value: "12m", label: "12 Months" },
+              { value: "all", label: "All Time" },
+              { value: "custom", label: "Custom" },
+            ]}
+          />
+
+          <CurrencyToggle value={currency} onChange={setCurrency} />
+
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-bold text-[var(--text-primary)] hover:bg-[var(--sidebar-hover)] transition-colors shadow-sm disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+
+          <button
+            onClick={exportPDF}
+            disabled={loading || !data}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--primary)] text-white text-xs font-bold shadow hover:opacity-95 transition-all disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export Dossier (PDF)
+          </button>
+        </div>
+      </div>
+
+      {/* Custom Date Inputs if selected */}
+      {showCustom && (
+        <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-xs font-semibold">
+          <Calendar className="h-4 w-4 text-[var(--primary)]" />
+          <span className="text-[var(--text-secondary)]">Custom Period:</span>
+          <label className="flex items-center gap-1">
+            <span>From:</span>
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              className="px-2 py-1 rounded border border-[var(--border)] bg-transparent text-[var(--text-primary)]"
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            <span>To:</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              className="px-2 py-1 rounded border border-[var(--border)] bg-transparent text-[var(--text-primary)]"
+            />
+          </label>
+          <button
+            onClick={loadData}
+            className="px-3 py-1 rounded bg-[var(--primary)] text-white text-xs font-bold"
+          >
+            Apply
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-500 text-sm font-semibold flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button onClick={loadData} className="underline text-xs font-bold">Retry</button>
+        </div>
+      )}
+
+      {loading && !data ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-24 w-full" />
+          ))}
+        </div>
+      ) : (
+        <>
+          {/* ── MACRO SCORECARD FOR BUSINESS OWNER ─────────────────── */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <Tile
+              label="Total Won Revenue"
+              value={money(kpis.won_revenue, currency, true)}
+              sub={`${num(kpis.won_deals)} won deals (${pctf(kpis.win_rate)} win)`}
+              icon={DollarSign}
+              tone="emerald"
+              href="/revenue"
+            />
+            <Tile
+              label="Pipeline in Flight"
+              value={money(kpis.pipeline_value, currency, true)}
+              sub={`${num(kpis.total_deals)} total deals`}
+              icon={Target}
+              tone="indigo"
+              href="/pipeline"
+            />
+            {data?.can_see_finance && kpis.total_costs !== null && (
+              <>
+                <Tile
+                  label="Business Costs"
+                  value={money(kpis.total_costs, currency, true)}
+                  sub="Operating expenses"
+                  icon={Briefcase}
+                  tone="slate"
+                  href="/business-costs"
+                />
+                <Tile
+                  label="Net Operating Profit"
+                  value={money(kpis.net_profit, currency, true)}
+                  sub={`Margin: ${pctf(kpis.margin_pct)}`}
+                  icon={TrendingUp}
+                  tone={kpis.net_profit >= 0 ? "emerald" : "rose"}
+                  href="/revenue"
+                />
+              </>
+            )}
+            <Tile
+              label="Lead Conversion"
+              value={pctf(kpis.conversion_rate)}
+              sub={`${num(kpis.converted_leads)} of ${num(kpis.total_leads)} leads`}
+              icon={CheckCircle2}
+              tone="teal"
+              href="/leads"
+            />
+            <Tile
+              label="Active Accounts"
+              value={num(kpis.active_clients)}
+              sub={`${num(kpis.total_clients)} total clients`}
+              icon={UserCheck}
+              tone="sky"
+              href="/clients"
+            />
+            <Tile
+              label="Active Sales Team"
+              value={`${num(kpis.active_reps)} / ${num(kpis.total_staff)}`}
+              sub="Reps with live volume"
+              icon={Users}
+              tone="amber"
+              href="/admin/sales-team"
+            />
+          </div>
+
+          {/* ── REPORT NAVIGATION TABS ─────────────────────────────── */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
+            <Segmented
+              value={activeTab}
+              onChange={(v) => setActiveTab(v as any)}
+              options={[
+                { value: "reps", label: `Sales Team Dossier (${reps.length} Reps)` },
+                { value: "financials", label: "Financials & Profits" },
+                { value: "sources", label: `Lead Sources & CAC (${sources.length})` },
+                { value: "pipeline", label: "Pipeline & Deals" },
+              ]}
+            />
+
+            {activeTab === "reps" && (
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--text-secondary)]" />
+                <input
+                  type="text"
+                  placeholder="Filter rep name or role..."
+                  value={repSearch}
+                  onChange={(e) => setRepSearch(e.target.value)}
+                  className="pl-8 pr-3 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] w-56 focus:outline-none focus:border-[var(--primary)]"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* ── TAB 1: SALES REPS DOSSIER (THE BUSINESS OWNER'S DEEP-DIVE) ── */}
+          {activeTab === "reps" && (
+            <div className="space-y-4">
+              <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-3 text-xs text-[var(--text-secondary)] flex items-center justify-between">
+                <span className="font-semibold text-indigo-500">
+                  Business Owner View: Transparent breakdown of what each salesperson is doing right now, what commitments they have coming up, and what revenue/conversions they have produced.
+                </span>
+                <span className="text-[11px] font-bold text-[var(--text-primary)]">
+                  {filteredReps.length} Sales Staff Evaluated
+                </span>
+              </div>
+
+              {/* Master Reps Table & Dossier Cards */}
+              <div className="grid grid-cols-1 gap-4">
+                {filteredReps.map((rep: any) => (
+                  <div
+                    key={rep.user_id}
+                    className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm hover:shadow-md transition-all"
+                  >
+                    {/* Header bar for rep */}
+                    <header className="p-4 bg-[var(--sidebar-hover)]/40 border-b border-[var(--border)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-white font-black flex items-center justify-center text-sm shadow">
+                          {rep.name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-base font-extrabold text-[var(--text-primary)]">{rep.name}</h3>
+                            <Pill color="#6366f1">{rep.role || "Sales Rep"}</Pill>
+                          </div>
+                          <p className="text-xs text-[var(--text-secondary)]">{rep.email}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs font-semibold">
+                        <div className="text-right">
+                          <span className="text-[10px] text-[var(--text-secondary)] uppercase block">Won Revenue</span>
+                          <span className="text-base font-black text-amber-600">{money(rep.won_revenue, currency)}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-[var(--text-secondary)] uppercase block">Win Rate</span>
+                          <span className="text-sm font-extrabold text-emerald-600">{pctf(rep.win_rate)}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-[var(--text-secondary)] uppercase block">Conv Rate</span>
+                          <span className="text-sm font-extrabold text-blue-600">{pctf(rep.conversion_rate)}</span>
+                        </div>
+                      </div>
+                    </header>
+
+                    {/* Body: 3 Pillars: Currently Doing, Going to Do, Results Achieved */}
+                    <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                      {/* Column 1: What is he doing RIGHT NOW? */}
+                      <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 space-y-2.5">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border)]">
+                          <span className="font-extrabold text-[var(--text-primary)] flex items-center gap-1.5 text-xs text-sky-500">
+                            <Clock className="h-3.5 w-3.5" /> What He Is Doing Right Now
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Active Leads Handling:</span>
+                          <span className="font-bold text-[var(--text-primary)]">{rep.active_leads} leads</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Active Clients Assigned:</span>
+                          <span className="font-bold text-[var(--text-primary)]">{rep.active_clients} accounts</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Open Deals in Flight:</span>
+                          <span className="font-bold text-indigo-500">{rep.open_deals} deals ({money(rep.open_pipeline_value, currency, true)})</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Pending Tasks:</span>
+                          <span className={`font-bold ${rep.overdue_tasks > 0 ? "text-rose-500" : "text-[var(--text-primary)]"}`}>
+                            {rep.open_tasks} ({rep.overdue_tasks} overdue)
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Pending Follow-ups:</span>
+                          <span className={`font-bold ${rep.overdue_followups > 0 ? "text-rose-500" : "text-[var(--text-primary)]"}`}>
+                            {rep.pending_followups} ({rep.overdue_followups} overdue)
+                          </span>
+                        </div>
+                        {rep.last_active_at && (
+                          <div className="pt-1.5 border-t border-[var(--border)] flex items-center justify-between text-[11px]">
+                            <span className="text-[var(--text-secondary)]">Last Active:</span>
+                            <span className="text-emerald-600 font-semibold">{relTime(rep.last_active_at)}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Column 2: What is he GOING TO DO? */}
+                      <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 space-y-2.5">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border)]">
+                          <span className="font-extrabold text-[var(--text-primary)] flex items-center gap-1.5 text-xs text-purple-500">
+                            <Calendar className="h-3.5 w-3.5" /> What He Is Going To Do
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Upcoming Meetings (≤14d):</span>
+                          <span className="font-bold text-indigo-500">{(rep.upcoming_meetings || []).length} scheduled</span>
+                        </div>
+                        {(rep.upcoming_meetings || []).length > 0 && (
+                          <div className="space-y-1">
+                            {rep.upcoming_meetings.slice(0, 2).map((m: any) => (
+                              <div key={m.id} className="p-1.5 rounded bg-[var(--sidebar-hover)]/60 text-[10px]">
+                                <p className="font-bold text-[var(--text-primary)] truncate">{m.title}</p>
+                                <p className="text-[var(--text-secondary)]">{relTime(m.scheduled_at)}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-1 border-t border-[var(--border)]">
+                          <span className="text-[var(--text-secondary)]">Next Due Action:</span>
+                          <span className="font-bold text-[var(--text-primary)]">
+                            {rep.next_followup ? relTime(rep.next_followup.due_at) : "None scheduled"}
+                          </span>
+                        </div>
+                        {rep.next_followup && (
+                          <div className="p-1.5 rounded bg-[var(--sidebar-hover)]/60 text-[10px]">
+                            <p className="font-bold text-[var(--text-primary)] truncate">{rep.next_followup.title}</p>
+                            <p className="text-[var(--text-secondary)]">Via {rep.next_followup.channel}</p>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-1 border-t border-[var(--border)]">
+                          <span className="text-[var(--text-secondary)]">Deals Closing Soon:</span>
+                          <span className="font-bold text-amber-500">{(rep.closing_soon_deals || []).length} deals</span>
+                        </div>
+                      </div>
+
+                      {/* Column 3: Results & Track Record */}
+                      <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 space-y-2.5">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-[var(--border)]">
+                          <span className="font-extrabold text-[var(--text-primary)] flex items-center gap-1.5 text-xs text-emerald-500">
+                            <Award className="h-3.5 w-3.5" /> Performance & Won Results
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Won Revenue:</span>
+                          <span className="font-black text-amber-600">{money(rep.won_revenue, currency)}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Won Deals:</span>
+                          <span className="font-bold text-emerald-600">{rep.won_deals} closed won</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Deal Win Rate:</span>
+                          <span className="font-bold text-[var(--text-primary)]">{pctf(rep.win_rate)}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Lead Conversion Rate:</span>
+                          <span className="font-bold text-blue-600">{pctf(rep.conversion_rate)} ({rep.converted_leads} / {rep.total_leads_handled})</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[var(--text-secondary)]">Avg Deal Size:</span>
+                          <span className="font-bold text-[var(--text-primary)]">{money(rep.avg_deal_size, currency)}</span>
+                        </div>
+                        <div className="flex items-center justify-between pt-1 border-t border-[var(--border)] text-[11px]">
+                          <span className="text-[var(--text-secondary)]">Outreach Volume:</span>
+                          <span className="font-semibold text-[var(--text-primary)]">{rep.calls_count} calls • {rep.emails_count} emails</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── TAB 2: FINANCIALS & PROFITABILITY ──────────────────── */}
+          {activeTab === "financials" && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Revenue vs Costs Trajectory */}
+                <Card title="Revenue vs Operating Costs Trajectory" icon={TrendingUp} tone="emerald">
+                  <div className="h-72 w-full">
+                    {trend.length === 0 ? (
+                      <p className="text-xs text-[var(--text-secondary)] text-center py-20">No monthly financial records</p>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={trend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="finWon" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+                          <XAxis dataKey="label" tick={AXIS_TICK} />
+                          <YAxis tick={AXIS_TICK} />
+                          <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [money(v, currency), "Won Revenue"]} />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          <Area type="monotone" dataKey="won_revenue" name="Won Revenue" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#finWon)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </Card>
+
+                {/* Cost Categories Breakdown */}
+                {data?.can_see_finance && (
+                  <Card title="Operating Spend by Category" icon={Briefcase} tone="slate">
+                    <div className="space-y-3 max-h-72 overflow-y-auto pr-1 text-xs">
+                      {costs.length === 0 ? (
+                        <p className="text-xs text-[var(--text-secondary)] text-center py-20">No cost categories recorded</p>
+                      ) : (
+                        costs.map((c: any) => (
+                          <div key={c.name} className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface)]/50">
+                            <div className="flex items-center justify-between font-bold">
+                              <span className="text-[var(--text-primary)]">{c.name}</span>
+                              <span className="text-rose-500 font-black">{money(c.value, currency)}</span>
+                            </div>
+                            <div className="mt-1.5 flex items-center gap-2">
+                              <div className="flex-1">
+                                <Meter value={c.pct} max={100} color="#ef4444" height={4} />
+                              </div>
+                              <span className="text-[10px] text-[var(--text-secondary)] font-bold">{c.pct}% of spend</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </Card>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── TAB 3: LEAD SOURCES & CAC ATTRIBUTION ──────────────── */}
+          {activeTab === "sources" && (
+            <div className="space-y-4">
+              <div className="overflow-x-auto rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[var(--sidebar-hover)]/40 border-b border-[var(--border)] text-[10px] font-black uppercase tracking-wider text-[var(--text-secondary)]">
+                    <tr>
+                      <th className="py-3 px-4">Lead Source</th>
+                      <th className="py-3 px-3">Channel</th>
+                      <th className="py-3 px-3 text-right">Inbound Leads</th>
+                      <th className="py-3 px-3 text-right">Converted</th>
+                      <th className="py-3 px-3 text-right">Conv %</th>
+                      <th className="py-3 px-3 text-right">Won Deals</th>
+                      <th className="py-3 px-3 text-right">Won Revenue</th>
+                      {data?.can_see_finance && (
+                        <>
+                          <th className="py-3 px-3 text-right">Spend</th>
+                          <th className="py-3 px-3 text-right">CPL</th>
+                          <th className="py-3 px-3 text-right">CAC</th>
+                          <th className="py-3 px-3 text-right">ROI %</th>
+                        </>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)] font-medium">
+                    {sources.map((s: any) => (
+                      <tr key={s.source_id || "unassigned"} className="hover:bg-[var(--sidebar-hover)]/50">
+                        <td className="py-3 px-4 font-bold text-[var(--text-primary)]">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: s.color || "#94a3b8" }} />
+                            <span>{s.source}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3"><Pill color={s.color || "#6366f1"}>{s.channel}</Pill></td>
+                        <td className="py-3 px-3 text-right font-extrabold text-[var(--text-primary)]">{num(s.leads)}</td>
+                        <td className="py-3 px-3 text-right font-bold text-emerald-600">{num(s.converted)}</td>
+                        <td className="py-3 px-3 text-right font-bold">{pctf(s.conversion_rate)}</td>
+                        <td className="py-3 px-3 text-right">{s.won_deals}</td>
+                        <td className="py-3 px-3 text-right font-extrabold text-amber-600">{money(s.won_revenue, currency)}</td>
+                        {data?.can_see_finance && (
+                          <>
+                            <td className="py-3 px-3 text-right">{money(s.total_cost, currency)}</td>
+                            <td className="py-3 px-3 text-right">{money(s.cost_per_lead, currency)}</td>
+                            <td className="py-3 px-3 text-right text-rose-600 font-bold">{money(s.cost_per_conversion, currency)}</td>
+                            <td className="py-3 px-3 text-right font-bold text-emerald-600">{pctf(s.roi_pct)}</td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── TAB 4: PIPELINE & DEALS VELOCITY ──────────────────── */}
+          {activeTab === "pipeline" && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {stages.map((st: any) => (
+                  <div key={st.stage} className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-sm text-[var(--text-primary)] flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: statusColor(st.stage) }} />
+                        {st.stage}
+                      </span>
+                      <Pill color={statusColor(st.stage)}>{st.probability}% win</Pill>
+                    </div>
+                    <p className="text-xl font-black text-[var(--text-primary)] mt-3">
+                      {money(st.value, currency)}
+                    </p>
+                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                      {st.count} active opportunities
+                    </p>
+                    <div className="mt-3">
+                      <Meter value={st.probability} max={100} color={statusColor(st.stage)} height={4} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }

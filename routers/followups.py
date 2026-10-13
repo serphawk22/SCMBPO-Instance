@@ -136,14 +136,18 @@ def _sees_all(user: Optional[User]) -> bool:
 
 
 def _validate_tz(name: Optional[str]) -> Optional[str]:
-    if not name:
+    if not name or not name.strip():
         return None
+    val = name.strip()
     try:
         from zoneinfo import ZoneInfo
-        ZoneInfo(name)
-        return name
+        ZoneInfo(val)
+        return val
     except Exception:
-        raise HTTPException(status_code=400, detail=f"Unknown timezone: {name}")
+        # Fallback: if zoneinfo data is missing in environment, accept IANA names
+        if "/" in val or val.upper() in ("UTC", "GMT", "IST"):
+            return val
+        return "UTC"
 
 
 def _to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[datetime]:
@@ -155,8 +159,19 @@ def _to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[datetime]:
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid date/time")
     if dt.tzinfo is None and tz_name:
-        from zoneinfo import ZoneInfo
-        dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+        try:
+            from zoneinfo import ZoneInfo
+            dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+        except Exception:
+            low = tz_name.lower()
+            if "kolkata" in low or "calcutta" in low or "ist" in low:
+                dt = dt.replace(tzinfo=_tz(timedelta(hours=5, minutes=30)))
+            elif "dubai" in low:
+                dt = dt.replace(tzinfo=_tz(timedelta(hours=4)))
+            elif "singapore" in low or "shanghai" in low or "tokyo" in low:
+                dt = dt.replace(tzinfo=_tz(timedelta(hours=8)))
+            else:
+                dt = dt.replace(tzinfo=_tz.utc)
     if dt.tzinfo is not None:
         dt = dt.astimezone(_tz.utc).replace(tzinfo=None)
     return dt
@@ -179,6 +194,10 @@ def _local_label(dt: Optional[datetime], tz_name: Optional[str]) -> Optional[str
         local = dt.replace(tzinfo=_tz.utc).astimezone(ZoneInfo(tz_name)) if tz_name else dt
         return local.strftime("%b %d, %Y %I:%M %p") + (f" ({tz_name})" if tz_name else " UTC")
     except Exception:
+        low = (tz_name or "").lower()
+        if "kolkata" in low or "calcutta" in low or "ist" in low:
+            local = dt + timedelta(hours=5, minutes=30)
+            return local.strftime("%b %d, %Y %I:%M %p") + f" ({tz_name})"
         return dt.strftime("%b %d, %Y %I:%M %p") + " UTC"
 
 
@@ -231,7 +250,11 @@ def _fu_dict(f: FollowUp, maps: Dict[str, Dict[int, Any]], now: datetime) -> dic
             from zoneinfo import ZoneInfo
             local_str = due_at.replace(tzinfo=_tz.utc).astimezone(ZoneInfo(f.timezone)).strftime("%Y-%m-%dT%H:%M")
         except Exception:
-            local_str = None
+            low = f.timezone.lower()
+            if "kolkata" in low or "calcutta" in low or "ist" in low:
+                local_str = (due_at + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%dT%H:%M")
+            else:
+                local_str = due_at.strftime("%Y-%m-%dT%H:%M")
     return {
         "id": f.id, "title": f.title, "notes": f.notes, "channel": f.channel,
         "priority": f.priority, "status": f.status, "bucket": _bucket(f, now),
