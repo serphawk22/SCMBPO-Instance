@@ -20,6 +20,7 @@ import { DeveloperDashboard } from "@/components/DeveloperDashboard";
 import { SalesManagerDashboard } from "@/components/SalesManagerDashboard";
 import { ClientDashboard } from "@/components/ClientDashboard";
 import { DemoDashboard } from "@/components/DemoDashboard";
+import CommandCenter from "@/components/CommandCenter";
 import Link from "next/link";
 
 const containerVariants = {
@@ -343,14 +344,14 @@ function Dashboard() {
     <motion.div initial="hidden" animate="show" variants={containerVariants} className={cn(isAdmin || role === 'ProjectMember' || role === 'Demo' ? "space-y-6" : "")}>
       {role === "ProjectMember" && <DeveloperDashboard />}
       {role === "SalesManager" && stats && <SalesManagerDashboard stats={stats as any} name={user?.name || email} />}
-      {isAdmin && adminStats && <AdminDashboard adminStats={adminStats} NAV_CARDS={NAV_CARDS} language={language} />}
-      {role === "Demo" && <AdminDashboard adminStats={adminStats} NAV_CARDS={visibleNavCards} language={language} isDemo={true} />}
+      {isAdmin && <CommandCenter />}
+      {role === "Demo" && <CommandCenter />}
       {!isAdmin && role !== "Demo" && role !== "ProjectMember" && role !== "SalesManager" && (
         <ClientDashboard clientStats={clientStats} NAV_CARDS={visibleNavCards} language={language} />
       )}
 
       {/* FALLBACK: If stats didn't load but we're authenticated */}
-      {!stats && role && (
+      {!stats && role && !isAdmin && role !== "Demo" && (
         <motion.div variants={itemVariants} className="glass-card p-8 text-center">
           <div className="flex flex-col items-center gap-4">
             <div className="p-4 rounded-full bg-amber-500/15 border border-amber-500/20">

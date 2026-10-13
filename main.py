@@ -532,6 +532,10 @@ from routers.scm2_features import router as scm2_router, ensure_scm2_schema, res
 app.include_router(scm2_router)
 app.include_router(scm2_router, prefix="/scm2")
 
+# Command center: full lead-source analytics + whole-CRM dashboard overview
+from routers.command_center import router as command_center_router
+app.include_router(command_center_router)
+
 @app.on_event("startup")
 def _scm2_startup():
     try:

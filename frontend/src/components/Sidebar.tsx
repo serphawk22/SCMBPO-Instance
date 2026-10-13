@@ -122,6 +122,7 @@ const defaultSidebarSections = [
     items: [
       { id: "item-revenue", name: "Revenue Dashboard", icon: "TrendingUp", href: "/revenue", roles: ["Admin"] },
       { id: "item-business-costs", name: "Business Costs", icon: "DollarSign", href: "/business-costs", roles: ["Admin"] },
+      { id: "item-lead-source-analytics", name: "Lead Source Analytics", icon: "BarChart2", href: "/lead-source-analytics", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-lead-sources", name: "Lead Sources", icon: "Zap", href: "/lead-sources", roles: ["Admin"] },
     ],
   },
