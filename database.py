@@ -38,7 +38,11 @@ if DATABASE_URL and DATABASE_URL.startswith("postgresql"):
     else:
         # Use standard psycopg2 driver
         if DATABASE_URL.startswith("postgresql+pg8000://"):
-            DATABASE_URL = DATABASE_URL.replace("postgresql+pg8000://", "postgresql://", 1)
+            DATABASE_URL = DATABASE_URL.replace("postgresql+pg8000://", "postgresql+psycopg2://", 1)
+        elif DATABASE_URL.startswith("postgresql+psycopg://"):
+            DATABASE_URL = DATABASE_URL.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+        elif DATABASE_URL.startswith("postgresql://"):
+            DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
         # Fail fast instead of hanging the app: bound new connection attempts and
         # detect dead peers via TCP keepalive (a stale connection otherwise blocks
         # pool_pre_ping for many minutes and stalls every request).
