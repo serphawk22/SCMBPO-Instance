@@ -16,7 +16,7 @@ export default function PurchaseOrdersPage() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ vendor_name: "", vendor_email: "", status: "Draft", grand_total: "", currency: "USD", expected_delivery: "", notes: "" });
+  const [form, setForm] = useState({ vendor_name: "", vendor_email: "", status: "Draft", grand_total: "", currency: "INR", expected_delivery: "", notes: "" });
   const [emailModal, setEmailModal] = useState<{ orderId: number; poNumber: string; vendorEmail?: string; mode: "email" | "sent" } | null>(null);
   const [emailAddr, setEmailAddr] = useState("");
   const [emailPrefilled, setEmailPrefilled] = useState(false);
@@ -157,7 +157,7 @@ export default function PurchaseOrdersPage() {
           { label: "Total POs", value: orders.length, c: "text-teal-500" },
           { label: "Draft", value: orders.filter(o => o.status === "Draft").length, c: "text-slate-500" },
           { label: "Received", value: orders.filter(o => o.status === "Received").length, c: "text-emerald-500" },
-          { label: "Total Spend", value: `$${orders.filter(o => o.status === "Received").reduce((s, o) => s + o.grand_total, 0).toFixed(0)}`, c: "text-cyan-500" },
+          { label: "Total Spend", value: `₹${orders.filter(o => o.status === "Received").reduce((s, o) => s + o.grand_total, 0).toFixed(0)}`, c: "text-cyan-500" },
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm">
             <p className="text-2xl font-black text-slate-800 dark:text-zinc-100">{loading ? "—" : s.value}</p>

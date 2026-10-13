@@ -2,11 +2,7 @@
 
 import React, { useState, useEffect, useRef, Fragment } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Bot, Send, Sparkles, Mail, Clock, User, Globe, ChevronDown, ChevronUp,
-  CheckCircle, Building2, Briefcase, Target, AtSign, FileText, Copy, Check,
-  TrendingUp, Zap, Package, UserPlus, Phone, Store, DollarSign, MessageCircle, Trash2, Youtube
-} from "lucide-react";
+import { Bot, Send, Sparkles, Mail, Clock, User, Globe, ChevronDown, ChevronUp, CheckCircle, Building2, Briefcase, Target, AtSign, FileText, Copy, Check, TrendingUp, Zap, Package, UserPlus, Phone, Store, IndianRupee, MessageCircle, Trash2, Youtube } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
 import PageGuide from "@/components/PageGuide";

@@ -1,10 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Inbox, Users, CheckCircle, Clock, Tag, ChevronDown, ChevronUp,
-  Send, DollarSign, FileText, Briefcase, AlertCircle, Activity, MessageCircle
-} from 'lucide-react';
+import { Inbox, Users, CheckCircle, Clock, Tag, ChevronDown, ChevronUp, Send, IndianRupee, FileText, Briefcase, AlertCircle, Activity, MessageCircle } from "lucide-react";
 import Link from 'next/link';
 import { API_BASE_URL } from '@/config';
 import PageGuide from '@/components/PageGuide';
@@ -167,7 +164,7 @@ export default function AdminRequestsPage() {
                     </div>
                     <div className="flex items-center gap-4 mt-1.5 text-xs font-medium text-slate-400">
                       <span className="flex items-center gap-1"><Tag className="w-3 h-3" /> {req.handler_role}</span>
-                      <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" /> ${req.service_cost}</span>
+                      <span className="flex items-center gap-1"><IndianRupee className="w-3 h-3" /> ${req.service_cost}</span>
                       <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(req.requested_at).toLocaleDateString()}</span>
                       <span>{req.client_email}</span>
                     </div>
@@ -207,7 +204,7 @@ export default function AdminRequestsPage() {
 
                         <div className="grid md:grid-cols-2 gap-4">
                           <div className="space-y-1.5">
-                            <label className="text-xs font-black text-slate-500 dark:text-zinc-400 uppercase tracking-widest flex items-center gap-1"><DollarSign className="w-3 h-3 text-emerald-500" /> {t('requests.quoted_amount')} *</label>
+                            <label className="text-xs font-black text-slate-500 dark:text-zinc-400 uppercase tracking-widest flex items-center gap-1"><IndianRupee className="w-3 h-3 text-emerald-500" /> {t('requests.quoted_amount')} *</label>
                             <input type="number" step="0.01" value={quoteForm[req.id]?.quoted_amount || ''}
                               onChange={e => updateForm(req.id, 'quoted_amount', e.target.value)}
                               className="w-full px-4 py-3 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none font-bold" placeholder={t('requests.ph_amount')} />

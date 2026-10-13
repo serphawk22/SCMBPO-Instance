@@ -2,14 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  Plus, X, Loader2, FileSignature, CheckCircle, Send,
-  Clock, XCircle, DollarSign, Trash2, Eye, Edit3, Download,
-  PlayCircle, Search, ShoppingCart, Package, ChevronRight,
-  User2, Building2, IndianRupee, BadgeDollarSign, Minus,
-  AlertCircle, FileText, RefreshCw, ArrowLeft, FilePlus2, Link2,
-  Sparkles, Check, ArrowRightLeft
-} from "lucide-react";
+import { Plus, X, Loader2, FileSignature, CheckCircle, Send, Clock, XCircle, IndianRupee, Trash2, Eye, Edit3, Download, PlayCircle, Search, ShoppingCart, Package, ChevronRight, User2, Building2, Minus, AlertCircle, FileText, RefreshCw, ArrowLeft, FilePlus2, Link2, Sparkles, Check, ArrowRightLeft } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
@@ -79,19 +72,18 @@ export function toUsd(inr: number): number {
 }
 
 const CURRENCIES = [
-  { code: "USD", label: "USD ($)", symbol: "$", icon: BadgeDollarSign },
   { code: "INR", label: "INR (₹)", symbol: "₹", icon: IndianRupee },
 ];
 
 function fmtUsd(val: number): string {
-  return `$${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `₹${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function fmtInr(val: number): string {
   return `₹${val.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function fmtDualCurrency(amount: number, baseCurr: string = "USD"): { usdText: string; inrText: string } {
+function fmtDualCurrency(amount: number, baseCurr: string = "INR"): { usdText: string; inrText: string } {
   if (baseCurr === "INR") {
     const usd = toUsd(amount);
     return { usdText: fmtUsd(usd), inrText: fmtInr(amount) };
@@ -144,7 +136,7 @@ function ProposalsPageContent() {
 
   // Cart step
   const [cart, setCart]                 = useState<LineItem[]>([]);
-  const [currency, setCurrency]         = useState<"USD" | "INR">("USD");
+  const [currency, setCurrency]         = useState<"USD" | "INR">("INR");
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("All");
 
@@ -153,7 +145,6 @@ function ProposalsPageContent() {
   const [customDesc, setCustomDesc]     = useState("");
   const [customQty, setCustomQty]       = useState("1");
   const [customUnit, setCustomUnit]     = useState("service");
-  const [customUsdPrice, setCustomUsdPrice] = useState("");
   const [customInrPrice, setCustomInrPrice] = useState("");
 
   // Details step
@@ -238,7 +229,7 @@ function ProposalsPageContent() {
     setSelectedDealId(null);
     setRecipientSearch("");
     setCart([]);
-    setCurrency("USD");
+    setCurrency("INR");
     setCatalogSearch("");
     setCatalogCategory("All");
     setQuoteTitle("");
@@ -267,9 +258,8 @@ function ProposalsPageContent() {
   }, [cartTotal, currency]);
 
   function addToCart(item: CatalogItem) {
-    // Default catalog prices are assumed USD (or base supplier cost converted to USD)
-    const basePriceUsd = item.unit_price > 0 ? item.unit_price : 100;
-    const finalPrice = currency === "INR" ? toInr(basePriceUsd) : basePriceUsd;
+    // Catalog prices are stored in INR
+    const finalPrice = item.unit_price > 0 ? item.unit_price : 100;
 
     setCart(prev => {
       const existing = prev.findIndex(c => c.product_id === item.id);
@@ -293,12 +283,7 @@ function ProposalsPageContent() {
   function addCustomItem() {
     if (!customName.trim()) return;
     const qty = Math.max(1, parseFloat(customQty) || 1);
-    let price = 0;
-    if (currency === "USD") {
-      price = parseFloat(customUsdPrice) || (parseFloat(customInrPrice) ? toUsd(parseFloat(customInrPrice)) : 0);
-    } else {
-      price = parseFloat(customInrPrice) || (parseFloat(customUsdPrice) ? toInr(parseFloat(customUsdPrice)) : 0);
-    }
+    const price = parseFloat(customInrPrice) || 0;
 
     setCart(prev => [...prev, {
       product_name: customName.trim(),
@@ -312,7 +297,6 @@ function ProposalsPageContent() {
     setCustomName("");
     setCustomDesc("");
     setCustomQty("1");
-    setCustomUsdPrice("");
     setCustomInrPrice("");
   }
 
@@ -350,8 +334,8 @@ function ProposalsPageContent() {
   // ─── Submit Proposal ────────────────────────────────────────────────────────
   async function submitQuote() {
     setSaving(true);
-    // Send standard total_value normalized to USD for backend reports, or base total
-    const totalNormalizedUsd = currency === "INR" ? toUsd(cartTotal) : cartTotal;
+    // Total is stored directly in the proposal currency (INR)
+    const totalValue = cartTotal;
     const autoTitle = quoteTitle.trim() ||
       `Commercial Proposal for ${recipientName()} – ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
@@ -367,7 +351,7 @@ function ProposalsPageContent() {
           content: notes || null,
           status: sendStatus,
           valid_until: validUntil || null,
-          total_value: totalNormalizedUsd,
+          total_value: totalValue,
           line_items: cart,
           currency,
           deal_id: selectedDealId || null,
@@ -476,7 +460,7 @@ function ProposalsPageContent() {
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2.5">
               <span>Proposals &amp; Quotations</span>
               <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                USD ($) &amp; INR (₹) Engine
+                INR (₹) Engine
               </span>
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
@@ -505,8 +489,8 @@ function ProposalsPageContent() {
             { label: "In Negotiation", value: stats.negotiation, color: "text-amber-600", bg: "bg-amber-50 dark:bg-amber-900/20" },
             { label: "Won Deals", value: stats.accepted, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
             {
-              label: "Won Revenue ($ / ₹)",
-              value: `$${(stats.value/1000).toFixed(1)}k / ₹${(toInr(stats.value)/100000).toFixed(1)}L`,
+              label: "Won Revenue (₹)",
+              value: `₹${(stats.value/1000).toFixed(1)}k / ₹${(toInr(stats.value)/100000).toFixed(1)}L`,
               color: "text-violet-600",
               bg: "bg-violet-50 dark:bg-violet-900/20"
             },
@@ -535,7 +519,7 @@ function ProposalsPageContent() {
         </div>
         <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 font-medium shrink-0 bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800">
           <ArrowRightLeft className="w-3.5 h-3.5 text-blue-500" />
-          <span>Live Exchange Rate: <strong>1 USD ($) = 83.50 INR (₹)</strong></span>
+          <span>Base Currency: <strong>INR (₹)</strong></span>
         </div>
       </div>
 
@@ -559,8 +543,7 @@ function ProposalsPageContent() {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {filtered.map(p => {
               const cfg = STATUS_CFG[p.status] || STATUS_CFG.Draft;
-              const usdVal = p.currency === "INR" ? toUsd(p.total_value || 0) : (p.total_value || 0);
-              const inrVal = p.currency === "INR" ? (p.total_value || 0) : toInr(p.total_value || 0);
+              const inrVal = p.total_value || 0;
 
               return (
                 <div key={p.id}
@@ -628,13 +611,10 @@ function ProposalsPageContent() {
                     )}
                   </div>
 
-                  {/* Dual Currency Values & Row Actions */}
+                  {/* Amount & Row Actions */}
                   <div className="flex items-center justify-between mt-2 pt-2.5 border-t border-slate-100 dark:border-zinc-800/80">
                     <div>
                       <div className="text-base font-black text-slate-900 dark:text-white">
-                        {fmtUsd(usdVal)}
-                      </div>
-                      <div className="text-xs font-semibold text-slate-400">
                         {fmtInr(inrVal)}
                       </div>
                     </div>
@@ -750,15 +730,13 @@ function ProposalsPageContent() {
                         <tr className="bg-slate-50 dark:bg-slate-900 text-left">
                           <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs">Product / Service</th>
                           <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">Qty</th>
-                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">Unit ($ / ₹)</th>
+                          <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">Unit (₹)</th>
                           <th className="px-3 py-2 font-semibold text-slate-600 dark:text-slate-400 text-xs text-right">Total</th>
                         </tr>
                       </thead>
                       <tbody>
                         {selected.line_items.map((li, i) => {
-                          const liUsd = li.currency === "INR" ? toUsd(li.unit_price) : li.unit_price;
                           const liInr = li.currency === "INR" ? li.unit_price : toInr(li.unit_price);
-                          const totalUsd = liUsd * li.quantity;
                           const totalInr = liInr * li.quantity;
 
                           return (
@@ -771,12 +749,10 @@ function ProposalsPageContent() {
                                 {li.quantity} {li.unit || "pcs"}
                               </td>
                               <td className="px-3 py-2.5 text-right text-slate-600 dark:text-slate-300 font-mono text-xs">
-                                <div>{fmtUsd(liUsd)}</div>
-                                <div className="text-[10px] text-slate-400">{fmtInr(liInr)}</div>
+                                <div>{fmtInr(liInr)}</div>
                               </td>
                               <td className="px-3 py-2.5 text-right font-bold text-slate-900 dark:text-white font-mono">
-                                <div>{fmtUsd(totalUsd)}</div>
-                                <div className="text-[10px] text-slate-400 font-normal">{fmtInr(totalInr)}</div>
+                                <div>{fmtInr(totalInr)}</div>
                               </td>
                             </tr>
                           );
@@ -786,10 +762,7 @@ function ProposalsPageContent() {
                             Grand Total:
                           </td>
                           <td className="px-3 py-2.5 text-right font-black text-blue-600 text-base font-mono">
-                            <div>{fmtUsd(selected.currency === "INR" ? toUsd(selected.total_value || 0) : (selected.total_value || 0))}</div>
-                            <div className="text-xs font-semibold text-slate-500">
-                              {fmtInr(selected.currency === "INR" ? (selected.total_value || 0) : toInr(selected.total_value || 0))}
-                            </div>
+                            <div>{fmtInr(selected.currency === "INR" ? (selected.total_value || 0) : toInr(selected.total_value || 0))}</div>
                           </td>
                         </tr>
                       </tbody>
@@ -812,7 +785,7 @@ function ProposalsPageContent() {
                   { label: "Assigned Sales Rep", value: selected.salesperson_name || selected.creator_name || "Unassigned" },
                   { label: "Deals Pipeline",    value: `Stage: ${selected.deal_stage || "Negotiation"}` },
                   { label: "Valid Until",       value: selected.valid_until || "—" },
-                  { label: "Exchange Rate",     value: "1 USD = 83.50 INR" },
+                  { label: "Exchange Rate",     value: "INR (₹)" },
                   { label: "Created Date",      value: new Date(selected.created_at).toLocaleDateString("en-US") },
                   { label: "Created By",        value: selected.creator_name || "Sales Admin" },
                 ].map(m => (
@@ -914,7 +887,7 @@ function ProposalsPageContent() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#161616]">
               <div>
                 <h2 className="text-base font-bold text-slate-900 dark:text-white">Create Commercial Proposal</h2>
-                <p className="text-xs text-slate-500">Dual Currency Conversion ($ USD ⇄ ₹ INR)</p>
+                <p className="text-xs text-slate-500">Currency: ₹ INR</p>
               </div>
               <button onClick={() => setShowWizard(false)} className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400">
                 <X className="w-5 h-5" />
@@ -925,7 +898,7 @@ function ProposalsPageContent() {
             <div className="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111]">
               {[
                 { id: "recipient", num: "1", title: "Select Client" },
-                { id: "cart",      num: "2", title: "Products & Pricing ($ / ₹)" },
+                { id: "cart",      num: "2", title: "Products & Pricing (₹)" },
                 { id: "details",   num: "3", title: "Terms & Send" },
               ].map(s => {
                 const isActive = step === s.id;
@@ -1040,7 +1013,7 @@ function ProposalsPageContent() {
                   <div className="flex items-center justify-between bg-blue-50/60 dark:bg-blue-950/20 p-3 rounded-xl border border-blue-100 dark:border-blue-900/40">
                     <div>
                       <p className="text-xs font-bold text-slate-900 dark:text-white">Proposal Base Currency</p>
-                      <p className="text-[11px] text-slate-500">Auto-converts between Dollar ($) and Rupee (₹)</p>
+                      <p className="text-[11px] text-slate-500">All amounts shown in Rupees (₹)</p>
                     </div>
                     <div className="flex gap-1 bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
                       {CURRENCIES.map(c => (
@@ -1103,51 +1076,18 @@ function ProposalsPageContent() {
                           className="w-full px-2.5 py-1.5 bg-white dark:bg-black border border-slate-200 dark:border-slate-700 rounded-lg text-xs"
                         />
                       </div>
-                      {/* Price in Dollars */}
-                      <div>
-                        <label className="text-[10px] font-black text-blue-600 block mb-0.5">Price in Dollars ($ USD)</label>
-                        <div className="relative">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">$</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={customUsdPrice}
-                            onChange={e => {
-                              const v = e.target.value;
-                              setCustomUsdPrice(v);
-                              if (v !== "") {
-                                const n = parseFloat(v) || 0;
-                                setCustomInrPrice(String(toInr(n)));
-                              } else {
-                                setCustomInrPrice("");
-                              }
-                            }}
-                            placeholder="0.00"
-                            className="w-full pl-6 pr-2 py-1.5 bg-white dark:bg-black border border-blue-300 dark:border-blue-700 rounded-lg text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                        </div>
-                      </div>
                       {/* Price in Rupees */}
                       <div>
-                        <label className="text-[10px] font-black text-emerald-600 block mb-0.5">Price in Rupees (₹ INR)</label>
+                        <label className="text-[10px] font-black text-blue-600 block mb-0.5">Price in Rupees (₹ INR)</label>
                         <div className="relative">
                           <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">₹</span>
                           <input
                             type="number"
                             step="0.01"
                             value={customInrPrice}
-                            onChange={e => {
-                              const v = e.target.value;
-                              setCustomInrPrice(v);
-                              if (v !== "") {
-                                const n = parseFloat(v) || 0;
-                                setCustomUsdPrice(String(toUsd(n)));
-                              } else {
-                                setCustomUsdPrice("");
-                              }
-                            }}
+                            onChange={e => setCustomInrPrice(e.target.value)}
                             placeholder="0.00"
-                            className="w-full pl-6 pr-2 py-1.5 bg-white dark:bg-black border border-emerald-300 dark:border-emerald-700 rounded-lg text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            className="w-full pl-6 pr-2 py-1.5 bg-white dark:bg-black border border-blue-300 dark:border-blue-700 rounded-lg text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </div>
                       </div>
@@ -1187,9 +1127,7 @@ function ProposalsPageContent() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto">
                       {filteredCatalog.map(item => {
                         const inCart = cart.find(c => c.product_id === item.id);
-                        const baseUsd = item.unit_price > 0 ? item.unit_price : 100;
-                        const usdPrice = baseUsd;
-                        const inrPrice = toInr(baseUsd);
+                        const price = item.unit_price > 0 ? item.unit_price : 100;
 
                         return (
                           <button key={item.id} onClick={() => addToCart(item)}
@@ -1201,8 +1139,7 @@ function ProposalsPageContent() {
                               <p className="text-[10px] text-slate-400 truncate">{item.category} · {item.unit || "pcs"}</p>
                             </div>
                             <div className="text-right shrink-0">
-                              <div className="font-black text-blue-600 font-mono">{fmtUsd(usdPrice)}</div>
-                              <div className="text-[10px] font-semibold text-slate-400 font-mono">{fmtInr(inrPrice)}</div>
+                              <div className="font-black text-blue-600 font-mono">{fmtInr(price)}</div>
                             </div>
                             {inCart && (
                               <span className="bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">
@@ -1234,9 +1171,7 @@ function ProposalsPageContent() {
                         <p className="text-[11px] text-slate-400 mt-1">Add items from the catalog or create a custom service above.</p>
                       </div>
                     ) : cart.map((li, idx) => {
-                      const liUsd = currency === "INR" ? toUsd(li.unit_price) : li.unit_price;
-                      const liInr = currency === "INR" ? li.unit_price : toInr(li.unit_price);
-                      const subtotalUsd = liUsd * li.quantity;
+                      const liInr = li.currency === "INR" ? li.unit_price : toInr(li.unit_price);
                       const subtotalInr = liInr * li.quantity;
 
                       return (
@@ -1261,25 +1196,14 @@ function ProposalsPageContent() {
                               <span className="text-[10px] text-slate-400">{li.unit}</span>
                             </div>
                             <div className="text-right">
-                              <div className="font-black text-blue-600 font-mono">{fmtUsd(subtotalUsd)}</div>
-                              <div className="text-[10px] text-slate-400 font-mono">{fmtInr(subtotalInr)}</div>
+                              <div className="font-black text-blue-600 font-mono">{fmtInr(subtotalInr)}</div>
                             </div>
                           </div>
 
-                          {/* Two-way live unit price inputs */}
-                          <div className="grid grid-cols-2 gap-1.5 pt-1.5 border-t border-slate-100 dark:border-zinc-800">
+                          {/* Live unit price input */}
+                          <div className="pt-1.5 border-t border-slate-100 dark:border-zinc-800">
                             <div>
-                              <span className="text-[9px] font-bold text-blue-600 block">Unit ($ USD)</span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={liUsd}
-                                onChange={e => updateCartPriceUsd(idx, parseFloat(e.target.value) || 0)}
-                                className="w-full px-1.5 py-0.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-[11px] font-mono text-slate-900 dark:text-white"
-                              />
-                            </div>
-                            <div>
-                              <span className="text-[9px] font-bold text-emerald-600 block">Unit (₹ INR)</span>
+                              <span className="text-[9px] font-bold text-blue-600 block">Unit (₹ INR)</span>
                               <input
                                 type="number"
                                 step="0.01"
@@ -1294,15 +1218,11 @@ function ProposalsPageContent() {
                     })}
                   </div>
 
-                  {/* Dual Total Summary */}
+                  {/* Total Summary */}
                   <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111]">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-slate-500 font-semibold">Total in Dollars:</span>
-                      <span className="text-base font-black text-blue-600 font-mono">{dualTotal.usdText}</span>
-                    </div>
                     <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs text-slate-500 font-semibold">Total in Rupees:</span>
-                      <span className="text-base font-black text-emerald-600 font-mono">{dualTotal.inrText}</span>
+                      <span className="text-xs text-slate-500 font-semibold">Total:</span>
+                      <span className="text-base font-black text-blue-600 font-mono">{dualTotal.inrText}</span>
                     </div>
 
                     <div className="flex gap-2">
@@ -1331,10 +1251,6 @@ function ProposalsPageContent() {
                   </div>
                   <div className="flex items-center gap-3 mt-2">
                     <div className="text-xl font-black text-blue-700 dark:text-blue-400 font-mono">
-                      {dualTotal.usdText}
-                    </div>
-                    <span className="text-slate-400">⇄</span>
-                    <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono">
                       {dualTotal.inrText}
                     </div>
                   </div>

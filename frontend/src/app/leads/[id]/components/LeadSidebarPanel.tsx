@@ -2,11 +2,7 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  User, Mail, Phone, Globe, MapPin, Linkedin, Building2,
-  Users, DollarSign, Edit3, Save, X, ChevronDown, ChevronUp,
-  Briefcase, Target, Calendar, Zap, Wand2, Loader2, FileText, FileSignature, Store, CheckCircle2, AlertCircle
-} from 'lucide-react';
+import { User, Mail, Phone, Globe, MapPin, Linkedin, Building2, Users, IndianRupee, Edit3, Save, X, ChevronDown, ChevronUp, Briefcase, Target, Calendar, Zap, Wand2, Loader2, FileText, FileSignature, Store, CheckCircle2, AlertCircle } from "lucide-react";
 import Link from 'next/link';
 import { API_BASE_URL } from '@/config';
 import { useLanguage } from '@/context/LanguageContext';
@@ -229,7 +225,7 @@ export default function LeadSidebarPanel({
     ['revenue_range', language === 'es' ? 'Rango de Ingresos' : 'Revenue Range', 'text'],
     ['lead_source', language === 'es' ? 'Fuente del Lead' : 'Lead Source', 'text'],
     ['lead_score', language === 'es' ? 'Puntaje Lead (0-100)' : 'Lead Score (0-100)', 'number'],
-    ['deal_value', language === 'es' ? 'Valor ($)' : 'Deal Value ($)', 'number'],
+    ['deal_value', language === 'es' ? 'Valor (₹)' : 'Deal Value (₹)', 'number'],
     ['last_contact_date', language === 'es' ? 'Último Contacto' : 'Last Contact Date', 'date'],
     ['next_followup_date', language === 'es' ? 'Próximo Seguimiento' : 'Next Follow-up Date', 'date'],
   ];

@@ -2,20 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  UserX,
-  X,
-  Loader2,
-  DollarSign,
-  Calendar,
-  AlertTriangle,
-  RotateCcw,
-  CheckCircle2,
-  Building2,
-  FileText,
-  Tag,
-  ArrowUpRight
-} from "lucide-react";
+import { UserX, X, Loader2, IndianRupee, Calendar, AlertTriangle, RotateCcw, CheckCircle2, Building2, FileText, Tag, ArrowUpRight } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 
 export const REASON_CATEGORIES = [
@@ -433,7 +420,7 @@ export default function DropClientModal({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-zinc-400 mb-1.5 flex items-center gap-1">
-                    <DollarSign className="w-3.5 h-3.5" /> Last Revenue ($)
+                    <IndianRupee className="w-3.5 h-3.5" /> Last Revenue (₹)
                   </label>
                   <input
                     type="number"

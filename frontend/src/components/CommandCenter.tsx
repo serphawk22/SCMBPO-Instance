@@ -3,13 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  DollarSign, TrendingUp, Users, Target, Briefcase, Clock, CheckCircle2,
-  AlertCircle, AlertTriangle, ShieldAlert, Sparkles, RefreshCw, ArrowUpRight,
-  ChevronRight, Calendar, Phone, Mail, FileText, ShoppingCart, Package,
-  Layers, Trophy, Flame, Zap, BarChart2, CheckSquare, Activity, FileEdit,
-  FolderOpen, UserCheck, MessageSquare, ArrowRight, TrendingDown
-} from "lucide-react";
+import { IndianRupee, TrendingUp, Users, Target, Briefcase, Clock, CheckCircle2, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, RefreshCw, ArrowUpRight, ChevronRight, Calendar, Phone, Mail, FileText, ShoppingCart, Package, Layers, Trophy, Flame, Zap, BarChart2, CheckSquare, Activity, FileEdit, FolderOpen, UserCheck, MessageSquare, ArrowRight, TrendingDown } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, LineChart, Line
@@ -173,7 +167,7 @@ export default function CommandCenter() {
           value={money(kpis.won_revenue, currency, true)}
           delta={kpis.revenue_change_pct}
           sub={`${num(kpis.won_deals)} closed won deals`}
-          icon={DollarSign}
+          icon={IndianRupee}
           tone="emerald"
           href="/revenue"
         />

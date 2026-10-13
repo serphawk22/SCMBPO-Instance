@@ -2,11 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Store, Search, Filter, Plus, Sparkles, X, ChevronLeft, ChevronRight,
-  Building2, Tag, DollarSign, GitCompare, Loader2, CheckCircle2, Trash2, Edit3,
-  ExternalLink, BarChart2, AlertCircle
-} from "lucide-react";
+import { Store, Search, Filter, Plus, Sparkles, X, ChevronLeft, ChevronRight, Building2, Tag, IndianRupee, GitCompare, Loader2, CheckCircle2, Trash2, Edit3, ExternalLink, BarChart2, AlertCircle } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import Link from "next/link";
 import { useLanguage } from "@/context/LanguageContext";
@@ -222,7 +218,7 @@ export default function MarketplacePage() {
           { icon: Store, label: t("marketplace.total_services"), value: total, color: "text-indigo-500", bg: "bg-indigo-50" },
           { icon: Tag, label: t("marketplace.categories"), value: categories.length, color: "text-violet-500", bg: "bg-violet-50" },
           { icon: Building2, label: t("marketplace.providers"), value: providers, color: "text-emerald-500", bg: "bg-emerald-50" },
-          { icon: DollarSign, label: t("marketplace.avg_cost"), value: avgCost > 0 ? `$${avgCost.toFixed(0)}` : "—", color: "text-amber-500", bg: "bg-amber-50" },
+          { icon: IndianRupee, label: t("marketplace.avg_cost"), value: avgCost > 0 ? `₹${avgCost.toFixed(0)}` : "—", color: "text-amber-500", bg: "bg-amber-50" },
         ].map(({ icon: Icon, label, value, color, bg }) => (
           <motion.div key={label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
             className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm flex items-center gap-3">
@@ -448,7 +444,7 @@ export default function MarketplacePage() {
                     <datalist id="categories-list">{categories.map(c => <option key={c} value={c} />)}</datalist>
                   </div>
                   <div>
-                    <label className="block text-xs font-black text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">{t("marketplace.estimated_cost")} ($)</label>
+                    <label className="block text-xs font-black text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1.5">{t("marketplace.estimated_cost")} (₹)</label>
                     <input type="number" value={form.estimated_cost} onChange={e => setForm(f => ({ ...f, estimated_cost: e.target.value }))}
                       placeholder={t("marketplace.ph_on_request")}
                       className="w-full px-4 py-3 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
@@ -538,7 +534,7 @@ export default function MarketplacePage() {
                       { label: t("marketplace.category"), key: "category" as const, render: (s: MarketplaceService) => <CategoryBadge category={s.category} /> },
                       { label: t("marketplace.provider"), key: "provider_name" as const, render: (s: MarketplaceService) => s.provider_name || "—" },
                       { label: "Industry", key: "provider_industry" as const, render: (s: MarketplaceService) => s.provider_industry || "—" },
-                      { label: "Cost", key: "estimated_cost" as const, render: (s: MarketplaceService) => s.estimated_cost > 0 ? `$${s.estimated_cost.toLocaleString()}${s.cost_is_estimated ? " (Est.)" : ""}` : "On request" },
+                      { label: "Cost", key: "estimated_cost" as const, render: (s: MarketplaceService) => s.estimated_cost > 0 ? `₹${s.estimated_cost.toLocaleString()}${s.cost_is_estimated ? " (Est.)" : ""}` : "On request" },
                       { label: "Description", key: "description" as const, render: (s: MarketplaceService) => s.description || "—" },
                       { label: "Source", key: "source" as const, render: (s: MarketplaceService) => <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${s.source === "scraper" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300"}`}>{s.source}</span> },
                     ].map(row => (

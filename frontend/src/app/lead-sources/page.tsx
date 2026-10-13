@@ -1,11 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import {
-  Zap, Plus, Trash2, RefreshCw, Edit2, X,
-  CheckCircle2, AlertCircle, BarChart2, TrendingUp, DollarSign, IndianRupee, Layers,
-  PieChart as PieChartIcon, ArrowUpRight, Award, Flame, Filter, ChevronRight
-} from "lucide-react";
+import { Zap, Plus, Trash2, RefreshCw, Edit2, X, CheckCircle2, AlertCircle, BarChart2, TrendingUp, IndianRupee, Layers, PieChart as PieChartIcon, ArrowUpRight, Award, Flame, Filter, ChevronRight } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, AreaChart, Area
@@ -24,7 +20,7 @@ const EXCHANGE = 83.5;
 
 function fmt(amount: number, currency: Currency) {
   if (currency === "INR") return "\u20B9" + Math.round(amount).toLocaleString("en-IN");
-  return "$" + Math.round(amount / EXCHANGE).toLocaleString("en-US");
+  return "₹" + Math.round(amount / EXCHANGE).toLocaleString("en-US");
 }
 
 function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
@@ -238,10 +234,10 @@ export default function LeadSourcesPage() {
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {/* Currency toggle */}
             <div className="flex overflow-hidden rounded-xl border border-white/10 bg-white/5">
-              {(["INR", "USD"] as Currency[]).map(c => (
+              {(["INR"] as Currency[]).map(c => (
                 <button key={c} onClick={() => setCurrency(c)}
                   className={"flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold transition-all " + (currency === c ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-white")}>
-                  {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <DollarSign className="h-3.5 w-3.5" />} {c}
+                  {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <IndianRupee className="h-3.5 w-3.5" />} {c}
                 </button>
               ))}
             </div>

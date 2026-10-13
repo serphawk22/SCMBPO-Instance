@@ -3,12 +3,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
-import {
-  Users, Send, Clock, Briefcase, Target, Zap, Activity,
-  Globe, CheckCircle, FolderKanban, Mail, ArrowUpRight,
-  Bot, UserCheck, GraduationCap, Phone, Sparkles, FileText, ChevronRight, MessageCircle,
-  Shield, Lock, FileCheck, Bell, DollarSign, TrendingUp, Eye, Download, AlertTriangle, CheckCircle2, Circle, Timer, Rocket, Kanban
-} from "lucide-react";
+import { Users, Send, Clock, Briefcase, Target, Zap, Activity, Globe, CheckCircle, FolderKanban, Mail, ArrowUpRight, Bot, UserCheck, GraduationCap, Phone, Sparkles, FileText, ChevronRight, MessageCircle, Shield, Lock, FileCheck, Bell, IndianRupee, TrendingUp, Eye, Download, AlertTriangle, CheckCircle2, Circle, Timer, Rocket, Kanban } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { fetchWithCache } from "@/lib/cache";
 import { useRole } from "@/context/RoleContext";

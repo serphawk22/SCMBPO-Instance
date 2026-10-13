@@ -1,12 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  FileText, Plus, X, Search, Loader2, Trash2, Building2,
-  ShoppingCart, Package, Minus, CheckCircle, IndianRupee,
-  BadgeDollarSign, User2, Download, Eye, FilePlus2, Link2, ArrowUpRight,
-  Briefcase, TrendingUp
-} from "lucide-react";
+import { FileText, Plus, X, Search, Loader2, Trash2, Building2, ShoppingCart, Package, Minus, CheckCircle, IndianRupee, User2, Download, Eye, FilePlus2, Link2, ArrowUpRight, Briefcase, TrendingUp } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,7 +45,7 @@ function currSymbol(c: string) {
   if (c === "INR") return "₹";
   if (c === "EUR") return "€";
   if (c === "GBP") return "£";
-  return "$";
+  return "₹";
 }
 function fmtMoney(v: number, c: string) {
   return `${currSymbol(c)}${v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -106,7 +101,7 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
 
   // Form
   const [form, setForm] = useState({
-    title: "", status: "Draft", currency: "MXN",
+    title: "", status: "Draft", currency: "INR",
     valid_until: "", notes: "",
     linked_to: "lead" as "lead" | "client" | "none",
     lead_id: "" as string | number,
@@ -140,7 +135,7 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
         title: p.title,
         status: p.status,
         grand_total: p.total_value || 0,
-        currency: p.currency || "USD",
+        currency: p.currency || "INR",
         client_name: p.client_name,
         created_at: p.created_at,
         notes: p.content,
@@ -257,7 +252,7 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
 
   // ── Modal open/close ──────────────────────────────────────────────────────
   const openCreate = () => {
-    setForm({ title: "", status: "Draft", currency: "MXN", valid_until: "", notes: "", linked_to: "lead", lead_id: "", client_id: "" });
+    setForm({ title: "", status: "Draft", currency: "INR", valid_until: "", notes: "", linked_to: "lead", lead_id: "", client_id: "" });
     setCart([]);
     setCatalogSearch("");
     setCatalogCategory("All");
@@ -532,7 +527,7 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
           { label: "Total Quotes", value: quotes.length, c: "text-amber-600" },
           { label: "Draft",        value: quotes.filter(q => q.status === "Draft").length, c: "text-slate-600" },
           { label: "Accepted",     value: quotes.filter(q => q.status === "Accepted").length, c: "text-emerald-600" },
-          { label: "Total Value",  value: `$${filtered.reduce((s, q) => s + (q.grand_total || 0), 0).toFixed(0)}`, c: "text-orange-600" },
+          { label: "Total Value",  value: `₹${filtered.reduce((s, q) => s + (q.grand_total || 0), 0).toFixed(0)}`, c: "text-orange-600" },
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm">
             <p className={`text-2xl font-black ${s.c}`}>{loading ? "—" : s.value}</p>
@@ -709,11 +704,10 @@ const QuotesPage = forwardRef<QuotesHandle, { embedded?: boolean }>(function Quo
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Currency</p>
                     <div className="flex bg-slate-100 dark:bg-zinc-800 p-1 rounded-xl gap-1">
                       {[
-                        { code: "USD", label: "USD ($)" },
                         { code: "EUR", label: "EUR (€)" },
                         { code: "GBP", label: "GBP (£)" },
                         { code: "INR", label: "INR (₹)" },
-                        { code: "MXN", label: "MXN ($)" },
+                        { code: "MXN", label: "MXN (₹)" },
                       ].map(c => (
                         <button key={c.code} onClick={() => switchCurrency(c.code)}
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${form.currency === c.code ? "bg-white dark:bg-zinc-700 shadow text-amber-600" : "text-slate-500 hover:text-slate-700"}`}>

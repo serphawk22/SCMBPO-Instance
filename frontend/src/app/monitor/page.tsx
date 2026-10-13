@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, Search, MousePointerClick, TrendingUp, BarChart3, LineChart, Users, Eye, DollarSign, FolderKanban, Loader2 } from 'lucide-react';
+import { Activity, Search, MousePointerClick, TrendingUp, BarChart3, LineChart, Users, Eye, IndianRupee, FolderKanban, Loader2 } from "lucide-react";
 import { API_BASE_URL } from '@/config';
 import PageGuide from '@/components/PageGuide';
 import { useLanguage } from "@/context/LanguageContext";
@@ -43,7 +43,7 @@ export default function MonitorPage() {
   const kpis = [
     { title: t("monitor.keywords_tracked"), val: data?.total_keywords ?? 0, sub: t("monitor.recent_entries").replace("{count}", String(data?.keyword_rows?.length ?? 0)), icon: Search, color: 'text-indigo-600', bg: 'bg-indigo-50' },
     { title: t("monitor.avg_position"), val: data?.avg_position ?? '—', sub: t("monitor.across_keywords"), icon: TrendingUp, color: 'text-fuchsia-600', bg: 'bg-fuchsia-50' },
-    { title: t("monitor.total_revenue"), val: `$${(data?.total_revenue ?? 0).toLocaleString()}`, sub: t("monitor.paid_amount").replace("{amount}", `$${(data?.paid_revenue ?? 0).toLocaleString()}`), icon: DollarSign, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+    { title: t("monitor.total_revenue"), val: `₹${(data?.total_revenue ?? 0).toLocaleString()}`, sub: t("monitor.paid_amount").replace("{amount}", `₹${(data?.paid_revenue ?? 0).toLocaleString()}`), icon: IndianRupee, color: 'text-emerald-600', bg: 'bg-emerald-50' },
     { title: t("monitor.projects"), val: `${data?.completed_projects ?? 0}/${data?.total_projects ?? 0}`, sub: t("monitor.avg_progress").replace("{percent}", String(data?.avg_progress ?? 0)), icon: FolderKanban, color: 'text-sky-600', bg: 'bg-sky-50' },
   ];
 

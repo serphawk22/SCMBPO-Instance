@@ -16,8 +16,8 @@ export default function BillingManage() {
             <FileSignature className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-zinc-100">Billing</h1>
-            <p className="text-sm text-slate-500 dark:text-zinc-400">SCM BPO · Invoices &amp; billing</p>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-zinc-100">Invoices</h1>
+            <p className="text-sm text-slate-500 dark:text-zinc-400">SCM BPO · Invoices</p>
           </div>
         </div>
         <div className="flex items-center gap-3">

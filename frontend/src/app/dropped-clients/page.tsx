@@ -2,10 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  UserX, Plus, X, Loader2, Trash2, TrendingDown, AlertTriangle,
-  Building2, Calendar, DollarSign, RefreshCw, BarChart2, ArrowUpRight
-} from "lucide-react";
+import { UserX, Plus, X, Loader2, Trash2, TrendingDown, AlertTriangle, Building2, Calendar, IndianRupee, RefreshCw, BarChart2, ArrowUpRight } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { Sidebar } from "@/components/Sidebar";
 import { useRole } from "@/context/RoleContext";
@@ -166,7 +163,7 @@ export default function DroppedClientsPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
               { label: "Total Dropped", value: clients.length, icon: UserX, color: "text-red-600", bg: "bg-red-50 dark:bg-red-900/20" },
-              { label: "Revenue Lost", value: `$${totalRevenueLost.toLocaleString()}`, icon: DollarSign, color: "text-rose-600", bg: "bg-rose-50 dark:bg-rose-900/20" },
+              { label: "Revenue Lost", value: `₹${totalRevenueLost.toLocaleString()}`, icon: IndianRupee, color: "text-rose-600", bg: "bg-rose-50 dark:bg-rose-900/20" },
               { label: "High Reactivation", value: highPotential, icon: ArrowUpRight, color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-900/20" },
               { label: "Categories", value: Object.keys(categoryBreakdown).length, icon: BarChart2, color: "text-violet-600", bg: "bg-violet-50 dark:bg-violet-900/20" },
             ].map(s => (
@@ -277,7 +274,7 @@ export default function DroppedClientsPage() {
                           )}
                           {c.last_revenue && c.last_revenue > 0 && (
                             <span className="text-[10px] text-slate-500 flex items-center gap-1">
-                              <DollarSign className="w-3 h-3" />${c.last_revenue.toLocaleString()} last revenue
+                              <IndianRupee className="w-3 h-3" />${c.last_revenue.toLocaleString()} last revenue
                             </span>
                           )}
                           {c.relationship_months && c.relationship_months > 0 && (
@@ -341,7 +338,7 @@ export default function DroppedClientsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Last Revenue ($)</label>
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Last Revenue (₹)</label>
                     <input type="number" value={form.last_revenue} onChange={e => setForm(f => ({ ...f, last_revenue: e.target.value }))}
                       placeholder="0" className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-red-500" />
                   </div>

@@ -414,7 +414,7 @@ def sales_order_pdf(orders):
             o.get("order_number") or "—",
             o.get("client_name") or "—",
             f"{o.get('grand_total', 0):,.2f}",
-            o.get("currency") or "USD",
+            o.get("currency") or "INR",
             o.get("status") or "—",
             o.get("delivery_date") or "—",
             created,
@@ -465,7 +465,7 @@ def single_sales_order_pdf(order, client_name=None, lead_name=None, party=None):
     from datetime import datetime as _dt
 
     party = party or {}
-    currency = str(order.get("currency") or "USD")
+    currency = str(order.get("currency") or "INR")
     qty_total = float(order.get("grand_total") or 0)
     qn = order.get("order_number") or str(order.get("id") or "")
 
@@ -720,7 +720,7 @@ def purchase_order_pdf(orders):
             o.get("vendor_name") or "—",
             o.get("vendor_email") or "—",
             f"{o.get('grand_total', 0):,.2f}",
-            o.get("currency") or "USD",
+            o.get("currency") or "INR",
             o.get("status") or "—",
             o.get("expected_delivery") or "—",
             created,
@@ -746,7 +746,7 @@ def single_purchase_order_pdf(order):
         ("Status", order.get("status") or "—"),
         ("Vendor Name", order.get("vendor_name") or "—"),
         ("Vendor Email", order.get("vendor_email") or "—"),
-        ("Grand Total", f"{order.get('currency', 'USD')} {order.get('grand_total', 0):,.2f}"),
+        ("Grand Total", f"{order.get('currency', 'INR')} {order.get('grand_total', 0):,.2f}"),
         ("Expected Delivery", order.get("expected_delivery") or "—"),
         ("Notes", order.get("notes") or "—"),
         ("Created", created),
@@ -765,21 +765,21 @@ _RECEIPT_FAINT = colors.HexColor("#94a3b8")    # faint detail text
 _RECEIPT_LINE = colors.HexColor("#e2e8f0")     # thin light-gray dividers
 
 _CURRENCY_SYMBOLS = {
-    "USD": "$", "MXN": "$", "COP": "$", "BRL": "R$", "EUR": "€",
-    "GBP": "£", "INR": "Rs. ", "PEN": "S/", "ARS": "$", "CLP": "$",
+    "USD": "Rs. ", "MXN": "Rs. ", "COP": "Rs. ", "BRL": "R$", "EUR": "€",
+    "GBP": "£", "INR": "Rs. ", "PEN": "S/", "ARS": "Rs. ", "CLP": "Rs. ",
 }
 
 
 def _currency_symbol(currency):
     """Map a currency code to its symbol; anything else is used literally."""
     if not currency:
-        return "$"
+        return "Rs. "
     symbol = _CURRENCY_SYMBOLS.get(str(currency).upper())
     return symbol if symbol is not None else str(currency)
 
 
 def _receipt_money(value, currency):
-    """Format a monetary value, e.g. 149.94 -> '$149.94'."""
+    """Format a monetary value, e.g. 149.94 -> 'Rs. 149.94'."""
     try:
         return f"{_currency_symbol(currency)}{float(value):,.2f}"
     except (TypeError, ValueError):
@@ -1048,7 +1048,7 @@ def pos_receipt_pdf(data):
         paymentMethod: e.g. "Efectivo"
         amountPaid   : money handed over (defaults to total)
         change       : change due (computed as amountPaid - total)
-        currency     : currency code or literal symbol, defaults to "$"
+        currency     : currency code or literal symbol, defaults to "Rs."
         taxLabel     : label prefix, defaults to "IVA"
         taxIncluded  : True  -> tax is inside the total (Total == Subtotal),
                        False -> tax is added on top (Total = Subtotal + tax)
@@ -1060,7 +1060,7 @@ def pos_receipt_pdf(data):
     ticket_str = f"#{ticket}" if ticket is not None and str(ticket) != "" else ""
     date_str = str(data.get("date") or "")
     customer = str(data.get("customer") or "Público en General")
-    currency = data.get("currency") or "$"
+    currency = data.get("currency") or "Rs. "
     tax_rate = data.get("taxRate") or 0
     try:
         tax_rate = float(tax_rate)
@@ -1368,9 +1368,10 @@ def quote_pdf(data):
     contact_email = "contact@scmbpo.com"
     website = "www.scmbpo.com"
 
-    currency = str(data.get("currency") or "MXN").upper()
+    # All quotations are issued in INR
+    currency = "INR"
     # Base-14 Helvetica has no ₹ glyph (it would render as a broken "I"), so use "Rs."
-    curr_sym = "Rs. " if currency == "INR" else ("$" if currency in ("USD", "MXN", "CAD", "AUD") else f"{currency} ")
+    curr_sym = "Rs. "
     qn = data.get("quote_number") or str(data.get("id") or "")
     if qn and not qn.startswith("Q-") and not qn.startswith("PROP-") and qn.isdigit():
         qn = f"Q-{int(qn):04d}"
@@ -1858,14 +1859,14 @@ def invoice_pdf(data):
     """Generate a SERPHAWK-minimal invoice PDF (A4 portrait).
 
     ``data`` is a dict with keys:
-        invoice_number, client_name, currency (default "$"),
+        invoice_number, client_name, currency (default "Rs."),
         amount, tax, total, status, due_date, notes,
         line_items: [ { description, amount, provider } ]
     """
     from datetime import datetime as _dt
 
     company = "SCM BPO"
-    currency = str(data.get("currency") or "$")
+    currency = str(data.get("currency") or "Rs. ")
     subtitle = data.get("subtitle") or "Invoice"
     label = data.get("label") or "Invoice"
     inv_num = data.get("invoice_number") or str(data.get("id") or "")

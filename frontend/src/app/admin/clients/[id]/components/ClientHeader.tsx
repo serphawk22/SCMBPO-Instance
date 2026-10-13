@@ -83,7 +83,7 @@ export default function ClientHeader({
   const statusCfg = STATUS_CONFIG[client?.status] || STATUS_CONFIG.Inactive;
   const assignedEmp = employees.find((e: any) => e.id === client?.assignedEmployeeId);
   const leadScore = client?.lead_score ?? 0;
-  const dealValue = client?.deal_value ? `$${Number(client.deal_value).toLocaleString()}` : '—';
+  const dealValue = client?.deal_value ? `₹${Number(client.deal_value).toLocaleString()}` : '—';
 
 
   // Contact info pills for display in header

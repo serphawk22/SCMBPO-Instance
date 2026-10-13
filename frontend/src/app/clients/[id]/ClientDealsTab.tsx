@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Calendar, DollarSign, Kanban, Loader2, MapPin } from "lucide-react";
+import { Calendar, IndianRupee, Kanban, Loader2, MapPin } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 
 type Deal = {
@@ -125,7 +125,7 @@ export default function ClientDealsTab({ clientId }: { clientId: string }) {
                       <MapPin className="h-3.5 w-3.5" /> Client deal
                     </div>
                     <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-zinc-800">
-                      <span className="flex items-center gap-1 text-sm font-semibold text-emerald-600"><DollarSign className="h-4 w-4" />{deal.value.toLocaleString()}</span>
+                      <span className="flex items-center gap-1 text-sm font-semibold text-emerald-600"><IndianRupee className="h-4 w-4" />{deal.value.toLocaleString()}</span>
                       {deal.expected_close_date && <span className="flex items-center gap-1 text-xs font-medium text-slate-400"><Calendar className="h-3.5 w-3.5" />{new Date(deal.expected_close_date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
                     </div>
                   </div>

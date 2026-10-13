@@ -32,7 +32,7 @@ export default function QuotesPage() {
   const [pendingSend, setPendingSend] = useState<{ quote: Quote; trigger?: "list" } | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [form, setForm] = useState({
-    title: "", status: "Draft", currency: "USD",
+    title: "", status: "Draft", currency: "INR",
     valid_until: "", notes: "",
     linked_to: "lead" as "lead" | "client",
     lead_id: "" as string | number,
@@ -60,7 +60,7 @@ export default function QuotesPage() {
   }), [quotes, search, statusFilter]);
 
   const openCreate = () => {
-    setForm({ title: "", status: "Draft", currency: "USD", valid_until: "", notes: "", linked_to: "lead", lead_id: "", client_id: "" });
+    setForm({ title: "", status: "Draft", currency: "INR", valid_until: "", notes: "", linked_to: "lead", lead_id: "", client_id: "" });
     setShowModal(true);
   };
 
@@ -180,7 +180,7 @@ export default function QuotesPage() {
           { label: t("quotes.stat_total_quotes"), value: quotes.length, c: "text-amber-600 bg-amber-500/10" },
           { label: t("quotes.stat_draft"), value: quotes.filter(q => q.status === "Draft").length, c: "text-slate-600 bg-slate-100 dark:bg-zinc-800 dark:text-zinc-300" },
           { label: t("quotes.stat_accepted"), value: quotes.filter(q => q.status === "Accepted").length, c: "text-emerald-600 bg-emerald-500/10" },
-          { label: t("quotes.stat_total_value"), value: `$${filtered.reduce((s, q) => s + q.grand_total, 0).toFixed(0)}`, c: "text-orange-600 bg-orange-500/10" },
+          { label: t("quotes.stat_total_value"), value: `₹${filtered.reduce((s, q) => s + q.grand_total, 0).toFixed(0)}`, c: "text-orange-600 bg-orange-500/10" },
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm">
             <p className={`text-2xl font-black ${s.c.split(" ")[0]}`}>{loading ? "—" : s.value}</p>

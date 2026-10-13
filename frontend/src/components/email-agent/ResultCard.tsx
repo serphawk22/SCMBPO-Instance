@@ -1,10 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Bot, Send, Sparkles, Mail, Clock, User, Globe, ChevronDown, ChevronUp,
-  CheckCircle, Building2, Briefcase, Target, AtSign, FileText, Copy, Check,
-  TrendingUp, Zap, Package, UserPlus, Phone, Store, DollarSign, MessageCircle, Trash2, Youtube
-} from "lucide-react";
+import { Bot, Send, Sparkles, Mail, Clock, User, Globe, ChevronDown, ChevronUp, CheckCircle, Building2, Briefcase, Target, AtSign, FileText, Copy, Check, TrendingUp, Zap, Package, UserPlus, Phone, Store, IndianRupee, MessageCircle, Trash2, Youtube } from "lucide-react";
 
 export interface SentEmail {
   id: number;
@@ -617,7 +613,7 @@ export function ResultCard({ historyId, result, companyName, companyUrl, onSendM
                   </span>
                   {svc.approx_cost > 0 && (
                     <span className="ml-auto text-[9px] font-black text-amber-500 flex items-center gap-0.5">
-                      <DollarSign className="w-2.5 h-2.5" />
+                      <IndianRupee className="w-2.5 h-2.5" />
                       {svc.approx_cost.toLocaleString()}
                       {svc.cost_is_estimated ? ' est.' : ''}
                     </span>

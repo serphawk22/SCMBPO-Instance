@@ -263,7 +263,7 @@ def branded_email(title, body_html, hero_accent="#2563eb"):
 """
 
 
-def _summary_table(rows, total_label, total_value, currency_symbol="$"):
+def _summary_table(rows, total_label, total_value, currency_symbol="₹"):
     """Build a clean two-column summary table for transactional emails.
     `rows` is a list of (label, value) tuples."""
     trs = ""

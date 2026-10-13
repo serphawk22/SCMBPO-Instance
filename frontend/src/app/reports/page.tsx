@@ -6,13 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, Legend, PieChart, Pie, Cell
 } from "recharts";
-import {
-  FileText, Users, DollarSign, TrendingUp, Target, Clock, Calendar, CheckCircle2,
-  AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame,
-  Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert,
-  ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers,
-  CalendarDays, BarChart3, BriefcaseBusiness, FileSpreadsheet, ShieldCheck
-} from "lucide-react";
+import { FileText, Users, IndianRupee, TrendingUp, Target, Clock, Calendar, CheckCircle2, AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame, Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, BriefcaseBusiness, FileSpreadsheet, ShieldCheck } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";

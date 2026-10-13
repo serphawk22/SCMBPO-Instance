@@ -23,7 +23,7 @@ export default function SalesOrdersPage() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ linked_to: "lead" as "lead" | "client", lead_id: "" as string | number, client_id: "" as string | number, status: "Draft", grand_total: "", currency: "USD", delivery_date: "", notes: "" });
+  const [form, setForm] = useState({ linked_to: "lead" as "lead" | "client", lead_id: "" as string | number, client_id: "" as string | number, status: "Draft", grand_total: "", currency: "INR", delivery_date: "", notes: "" });
   const [clients, setClients] = useState<any[]>([]);
   const [emailModal, setEmailModal] = useState<{ orderId: number; orderNumber: string } | null>(null);
   const [emailPrompt, setEmailPrompt] = useState("");
@@ -177,7 +177,7 @@ export default function SalesOrdersPage() {
           { label: "Total Orders", value: orders.length, c: "text-blue-500" },
           { label: "Draft", value: orders.filter(o => o.status === "Draft").length, c: "text-slate-500" },
           { label: "Sent", value: orders.filter(o => o.status === "Sent").length, c: "text-blue-500" },
-          { label: "Total Revenue", value: `$${orders.filter(o => o.status === "Received").reduce((s, o) => s + o.grand_total, 0).toFixed(0)}`, c: "text-indigo-500" },
+          { label: "Total Revenue", value: `₹${orders.filter(o => o.status === "Received").reduce((s, o) => s + o.grand_total, 0).toFixed(0)}`, c: "text-indigo-500" },
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm">
             <p className="text-2xl font-black text-slate-800 dark:text-zinc-100">{loading ? "—" : s.value}</p>

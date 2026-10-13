@@ -3,11 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import {
-  ArrowLeft, Zap, Users, CheckCircle2, DollarSign, Target, Briefcase,
-  Clock, TrendingUp, Filter, FileText, ChevronRight, ExternalLink, Calendar,
-  BarChart2, ShieldAlert, Sparkles
-} from "lucide-react";
+import { ArrowLeft, Zap, Users, CheckCircle2, IndianRupee, Target, Briefcase, Clock, TrendingUp, Filter, FileText, ChevronRight, ExternalLink, Calendar, BarChart2, ShieldAlert, Sparkles } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend
@@ -155,7 +151,7 @@ export default function LeadSourceDetailPage() {
           label="Won Revenue"
           value={money(s.won_revenue, currency, true)}
           sub={`${num(s.won_deals)} won deals (${pctf(s.win_rate)} win)`}
-          icon={DollarSign}
+          icon={IndianRupee}
           tone="amber"
           href="/revenue"
         />
@@ -189,7 +185,7 @@ export default function LeadSourceDetailPage() {
               label="Marketing Spend"
               value={money(s.total_cost, currency, true)}
               sub={`Spend/mo: ${money(s.monthly_cost, currency, true)}`}
-              icon={DollarSign}
+              icon={IndianRupee}
               tone="slate"
               href="/business-costs"
             />

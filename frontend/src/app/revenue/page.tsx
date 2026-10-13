@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import {
-  TrendingUp, TrendingDown, DollarSign, IndianRupee, RefreshCw,
-  BarChart2, Users, Target, Award, Calendar, Layers, CheckCircle2,
-} from "lucide-react";
+import { TrendingUp, TrendingDown, IndianRupee, RefreshCw, BarChart2, Users, Target, Award, Calendar, Layers, CheckCircle2 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useRouter } from "next/navigation";
@@ -17,7 +14,7 @@ function fmt(amount: number, currency: Currency) {
     return "\u20B9" + Math.round(amount).toLocaleString("en-IN");
   }
   const usd = amount / EXCHANGE;
-  return "$" + Math.round(usd).toLocaleString("en-US");
+  return "₹" + Math.round(usd).toLocaleString("en-US");
 }
 
 function StatCard({ label, value, sub, icon, color }: {
@@ -146,10 +143,10 @@ export default function RevenueDashboard() {
           <div className="flex flex-wrap items-center gap-3">
             {/* Currency toggle */}
             <div className="flex overflow-hidden rounded-xl border border-white/10 bg-white/5">
-              {(["INR", "USD"] as Currency[]).map(c => (
+              {(["INR"] as Currency[]).map(c => (
                 <button key={c} onClick={() => setCurrency(c)}
                   className={"flex items-center gap-1.5 px-4 py-2 text-sm font-bold transition-all " + (currency === c ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}>
-                  {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <DollarSign className="h-3.5 w-3.5" />}
+                  {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <IndianRupee className="h-3.5 w-3.5" />}
                   {c}
                 </button>
               ))}
@@ -179,7 +176,7 @@ export default function RevenueDashboard() {
         <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatCard label="Won Revenue" value={fmt(wonRevenue, currency)}
             sub={(totals.won_deals ?? 0) + " won deals"}
-            icon={currency === "INR" ? <IndianRupee className="h-5 w-5" /> : <DollarSign className="h-5 w-5" />}
+            icon={currency === "INR" ? <IndianRupee className="h-5 w-5" /> : <IndianRupee className="h-5 w-5" />}
             color="bg-emerald-600" />
           <StatCard label="Total Costs" value={fmt(totalCosts, currency)}
             sub="Salaries, Ops & Overhead"

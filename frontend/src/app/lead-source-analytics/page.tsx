@@ -7,12 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area, Legend
 } from "recharts";
-import {
-  Zap, ArrowUpRight, TrendingUp, DollarSign, Filter, RefreshCw, Calendar,
-  Award, Flame, AlertCircle, CheckCircle2, ChevronRight, Layers, Target,
-  Users, Briefcase, Activity, Clock, ShieldAlert, Sparkles, ExternalLink,
-  Search, SlidersHorizontal, ArrowUpDown
-} from "lucide-react";
+import { Zap, ArrowUpRight, TrendingUp, IndianRupee, Filter, RefreshCw, Calendar, Award, Flame, AlertCircle, CheckCircle2, ChevronRight, Layers, Target, Users, Briefcase, Activity, Clock, ShieldAlert, Sparkles, ExternalLink, Search, SlidersHorizontal, ArrowUpDown } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import {
@@ -331,7 +326,7 @@ export default function LeadSourceAnalyticsPage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-black uppercase tracking-wider text-amber-500">Top Won Revenue</span>
-                    <DollarSign className="h-3.5 w-3.5 text-amber-500" />
+                    <IndianRupee className="h-3.5 w-3.5 text-amber-500" />
                   </div>
                   <p className="mt-1 text-sm font-extrabold text-[var(--text-primary)] truncate">{highlights.top_revenue.source}</p>
                   <p className="text-xl font-black text-amber-500 mt-0.5">{money(highlights.top_revenue.value, currency, true)}</p>
@@ -431,7 +426,7 @@ export default function LeadSourceAnalyticsPage() {
               value={money(totals.won_revenue, currency, true)}
               delta={momentum.won_revenue?.change_pct}
               sub={`${num(totals.won_deals)} won deals (${pctf(totals.win_rate)} win rate)`}
-              icon={DollarSign}
+              icon={IndianRupee}
               tone="amber"
               href="/revenue"
             />
@@ -458,7 +453,7 @@ export default function LeadSourceAnalyticsPage() {
                   label="Marketing Cost"
                   value={money(totals.total_cost, currency, true)}
                   sub={`${totals.months}mo period`}
-                  icon={DollarSign}
+                  icon={IndianRupee}
                   tone="slate"
                   href="/business-costs"
                 />
@@ -490,7 +485,7 @@ export default function LeadSourceAnalyticsPage() {
                   label="Net Revenue Gain"
                   value={money(totals.net_after_cost, currency, true)}
                   sub="Won Rev minus ad spend"
-                  icon={DollarSign}
+                  icon={IndianRupee}
                   tone="emerald"
                   href="/revenue"
                 />
@@ -583,7 +578,7 @@ export default function LeadSourceAnalyticsPage() {
 
             <Card
               title="Revenue Contribution by Source"
-              icon={DollarSign}
+              icon={IndianRupee}
               tone="amber"
               href="/revenue"
               linkLabel="Revenue Deep Dive"

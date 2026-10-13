@@ -78,7 +78,7 @@ Return ONLY valid JSON with this exact structure:
     "serphawk_opportunity": {{
         "fit_score": 8,
         "pitch_angle": "How to sell to them",
-        "estimated_deal_value": "$5k - $10k",
+        "estimated_deal_value": "₹5k - ₹10k",
         "recommended_services": ["SEO", "Web Dev"]
     }},
     "contacts": [
@@ -702,7 +702,7 @@ RESPONSE RULES:
                         "properties": {
                             "client_id": {"type": "integer"},
                             "title": {"type": "string", "description": "Deal name"},
-                            "value": {"type": "number", "description": "Estimated deal value in USD"},
+                            "value": {"type": "number", "description": "Estimated deal value in INR"},
                             "stage": {"type": "string", "description": "Stage (e.g. Lead, Negotiating, Closed Won)"}
                         },
                         "required": ["client_id", "title"]
@@ -819,7 +819,7 @@ For each service:
 1. Give a clean, professional service name
 2. Write a 1-2 sentence brief describing what it is
 3. Assign a business category from: [SEO, Web Design, Marketing, Plumbing, Legal, Accounting, Consulting, Construction, Healthcare, Real Estate, IT Services, Landscaping, Cleaning, Electrical, HVAC, Retail, Food & Beverage, Education, Finance, Transportation, Other]
-4. Estimate an approximate market cost in USD. If you cannot determine the cost from the website, use your knowledge of typical market rates for this type of service.
+4. Estimate an approximate market cost in INR. If you cannot determine the cost from the website, use your knowledge of typical market rates for this type of service.
 
 Website content:
 {website_text[:12000]}
@@ -840,7 +840,7 @@ Return ONLY valid JSON:
 Rules:
 - Extract only services/products the COMPANY OFFERS (not what they use internally)
 - Include 3-10 services maximum, only the most clearly defined ones
-- approx_cost should be a number in USD. Use 0 if truly impossible to estimate.
+- approx_cost should be a number in INR. Use 0 if truly impossible to estimate.
 - cost_is_estimated is true unless the website explicitly states the price
 """
         response = client.chat.completions.create(

@@ -4581,7 +4581,7 @@ def extract_services(client_id: int, session: Session = Depends(get_session)):
         
     try:
         prompt = f"""Analyze the following company data and extract a list of services they offer.
-For each service, provide a name, a brief description, and an estimated approximate cost (in dollars, e.g. 1500).
+For each service, provide a name, a brief description, and an estimated approximate cost (in rupees, e.g. 1500).
 Return a JSON array of objects with keys: name, description, approx_cost.
 Data:
 {context}"""
@@ -4618,7 +4618,7 @@ Data:
             
             # Try parsing approx_cost as float
             cost = 0.0
-            raw_cost = str(srv.get("approx_cost", 0)).replace('$', '').replace(',', '').strip()
+            raw_cost = str(srv.get("approx_cost", 0)).replace('₹', '').replace('$', '').replace(',', '').strip()
             try:
                 cost = float(raw_cost)
             except:
@@ -4866,7 +4866,7 @@ Return ONLY valid JSON:
   ]
 }}
 
-Rules: 3-8 services max. approx_cost in USD. cost_is_estimated always true for fallback."""
+Rules: 3-8 services max. approx_cost in INR. cost_is_estimated always true for fallback."""
             resp = oai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": fallback_prompt}],
@@ -4920,7 +4920,7 @@ Rules: 3-8 services max. approx_cost in USD. cost_is_estimated always true for f
                 normalized_name=svc_name,
                 category=svc.get("category"),
                 description=svc.get("brief"),
-                estimated_cost=float(str(svc.get("approx_cost", "0")).replace("$", "").replace(",", "").split("-")[0].strip() if str(svc.get("approx_cost", "0")).replace("$", "").replace(",", "").split("-")[0].strip().replace(".","").isdigit() else 0),
+                estimated_cost=float(str(svc.get("approx_cost", "0")).replace("₹", "").replace("$", "").replace(",", "").split("-")[0].strip() if str(svc.get("approx_cost", "0")).replace("₹", "").replace("$", "").replace(",", "").split("-")[0].strip().replace(".","").isdigit() else 0),
                 cost_is_estimated=svc.get("cost_is_estimated", True),
                 provider_name=company_name,
                 provider_client_id=client_id,
@@ -7924,7 +7924,7 @@ def _auto_invoice_for_proposal(prop):
                 amount=round(subtotal, 2),
                 tax=0.0,
                 total=round(subtotal, 2),
-                currency=prop.currency or "USD",
+                currency=prop.currency or "INR",
                 due_date=(datetime.utcnow() + timedelta(days=30)).date().isoformat(),
                 notes=f"Auto-generated from accepted Proposal Q-{prop.id:04d}",
                 line_items=raw_items,
@@ -8556,7 +8556,7 @@ def invoice_pdf(invoice_id: int, provider: Optional[str] = None, session: Sessio
     pdf = _invoice_pdf({
         "invoice_number": inv.invoice_number,
         "client_name": client_name,
-        "currency": inv.currency or "$",
+        "currency": inv.currency or "₹",
         "amount": inv.amount,
         "tax": inv.tax,
         "total": inv.total,
@@ -9816,7 +9816,7 @@ def get_deals(user_id: Optional[int] = None, client_id: Optional[int] = None, se
             "title": d.title,
             "value": d.value,
             "final_value": d.final_value,
-            "currency": d.currency or "USD",
+            "currency": d.currency or "INR",
             "won_at": d.won_at.isoformat() if d.won_at else None,
             "client_id": d.client_id,
             "client_name": client.companyName or client.email if client else "Unknown",
@@ -9846,7 +9846,7 @@ def get_deal_proposals(deal_id: int, session: Session = Depends(get_session)):
             "title": pr.title,
             "quote_number": f"PROP-{str(pr.id).zfill(4)}",
             "grand_total": pr.total_value or 0.0,
-            "currency": pr.currency or "USD",
+            "currency": pr.currency or "INR",
             "status": pr.status,
             "public_uuid": getattr(pr, "public_uuid", None) or f"prop-{pr.id}",
             "is_proposal": True,
@@ -9870,7 +9870,7 @@ def create_deal(body: DealCreateRequest, session: Session = Depends(get_session)
         assigned_to=assigned_to,
         stage=body.stage,
         expected_close_date=body.expected_close_date,
-        currency=body.currency or "USD",
+        currency=body.currency or "INR",
         won_at=datetime.utcnow() if body.stage == "Closed Won" else None,
     )
     session.add(deal)
@@ -11462,7 +11462,7 @@ Return ONLY valid JSON:
   ]
 }}
 
-Rules: 3-8 services max. approx_cost in USD. cost_is_estimated always true for fallback."""
+Rules: 3-8 services max. approx_cost in INR. cost_is_estimated always true for fallback."""
             resp = oai.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": fallback_prompt}],
@@ -11518,7 +11518,7 @@ Rules: 3-8 services max. approx_cost in USD. cost_is_estimated always true for f
             normalized_name=svc_name,
             category=svc.get("category"),
             description=svc.get("brief"),
-            estimated_cost=float(str(svc.get("approx_cost", "0")).replace("$", "").replace(",", "").split("-")[0].strip() if str(svc.get("approx_cost", "0")).replace("$", "").replace(",", "").split("-")[0].strip().replace(".","").isdigit() else 0),
+            estimated_cost=float(str(svc.get("approx_cost", "0")).replace("₹", "").replace("$", "").replace(",", "").split("-")[0].strip() if str(svc.get("approx_cost", "0")).replace("₹", "").replace("$", "").replace(",", "").split("-")[0].strip().replace(".","").isdigit() else 0),
             cost_is_estimated=svc.get("cost_is_estimated", True),
             provider_name=company_name,
             provider_client_id=None,
@@ -12964,7 +12964,7 @@ class ProductCreateRequest(BaseModel):
     category: Optional[str] = None
     photo_url: Optional[str] = None
     unit_price: float = 0.0
-    currency: str = "USD"
+    currency: str = "INR"
     tax_rate: float = 0.0
     stock_quantity: Optional[int] = None
     is_active: bool = True
@@ -13059,7 +13059,7 @@ class QuoteCreateRequest(BaseModel):
     contact_id: Optional[int] = None
     deal_id: Optional[int] = None
     status: str = "Draft"
-    currency: str = "USD"
+    currency: str = "INR"
     grand_total: float = 0.0
     valid_until: Optional[str] = None
     notes: Optional[str] = None
@@ -13339,7 +13339,7 @@ def get_public_proposal(uuid: str, session: Session = Depends(get_session)):
             "title": prop.title,
             "status": prop.status,
             "grand_total": prop.total_value or 0.0,
-            "currency": prop.currency or "USD",
+            "currency": prop.currency or "INR",
             "valid_until": prop.valid_until,
             "notes": prop.content,
             "terms": "Standard SCM BPO Master Services Terms & Operational SLAs apply.",
@@ -13681,8 +13681,8 @@ def _quote_email_content(q: CRMQuote, session: Session, recipient_name=None):
                 f"<tr>"
                 f"<td style='padding:9px 6px;border-bottom:1px solid #eef1f7;color:#0f172a;font-size:13px;'>{_escape_html(it.description or '')}</td>"
                 f"<td style='padding:9px 6px;border-bottom:1px solid #eef1f7;text-align:center;color:#64748b;font-size:13px;'>{it.quantity}</td>"
-                f"<td style='padding:9px 6px;border-bottom:1px solid #eef1f7;text-align:right;color:#64748b;font-size:13px;'>{q.currency or '$'} {it.unit_price:,.2f}</td>"
-                f"<td style='padding:9px 6px;border-bottom:1px solid #eef1f7;text-align:right;color:#0f172a;font-size:13px;font-weight:600;'>{q.currency or '$'} {total:,.2f}</td>"
+                f"<td style='padding:9px 6px;border-bottom:1px solid #eef1f7;text-align:right;color:#64748b;font-size:13px;'>{q.currency or '₹'} {it.unit_price:,.2f}</td>"
+                f"<td style='padding:9px 6px;border-bottom:1px solid #eef1f7;text-align:right;color:#0f172a;font-size:13px;font-weight:600;'>{q.currency or '₹'} {total:,.2f}</td>"
                 f"</tr>"
             )
         items_table = (
@@ -13712,14 +13712,14 @@ def _quote_email_content(q: CRMQuote, session: Session, recipient_name=None):
                     ("Status", q.status or "Draft"),
                 ],
                 "Total Amount",
-                f"{q.currency or '$'} {q.grand_total:,.2f}",
+                f"{q.currency or '₹'} {q.grand_total:,.2f}",
             )
             + items_table
             + extra_section
             + "<p style='margin-top:24px'>If you have any questions about this quote, just reply to this email or contact your account manager.</p>"
         ),
     )
-    subject = f"Your Quote {q.quote_number or q.id} — {q.title or 'Quote'} ({q.currency or '$'} {q.grand_total:,.2f})"
+    subject = f"Your Quote {q.quote_number or q.id} — {q.title or 'Quote'} ({q.currency or '₹'} {q.grand_total:,.2f})"
     return subject, html, items
 
 
@@ -13853,7 +13853,7 @@ def quote_pdf(quote_id: int, user_id: Optional[int] = None, provider: Optional[s
         "client_email": client_email,
         "client_phone": client_phone,
         "client_address": client_address,
-        "currency": q.currency or "$",
+        "currency": q.currency or "₹",
         "items": items,
         "subtotal": float(q.subtotal) if q.subtotal else None,
         "tax_rate": 0,
@@ -13904,7 +13904,7 @@ class SalesOrderCreateRequest(BaseModel):
     client_id: Optional[int] = None
     status: str = "Pending"
     grand_total: float = 0.0
-    currency: str = "USD"
+    currency: str = "INR"
     delivery_date: Optional[str] = None
     notes: Optional[str] = None
     owner_id: Optional[int] = None
@@ -14059,7 +14059,7 @@ class PurchaseOrderCreateRequest(BaseModel):
     vendor_email: Optional[str] = None
     status: str = "Draft"
     grand_total: float = 0.0
-    currency: str = "USD"
+    currency: str = "INR"
     expected_delivery: Optional[str] = None
     notes: Optional[str] = None
     owner_id: Optional[int] = None
@@ -14172,7 +14172,7 @@ def _quote_export_data(qt, session: Session) -> dict:
         "client_email": client_email,
         "client_phone": client_phone,
         "client_address": client_address,
-        "currency": qt.currency or "$",
+        "currency": qt.currency or "₹",
         "items": items,
         "subtotal": float(qt.subtotal or 0),
         "tax_rate": float(qt.tax_total or 0),
@@ -14214,7 +14214,7 @@ def export_quotes_pdf(body: ExportPdfRequest, session: Session = Depends(get_ses
             writer.writerow([
                 d["quote_number"], d.get("title") or "", d.get("status") or "",
                 d.get("client_name") or "", d.get("client_company") or "", d.get("client_email") or "",
-                d.get("client_phone") or "", d.get("currency") or "$",
+                d.get("client_phone") or "", d.get("currency") or "₹",
                 f'{d.get("subtotal") or 0:.2f}', f'{d.get("grand_total") or 0:.2f}',
                 d.get("valid_until") or "", d.get("created_at") or "", d.get("notes") or "",
             ])
@@ -14232,7 +14232,7 @@ def export_quotes_pdf(body: ExportPdfRequest, session: Session = Depends(get_ses
             ws.append([
                 d["quote_number"], d.get("title") or "", d.get("status") or "",
                 d.get("client_name") or "", d.get("client_company") or "", d.get("client_email") or "",
-                d.get("client_phone") or "", d.get("currency") or "$",
+                d.get("client_phone") or "", d.get("currency") or "₹",
                 float(d.get("subtotal") or 0), float(d.get("grand_total") or 0),
                 d.get("valid_until") or "", d.get("created_at") or "", d.get("notes") or "",
             ])
@@ -14397,10 +14397,10 @@ def send_single_sales_order_pdf_email(order_id: int, body: ExportPdfRequest, ses
                     ("Order Number", o.order_number or str(o.id)),
                     ("Client", party["name"] or "—"),
                     ("Delivery Date", o.delivery_date or "—"),
-                    ("Currency", o.currency or "USD"),
+                    ("Currency", o.currency or "INR"),
                 ],
                 "Grand Total",
-                f"{o.currency or 'USD'} {o.grand_total:,.2f}",
+                f"{o.currency or 'INR'} {o.grand_total:,.2f}",
             )
             + _attachment_note(filename)
             + "<p style=margin-top:20px>Thank you for your business!</p>"
@@ -14498,10 +14498,10 @@ def send_single_purchase_order_pdf_email(order_id: int, body: ExportPdfRequest, 
                     ("PO Number", o.po_number or str(o.id)),
                     ("Vendor", o.vendor_name or "—"),
                     ("Expected Delivery", o.expected_delivery or "—"),
-                    ("Currency", o.currency or "USD"),
+                    ("Currency", o.currency or "INR"),
                 ],
                 "Grand Total",
-                f"{o.currency or 'USD'} {o.grand_total:,.2f}",
+                f"{o.currency or 'INR'} {o.grand_total:,.2f}",
             )
             + _attachment_note(filename)
             + "<p style=margin-top:20px>Thank you for your prompt attention to this order.</p>"
@@ -14542,7 +14542,7 @@ class PosReceiptRequest(BaseModel):
     paymentMethod: str = "Efectivo"
     amountPaid: Optional[float] = None
     change: Optional[float] = None
-    currency: str = "$"
+    currency: str = "₹"
     taxIncluded: bool = True
     taxLabel: str = "IVA"
     email: Optional[str] = None
@@ -16653,7 +16653,7 @@ class InventorySupplierCreate(BaseModel):
     supplier_email: Optional[str] = None
     lot_number: Optional[str] = None
     unit_cost: Optional[float] = None
-    currency: str = "USD"
+    currency: str = "INR"
     lead_time_days: Optional[int] = None
     min_order_qty: Optional[float] = None
     is_preferred: bool = False
@@ -16987,7 +16987,7 @@ class SupplierAddItemRequest(BaseModel):
     min_stock: float = 0
     current_stock: float = 0
     unit_cost: Optional[float] = None
-    currency: str = "USD"
+    currency: str = "INR"
     lead_time_days: Optional[int] = None
     lot_number: Optional[str] = None
     notes: Optional[str] = None
@@ -17121,7 +17121,7 @@ class RFQCreate(BaseModel):
 
 class RFQResponseCreate(BaseModel):
     unit_price: float
-    currency: str = "USD"
+    currency: str = "INR"
     lead_time_days: Optional[int] = None
     valid_until: Optional[str] = None
     notes: Optional[str] = None
@@ -17970,7 +17970,7 @@ def convert_quote_to_invoice(quote_id: int, session: Session = Depends(get_sessi
         amount=round(subtotal, 2),
         tax=tax,
         total=round(subtotal + tax, 2),
-        currency=qt.currency or "USD",
+        currency=qt.currency or "INR",
         due_date=(datetime.utcnow() + timedelta(days=30)).date(),
         notes=f"Auto-generated from Quote {qt.quote_number or qt.id}",
         line_items=line_items,
