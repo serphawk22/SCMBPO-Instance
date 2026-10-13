@@ -3,7 +3,13 @@
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail, Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings, Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar, Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check, Trophy, Star, UserX, TrendingDown, TrendingUp, IndianRupee, CalendarClock, X } from "lucide-react";
+import {
+  LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
+  Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
+  Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
+  Trophy, Star, UserX, TrendingDown, TrendingUp, IndianRupee, CalendarClock, X
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
 import { useSidebar } from "@/context/SidebarContext";

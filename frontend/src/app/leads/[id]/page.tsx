@@ -161,6 +161,96 @@ function OverviewTab({ lead, employees, serviceRequests, activities, timeline, r
   return (
     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 14, background: 'var(--bg-secondary)', minHeight: '100%' }}>
 
+      {/* ── WEBSITE FORM SUBMISSION & SALES PITCH DOSSIER ── */}
+      {(() => {
+        const wf = lead?.ai_analysis_results?.website_form;
+        const isWebsiteSource = lead?.source?.toLowerCase()?.includes('website') || !!wf || lead?.notes?.includes('Website Form Submission');
+        if (!isWebsiteSource && !wf) return null;
+
+        const formName = wf?.form_name || (lead?.notes?.match(/Form(?: Filled)?: ([^\n]+)/)?.[1]) || 'Website Contact Form';
+        const pageUrl = wf?.page_url || (lead?.notes?.match(/Page: ([^\n]+)/)?.[1]) || lead?.website || 'https://scmbpo.com';
+        const serviceReq = wf?.service_requested || lead?.industry || 'BPO Services';
+        const clientMsg = wf?.message || (lead?.notes?.match(/Message \/ Pitch Request:\n([\s\S]+?)(?=\n📝|\n•|$)/)?.[1]?.trim());
+        const customFields = wf?.custom_fields || {};
+        const assignedRep = employees?.find((e: any) => e.id === lead?.owner_id)?.name || 'Auto-Assigned';
+
+        return (
+          <div className="rounded-2xl border-2 border-indigo-500/30 bg-gradient-to-br from-indigo-50/70 via-white to-sky-50/60 dark:from-zinc-900 dark:via-zinc-900/90 dark:to-indigo-950/20 p-5 shadow-md">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-indigo-100 dark:border-zinc-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-sm">
+                  <Globe size={16} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                      Inbound Website Lead
+                    </span>
+                    <span className="text-xs text-slate-300 dark:text-zinc-700">•</span>
+                    <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">
+                      scmbpo.com
+                    </span>
+                  </div>
+                  <h4 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2 mt-0.5">
+                    Form Filled: <span className="text-indigo-600 dark:text-indigo-400">{formName}</span>
+                  </h4>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5 shadow-sm">
+                  <Check size={13} /> Assigned to {assignedRep}
+                </span>
+                {pageUrl && (
+                  <a
+                    href={pageUrl.startsWith('http') ? pageUrl : `https://${pageUrl}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-white dark:bg-zinc-800 text-slate-700 dark:text-zinc-200 border border-slate-200 dark:border-zinc-700 hover:text-indigo-600 transition-colors shadow-sm"
+                  >
+                    <span>View Form Page</span>
+                    <ArrowUpRight size={12} />
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div className="bg-white/80 dark:bg-zinc-950/60 rounded-xl p-4 border border-indigo-100 dark:border-zinc-800 shadow-sm">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-indigo-500 flex items-center gap-1">
+                    <Zap size={11} /> Prospect Inquiry & Sales Pitch Context
+                  </span>
+                  {serviceReq && (
+                    <span className="text-xs font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 px-2.5 py-0.5 rounded-md">
+                      Service: {serviceReq}
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm font-semibold text-slate-800 dark:text-zinc-100 leading-relaxed whitespace-pre-wrap">
+                  {clientMsg || "Prospect filled the form requesting call / consultation from scmbpo.com."}
+                </p>
+              </div>
+
+              {customFields && Object.keys(customFields).length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 pt-1">
+                  {Object.entries(customFields).map(([k, v]) => (
+                    <div key={k} className="bg-white/70 dark:bg-zinc-950/40 border border-slate-200/80 dark:border-zinc-800 rounded-lg px-3 py-2">
+                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block truncate">
+                        {k.replace(/_/g, ' ')}
+                      </span>
+                      <span className="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate block mt-0.5">
+                        {String(v)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Company Overview */}
       {research?.company_overview && (
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 18, padding: '16px 20px', backdropFilter: 'blur(16px)' }}>

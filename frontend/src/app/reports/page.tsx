@@ -203,6 +203,15 @@ export default function ReportsPage() {
   };
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const v = params.get("view");
+      if (v === "classic") setViewMode("classic");
+      else if (v === "executive") setViewMode("executive");
+    }
+  }, []);
+
+  useEffect(() => {
     if (role && !roleLoading) {
       loadExecutiveData();
       loadClassicData();
