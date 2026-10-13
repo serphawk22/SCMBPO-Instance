@@ -276,7 +276,8 @@ def _audit_log_changes(session, flush_context):
                 table_name=obj.__tablename__,
                 record_id=get_pk(obj),
                 action="CREATE",
-                changes=get_changes(obj)
+                changes=get_changes(obj),
+                timestamp=datetime.now(timezone.utc)
             ))
             
     for obj in session.dirty:
@@ -291,7 +292,8 @@ def _audit_log_changes(session, flush_context):
                     table_name=obj.__tablename__,
                     record_id=get_pk(obj),
                     action="UPDATE",
-                    changes=get_changes(obj)
+                    changes=get_changes(obj),
+                    timestamp=datetime.now(timezone.utc)
                 ))
                 
     for obj in session.deleted:
@@ -304,7 +306,8 @@ def _audit_log_changes(session, flush_context):
                 user_id=user_id,
                 table_name=obj.__tablename__,
                 record_id=get_pk(obj),
-                action="DELETE"
+                action="DELETE",
+                timestamp=datetime.now(timezone.utc)
             ))
             
     if audit_entries:
@@ -314,6 +317,7 @@ def _audit_log_changes(session, flush_context):
         # We cannot use session.add() + session.flush() inside after_flush 
         # because the session is already flushing. Instead, we execute raw inserts.
         audit_dicts = []
+        now_utc = datetime.now(timezone.utc)
         for entry in audit_entries:
             audit_dicts.append({
                 "tenant_id": entry.tenant_id,
@@ -322,10 +326,13 @@ def _audit_log_changes(session, flush_context):
                 "record_id": entry.record_id,
                 "action": entry.action,
                 "changes": entry.changes,
-                "timestamp": entry.timestamp
+                "timestamp": entry.timestamp or now_utc
             })
             
-        session.execute(insert(AuditLog).values(audit_dicts))
+        try:
+            session.execute(insert(AuditLog).values(audit_dicts))
+        except Exception as e:
+            print(f"[audit_log] failed to record audit entry: {e}")
 def check_tenant_limit(session: Session, limit_type: str):
     # This must be called inside the endpoint, it reads current_tenant_id
     t_id = current_tenant_id.get()

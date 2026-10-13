@@ -2,7 +2,7 @@
 Database Models and Engine Setup for Cold Outreach CRM
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship, create_engine, Session, JSON
 from sqlalchemy import Column, String, Index, DateTime, select, func, Text
@@ -612,7 +612,7 @@ class ActivityLog(SQLModel, table=True):
     method: Optional[str] = None # Email, Phone, In-person, WhatsApp, Website
     content: Optional[str] = Field(default=None, sa_column=Column(Text))
     details: Optional[str] = Field(default=None, sa_column=Column(Text))
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationships
     user: Optional[User] = Relationship(back_populates="activities")
@@ -632,7 +632,7 @@ class AuditLog(SQLModel, table=True):
     record_id: Optional[int] = Field(default=None, index=True)
     action: str = Field(max_length=20) # CREATE, UPDATE, DELETE
     changes: Optional[str] = Field(default=None, sa_column=Column(Text))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 

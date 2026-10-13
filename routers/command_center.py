@@ -252,8 +252,15 @@ class Data:
 
     @cached_property
     def activities(self) -> List[ActivityLog]:
-        since = datetime.utcnow() - timedelta(days=14)
-        rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since)).all())
+        since = datetime.now(timezone.utc) - timedelta(days=14)
+        try:
+            rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since)).all())
+        except Exception:
+            try:
+                since_naive = datetime.utcnow() - timedelta(days=14)
+                rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since_naive)).all())
+            except Exception:
+                rows = self._all(ActivityLog)
         uid = self.sc.uid
         return rows if uid is None else [a for a in rows if a.userId == uid]
 
