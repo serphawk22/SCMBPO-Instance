@@ -243,7 +243,8 @@ def _name_maps(session: Session, rows: List[FollowUp]) -> Dict[str, Dict[int, An
     return {"leads": leads, "clients": clients, "contacts": contacts, "users": users}
 
 
-def _fu_dict(f: FollowUp, maps: Dict[str, Dict[int, Any]], now: datetime) -> dict:
+def _fu_dict(f: FollowUp, maps: Dict[str, Dict[int, Any]], now: Optional[datetime] = None) -> dict:
+    now_aware = _to_aware_utc(now) or datetime.now(_tz.utc)
     lead = maps["leads"].get(f.lead_id) if f.lead_id else None
     client = maps["clients"].get(f.client_id) if f.client_id else None
     contact = maps["contacts"].get(f.contact_id) if f.contact_id else None
@@ -251,11 +252,11 @@ def _fu_dict(f: FollowUp, maps: Dict[str, Dict[int, Any]], now: datetime) -> dic
     entity_type = "client" if client else "lead" if lead else "contact" if contact else None
     entity_name = (client.companyName if client else lead.company_name if lead else _contact_name(contact) if contact else None)
     local_str = None
-    due_at = _to_naive_dt(f.due_at)
+    due_at = _to_aware_utc(f.due_at)
     if due_at and f.timezone:
         try:
             from zoneinfo import ZoneInfo
-            local_str = due_at.replace(tzinfo=_tz.utc).astimezone(ZoneInfo(f.timezone)).strftime("%Y-%m-%dT%H:%M")
+            local_str = due_at.astimezone(ZoneInfo(f.timezone)).strftime("%Y-%m-%dT%H:%M")
         except Exception:
             low = f.timezone.lower()
             if "kolkata" in low or "calcutta" in low or "ist" in low:
@@ -264,11 +265,11 @@ def _fu_dict(f: FollowUp, maps: Dict[str, Dict[int, Any]], now: datetime) -> dic
                 local_str = due_at.strftime("%Y-%m-%dT%H:%M")
     return {
         "id": f.id, "title": f.title, "notes": f.notes, "channel": f.channel,
-        "priority": f.priority, "status": f.status, "bucket": _bucket(f, now),
+        "priority": f.priority, "status": f.status, "bucket": _bucket(f, now_aware),
         "due_at": _iso_z(f.due_at), "due_at_local": local_str, "timezone": f.timezone,
         "reminder_minutes": f.reminder_minutes, "reminder_sent": bool(f.reminder_sent_at),
         "completed_at": _iso_z(f.completed_at), "completion_note": f.completion_note,
-        "minutes_until_due": int((due_at - now).total_seconds() // 60) if due_at else None,
+        "minutes_until_due": int((due_at - now_aware).total_seconds() // 60) if due_at else None,
         "lead_id": f.lead_id, "client_id": f.client_id, "contact_id": f.contact_id,
         "entity_type": entity_type, "entity_name": entity_name,
         "owner_id": f.owner_id, "owner_name": owner.name if owner else None,
@@ -428,7 +429,7 @@ def list_followups(
     session: Session = Depends(get_session),
 ):
     me = _require_me(session)
-    now = datetime.utcnow()
+    now = datetime.now(_tz.utc)
     rows = _scoped_rows(session, me, scope)
     if lead_id:
         rows = [r for r in rows if r.lead_id == lead_id]
@@ -548,11 +549,11 @@ def update_followup(follow_up_id: int, body: FollowUpUpdate, session: Session = 
     f.timezone = tz_name
     for k, v in data.items():
         setattr(f, k, v)
-    f.updated_at = datetime.utcnow()
+    f.updated_at = datetime.now(_tz.utc)
     session.add(f)
     session.commit()
     session.refresh(f)
-    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.utcnow())}
+    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.now(_tz.utc))}
 
 
 @router.post("/follow-ups/{follow_up_id}/reschedule")
@@ -566,11 +567,11 @@ def reschedule_followup(follow_up_id: int, body: RescheduleBody, session: Sessio
     f.completed_at = None
     f.reminder_sent_at = None
     f.overdue_notified_at = None
-    f.updated_at = datetime.utcnow()
+    f.updated_at = datetime.now(_tz.utc)
     session.add(f)
     session.commit()
     session.refresh(f)
-    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.utcnow())}
+    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.now(_tz.utc))}
 
 
 @router.post("/follow-ups/{follow_up_id}/complete")
@@ -578,14 +579,14 @@ def complete_followup(follow_up_id: int, body: Optional[CompleteBody] = None, se
     _require_me(session)
     f = _get_or_404(session, follow_up_id)
     f.status = "Completed"
-    f.completed_at = datetime.utcnow()
+    f.completed_at = datetime.now(_tz.utc)
     if body and body.note:
         f.completion_note = body.note
-    f.updated_at = datetime.utcnow()
+    f.updated_at = datetime.now(_tz.utc)
     session.add(f)
     session.commit()
     session.refresh(f)
-    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.utcnow())}
+    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.now(_tz.utc))}
 
 
 @router.post("/follow-ups/{follow_up_id}/reopen")
@@ -594,11 +595,11 @@ def reopen_followup(follow_up_id: int, session: Session = Depends(get_session)):
     f = _get_or_404(session, follow_up_id)
     f.status = "Pending"
     f.completed_at = None
-    f.updated_at = datetime.utcnow()
+    f.updated_at = datetime.now(_tz.utc)
     session.add(f)
     session.commit()
     session.refresh(f)
-    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.utcnow())}
+    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.now(_tz.utc))}
 
 
 @router.delete("/follow-ups/{follow_up_id}")
@@ -813,14 +814,14 @@ def send_followup_email(body: SendEmailBody, session: Session = Depends(get_sess
                                     title=body.subject.strip()[:500], type="email", description=_trim(body.body, 1500),
                                     author_id=me.id, author_name=me.name))
     if f:
-        f.last_email_at = datetime.utcnow()
+        f.last_email_at = datetime.now(_tz.utc)
         if body.mark_complete:
             f.status = "Completed"
-            f.completed_at = datetime.utcnow()
-        f.updated_at = datetime.utcnow()
+            f.completed_at = datetime.now(_tz.utc)
+        f.updated_at = datetime.now(_tz.utc)
         session.add(f)
     session.commit()
-    return {"ok": True, "follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.utcnow()) if f else None}
+    return {"ok": True, "follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.now(_tz.utc)) if f else None}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
