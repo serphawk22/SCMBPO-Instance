@@ -338,6 +338,7 @@ class FollowUpUpdate(BaseModel):
     notes: Optional[str] = None
     channel: Optional[str] = None
     priority: Optional[str] = None
+    status: Optional[str] = None
     due_at: Optional[str] = None
     timezone: Optional[str] = None
     reminder_minutes: Optional[int] = None
@@ -345,6 +346,11 @@ class FollowUpUpdate(BaseModel):
     client_id: Optional[int] = None
     contact_id: Optional[int] = None
     owner_id: Optional[int] = None
+
+
+class StatusUpdateBody(BaseModel):
+    status: str
+    completion_note: Optional[str] = None
 
 
 class RescheduleBody(BaseModel):
@@ -468,13 +474,34 @@ def create_followup(body: FollowUpBody, session: Session = Depends(get_session))
     tz_name = _validate_tz(body.timezone) or getattr(me, "timezone", None)
     due = _to_utc(body.due_at, tz_name)
     reminder = max(0, int(body.reminder_minutes if body.reminder_minutes is not None else DEFAULT_REMINDER_MINUTES))
+
+    # Auto-assign to whichever salesperson that particular lead or client is assigned to
+    assigned_owner = body.owner_id
+    lead_owner = None
+    if body.lead_id:
+        ld = session.get(Lead, body.lead_id)
+        if ld and ld.owner_id:
+            lead_owner = ld.owner_id
+    elif body.client_id:
+        cl = session.get(ClientProfile, body.client_id)
+        if cl and cl.assignedEmployeeId:
+            lead_owner = cl.assignedEmployeeId
+
+    # The created follow-up must be in the account of whichever salesperson that lead is assigned
+    if lead_owner:
+        if not assigned_owner or assigned_owner == me.id:
+            assigned_owner = lead_owner
+
+    final_owner_id = assigned_owner or me.id
+
     f = FollowUp(
         tenant_id=_tid(), title=body.title.strip(), notes=body.notes,
         channel=_clean_choice(body.channel, CHANNELS, "Email"),
         priority=_clean_choice(body.priority, PRIORITIES, "Medium"),
+        status="Pending",
         due_at=due, timezone=tz_name, reminder_minutes=reminder,
         lead_id=body.lead_id, client_id=body.client_id, contact_id=body.contact_id,
-        owner_id=body.owner_id or me.id, created_by=me.id,
+        owner_id=final_owner_id, created_by=me.id,
     )
     session.add(f)
     session.commit()
@@ -545,10 +572,45 @@ def update_followup(follow_up_id: int, body: FollowUpUpdate, session: Session = 
         # a new due date re-arms both reminders
         f.reminder_sent_at = None
         f.overdue_notified_at = None
+    if "status" in data:
+        raw_st = data.pop("status")
+        if raw_st:
+            st = raw_st.strip().title()
+            if st in ("Pending", "Completed", "Cancelled", "In Progress", "Overdue"):
+                if st == "Completed":
+                    f.status = "Completed"
+                    if not f.completed_at:
+                        f.completed_at = datetime.now(_tz.utc)
+                else:
+                    f.status = st
+                    f.completed_at = None
     data.pop("timezone", None)
     f.timezone = tz_name
     for k, v in data.items():
         setattr(f, k, v)
+    f.updated_at = datetime.now(_tz.utc)
+    session.add(f)
+    session.commit()
+    session.refresh(f)
+    return {"follow_up": _fu_dict(f, _name_maps(session, [f]), datetime.now(_tz.utc))}
+
+
+@router.put("/follow-ups/{follow_up_id}/status")
+@router.patch("/follow-ups/{follow_up_id}/status")
+def change_followup_status(follow_up_id: int, body: StatusUpdateBody, session: Session = Depends(get_session)):
+    _require_me(session)
+    f = _get_or_404(session, follow_up_id)
+    raw_st = body.status
+    st = raw_st.strip().title() if raw_st else "Pending"
+    if st not in ("Pending", "Completed", "Cancelled", "In Progress"):
+        st = "Pending"
+    f.status = st
+    if st == "Completed":
+        f.completed_at = datetime.now(_tz.utc)
+        if body.completion_note:
+            f.completion_note = body.completion_note
+    else:
+        f.completed_at = None
     f.updated_at = datetime.now(_tz.utc)
     session.add(f)
     session.commit()
