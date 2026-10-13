@@ -702,9 +702,22 @@ export default function LeadsPage() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                        {lead.source || "Unknown"}
-                      </span>
+                      {lead.source?.toLowerCase().includes("website") ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/40">
+                            <Globe className="w-3 h-3 text-emerald-600" /> scmbpo.com
+                          </span>
+                          {lead.ai_analysis_results?.website_form?.form_name && (
+                            <span className="text-[10px] text-slate-500 dark:text-zinc-400 font-semibold truncate max-w-[140px]" title={lead.ai_analysis_results.website_form.form_name}>
+                              {lead.ai_analysis_results.website_form.form_name}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          {lead.source || "Unknown"}
+                        </span>
+                      )}
                     </td>
                     <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                       <select

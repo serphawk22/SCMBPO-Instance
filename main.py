@@ -11246,6 +11246,40 @@ def export_leads_csv(owner_id: Optional[int] = None, session: Session = Depends(
         headers={"Content-Disposition": "attachment; filename=serphawk_leads.csv"}
     )
 
+def auto_assign_lead_to_salesperson(session: Session, lead: Lead, tenant_id: Optional[int] = 1) -> Optional[User]:
+    """
+    Auto-assign lead to active salesperson using round-robin distribution,
+    breaking ties based on sales reps' historical conversion rate and performance.
+    """
+    if not tenant_id or tenant_id == -1:
+        tenant_id = 1
+    q_reps = select(User).where(User.role.in_(["SalesManager", "Employee", "Admin"]), User.is_active == True)
+    if tenant_id and tenant_id != 1:
+        q_reps = q_reps.where(User.tenant_id == tenant_id)
+    reps = session.exec(q_reps).all()
+    if not reps:
+        return None
+
+    # Calculate workload and conversion performance for each salesperson
+    rep_stats = []
+    for rep in reps:
+        assigned_leads = session.exec(select(Lead).where(Lead.owner_id == rep.id)).all()
+        total_assigned = len(assigned_leads)
+        converted_count = sum(1 for l in assigned_leads if l.is_converted or str(l.status).lower() in ["converted", "won"])
+        conversion_rate = (converted_count / total_assigned) if total_assigned > 0 else 0.5
+        rep_stats.append({
+            "rep": rep,
+            "total_assigned": total_assigned,
+            "converted_count": converted_count,
+            "conversion_rate": conversion_rate,
+        })
+
+    # Sort reps by: 1) Lowest current total (round-robin balancing), 2) Highest conversion rate
+    rep_stats.sort(key=lambda x: (x["total_assigned"], -x["conversion_rate"]))
+    chosen = rep_stats[0]["rep"]
+    lead.owner_id = chosen.id
+    return chosen
+
 @app.post("/leads")
 def create_lead(body: LeadCreateRequest, session: Session = Depends(get_session)):
     tenant_id = current_tenant_id.get()
@@ -11258,7 +11292,12 @@ def create_lead(body: LeadCreateRequest, session: Session = Depends(get_session)
     data = body.dict()
     utm = data.pop("utm_source", None)
     lead = Lead(**data)
-    lead.tenant_id = current_tenant_id.get()
+    lead.tenant_id = current_tenant_id.get() or 1
+    if not lead.owner_id:
+        try:
+            auto_assign_lead_to_salesperson(session, lead, lead.tenant_id or 1)
+        except Exception as e:
+            print("Auto-assign error on lead creation:", e)
     try:
         _apply_lead_source(session, lead, body.lead_source_id, utm)
     except Exception as e:
@@ -11269,7 +11308,7 @@ def create_lead(body: LeadCreateRequest, session: Session = Depends(get_session)
     
     try:
         _notify_admins(
-            session, current_tenant_id.get(),
+            session, current_tenant_id.get() or 1,
             title=f"🎯 New Lead: {lead.company_name or lead.first_name}",
             message=f"Status: {lead.status} | Value: ${lead.estimated_value or 0}",
             notif_type="warning",
@@ -11298,6 +11337,216 @@ def create_lead(body: LeadCreateRequest, session: Session = Depends(get_session)
         print(f"AutoResearch trigger error for lead {lead.id}: {e}")
         
     return lead
+
+@app.get("/api/leads/webhook")
+@app.get("/leads/webhook")
+def get_website_lead_webhook_info():
+    """Information and healthcheck for website lead ingestion."""
+    return {
+        "status": "online",
+        "endpoint": "POST /api/leads/webhook",
+        "source": "Website (scmbpo.com)",
+        "description": "Public webhook endpoint for scmbpo.com PHP forms to send leads directly to SCMBPO CRM.",
+        "accepted_content_types": ["application/json", "application/x-www-form-urlencoded", "multipart/form-data"],
+        "fields": {
+            "name": "Prospect's name (or first_name, last_name, full_name)",
+            "company_name": "Company or Business Name (optional)",
+            "email": "Email address",
+            "phone": "Phone or Mobile number",
+            "form_name": "Name of the form filled on scmbpo.com (e.g. 'Contact Us', 'BPO Quote Request')",
+            "page_url": "URL of the page where form was submitted (e.g. 'https://scmbpo.com/contact.php')",
+            "service": "Service requested / interested in (e.g. 'Call Center Support')",
+            "message": "Message, inquiry details, or pitch request",
+            "source": "Default 'Website' (can also send 'Website (scmbpo.com)')",
+            "any_other_key": "Any extra fields are automatically captured and displayed in the lead dossier."
+        }
+    }
+
+@app.post("/api/leads/webhook")
+@app.post("/leads/webhook")
+async def ingest_website_lead_webhook(request: Request, session: Session = Depends(get_session)):
+    """
+    Public webhook endpoint for scmbpo.com PHP backend or any web form.
+    - Captures website source and exact form name.
+    - Stores complete message and all submitted fields for the sales pitch.
+    - Auto-assigns the sales person based on performance and workload formula.
+    - Creates linked Contact and timeline notes.
+    """
+    raw_body = {}
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            raw_body = await request.json()
+        except Exception:
+            raw_body = {}
+    else:
+        try:
+            form = await request.form()
+            raw_body = dict(form)
+        except Exception:
+            raw_body = {}
+
+    full_name = raw_body.get("name") or raw_body.get("full_name") or ""
+    if not full_name:
+        fn = raw_body.get("first_name", "")
+        ln = raw_body.get("last_name", "")
+        full_name = f"{fn} {ln}".strip()
+
+    company = raw_body.get("company_name") or raw_body.get("company") or raw_body.get("business_name") or full_name or "Website Lead"
+    email = raw_body.get("email") or raw_body.get("email_address")
+    phone = raw_body.get("phone") or raw_body.get("mobile") or raw_body.get("phone_number") or raw_body.get("contact_number")
+    form_name = raw_body.get("form_name") or raw_body.get("form_id") or raw_body.get("form_title") or "Website Inquiry Form"
+    page_url = raw_body.get("page_url") or raw_body.get("url") or raw_body.get("referer") or request.headers.get("referer") or "https://scmbpo.com"
+    service = raw_body.get("service") or raw_body.get("services_interested") or raw_body.get("service_requested") or raw_body.get("subject") or "BPO & ITES"
+    message = raw_body.get("message") or raw_body.get("notes") or raw_body.get("inquiry") or raw_body.get("comments") or raw_body.get("description") or ""
+    source = raw_body.get("source") or "Website"
+
+    reserved_keys = {
+        "name", "full_name", "first_name", "last_name", "company_name", "company", "business_name",
+        "email", "email_address", "phone", "mobile", "phone_number", "contact_number",
+        "form_name", "form_id", "form_title", "page_url", "url", "referer", "service",
+        "services_interested", "service_requested", "subject", "message", "notes", "inquiry",
+        "comments", "description", "source", "tenant_id", "api_key"
+    }
+    custom_fields = {k: v for k, v in raw_body.items() if k not in reserved_keys and v}
+
+    tenant_id = 1
+    if raw_body.get("tenant_id"):
+        try:
+            tenant_id = int(raw_body["tenant_id"])
+        except Exception:
+            tenant_id = 1
+
+    website_form_metadata = {
+        "website": "scmbpo.com",
+        "form_name": form_name,
+        "page_url": page_url,
+        "submitted_at": datetime.utcnow().isoformat(),
+        "contact_name": full_name,
+        "email": email or "",
+        "phone": phone or "",
+        "service_requested": service,
+        "message": message,
+        "custom_fields": custom_fields
+    }
+
+    notes_lines = [
+        f"🌐 Inbound Website Lead from scmbpo.com",
+        f"📋 Form Filled: {form_name}",
+        f"🔗 Submitted URL: {page_url}",
+    ]
+    if service:
+        notes_lines.append(f"🎯 Service Interest: {service}")
+    if message:
+        notes_lines.append(f"\n💬 Message / Pitch Request:\n{message}")
+    if custom_fields:
+        notes_lines.append(f"\n📝 Additional Submitted Fields:")
+        for k, v in custom_fields.items():
+            notes_lines.append(f"  • {k.replace('_', ' ').capitalize()}: {v}")
+
+    compiled_notes = "\n".join(notes_lines)
+
+    lead = Lead(
+        tenant_id=tenant_id,
+        company_name=company,
+        email=email,
+        phone=phone,
+        website=page_url,
+        source="Website",
+        status="New",
+        industry=service,
+        notes=compiled_notes,
+        ai_analysis_results={
+            "website_form": website_form_metadata,
+            "company_overview": f"Inbound lead received from scmbpo.com via '{form_name}'. Prospect: {full_name} ({email or phone or 'N/A'}). Pitch request: {message[:120] if message else service}."
+        }
+    )
+
+    assigned_rep = auto_assign_lead_to_salesperson(session, lead, tenant_id=tenant_id)
+
+    session.add(lead)
+    session.commit()
+    session.refresh(lead)
+
+    # Associated contact
+    try:
+        contact_first = full_name.split()[0] if full_name else company
+        contact_last = " ".join(full_name.split()[1:]) if full_name and len(full_name.split()) > 1 else None
+        contact = Contact(
+            tenant_id=tenant_id,
+            lead_id=lead.id,
+            first_name=contact_first,
+            last_name=contact_last,
+            full_name=full_name or company,
+            email=email,
+            mobile_number=phone,
+            notes=f"Submitted from scmbpo.com ({form_name})"
+        )
+        session.add(contact)
+    except Exception as e:
+        print("Contact creation error:", e)
+
+    # Timeline note
+    try:
+        cnote = ClientNote(
+            lead_id=lead.id,
+            author_name="Website Bot",
+            content=f"🌐 Website Form Submission: {form_name}\n\nClient Pitch Request / Message:\n\"{message or 'No message specified.'}\"\n\nAuto-assigned to: {assigned_rep.name if assigned_rep else 'Unassigned'}"
+        )
+        session.add(cnote)
+    except Exception as e:
+        print("ClientNote creation error:", e)
+
+    # Activity log
+    try:
+        act = ActivityLog(
+            lead_id=lead.id,
+            action="Website Form Submitted",
+            method="WEBHOOK",
+            content=f"Prospect submitted form '{form_name}' on scmbpo.com. Auto-assigned to {assigned_rep.name if assigned_rep else 'Unassigned'}."
+        )
+        session.add(act)
+    except Exception as e:
+        print("ActivityLog error:", e)
+
+    # Admin notification
+    try:
+        _notify_admins(
+            session, tenant_id,
+            title=f"🎯 New Website Lead: {company}",
+            message=f"Form: {form_name} | Assigned: {assigned_rep.name if assigned_rep else 'Admin'}",
+            notif_type="success",
+            link=f"/leads/{lead.id}"
+        )
+    except Exception:
+        pass
+
+    session.commit()
+
+    try:
+        _trigger_background_research(
+            entity_id=lead.id,
+            entity_type="lead",
+            company_name=lead.company_name or "",
+            website=lead.website or "https://scmbpo.com"
+        )
+    except Exception as e:
+        print("Background research error:", e)
+
+    return {
+        "success": True,
+        "lead_id": lead.id,
+        "company_name": lead.company_name,
+        "assigned_salesperson": {
+            "id": assigned_rep.id if assigned_rep else None,
+            "name": assigned_rep.name if assigned_rep else "Unassigned",
+            "email": assigned_rep.email if assigned_rep else None
+        },
+        "form_name": form_name,
+        "source": "Website",
+        "page_url": page_url,
+        "message": f"Lead #{lead.id} created successfully and assigned to {assigned_rep.name if assigned_rep else 'Unassigned'}."
+    }
 
 @app.get("/leads/{lead_id}")
 def get_lead(lead_id: int, session: Session = Depends(get_session)):
