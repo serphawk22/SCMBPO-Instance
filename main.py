@@ -8653,7 +8653,7 @@ def _sync_proposal_or_quote_to_deal(record, session: Session, is_status_update: 
         # Update deal stage based on proposal status
         if status in ("Accepted", "Signed", "Won"):
             deal.stage = "Closed Won"
-            deal.won_at = datetime.utcnow()
+            deal.won_at = datetime.now(timezone.utc)
             deal.final_value = total_val if total_val > 0 else (deal.final_value or deal.value)
         elif status in ("Rejected", "Cancelled", "Lost"):
             deal.stage = "Closed Lost"
@@ -8662,7 +8662,7 @@ def _sync_proposal_or_quote_to_deal(record, session: Session, is_status_update: 
         elif status in ("Negotiation", "Under Review"):
             deal.stage = "Negotiation"
 
-        deal.updated_at = datetime.utcnow()
+        deal.updated_at = datetime.now(timezone.utc)
         session.add(deal)
     else:
         deal_stage = "Proposal Sent" if status in ("Sent", "Proposal Sent") else "Negotiation"
@@ -8683,11 +8683,11 @@ def _sync_proposal_or_quote_to_deal(record, session: Session, is_status_update: 
             assigned_to=salesperson_id,
             value=total_val,
             final_value=total_val if deal_stage == "Closed Won" else None,
-            won_at=datetime.utcnow() if deal_stage == "Closed Won" else None,
+            won_at=datetime.now(timezone.utc) if deal_stage == "Closed Won" else None,
             stage=deal_stage,
             expected_close_date=getattr(record, "valid_until", None),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         )
         session.add(deal)
         session.flush() # gets deal.id
@@ -8876,7 +8876,15 @@ def list_proposals(
 @app.post("/proposals")
 def create_proposal(body: ProposalCreateRequest, session: Session = Depends(get_session)):
     import uuid as _uuid_mod
-    p = Proposal(**body.model_dump())
+    data = body.model_dump()
+    now_utc = datetime.now(timezone.utc)
+    p = Proposal(**data)
+    if not p.created_at or getattr(p.created_at, "tzinfo", None) is None:
+        p.created_at = now_utc
+    if not p.updated_at or getattr(p.updated_at, "tzinfo", None) is None:
+        p.updated_at = now_utc
+    if p.signed_at and getattr(p.signed_at, "tzinfo", None) is None:
+        p.signed_at = p.signed_at.replace(tzinfo=timezone.utc)
     if not getattr(p, "created_by", None):
         caller_id = current_salesperson_id.get()
         if caller_id:
@@ -8910,9 +8918,9 @@ def update_proposal(
     for field, val in body.model_dump(exclude_unset=True).items():
         setattr(p, field, val)
     if body.status == "Accepted":
-        p.signed_at = datetime.utcnow()
+        p.signed_at = datetime.now(timezone.utc)
         _auto_invoice_for_proposal(p)
-    p.updated_at = datetime.utcnow()
+    p.updated_at = datetime.now(timezone.utc)
     
     # Automatically sync deal and salesperson
     _sync_proposal_or_quote_to_deal(p, session, is_status_update=True)
@@ -8966,7 +8974,8 @@ def sign_proposal(proposal_id: int, request: Request, session: Session = Depends
     if not p:
         raise HTTPException(status_code=404, detail="Proposal not found")
     
-    p.signed_at = datetime.utcnow()
+    p.signed_at = datetime.now(timezone.utc)
+    p.updated_at = datetime.now(timezone.utc)
     p.status = "Accepted"
     p.signed_by_ip = request.client.host if request.client else "Unknown IP"
     _auto_invoice_for_proposal(p)
@@ -13122,6 +13131,11 @@ def create_quote(body: QuoteCreateRequest, session: Session = Depends(get_sessio
     import random, string
     body_data = body.model_dump(exclude={"items", "send_email"})
     q = CRMQuote(**body_data)
+    now_utc = datetime.now(timezone.utc)
+    if not q.created_at or getattr(q.created_at, "tzinfo", None) is None:
+        q.created_at = now_utc
+    if not q.updated_at or getattr(q.updated_at, "tzinfo", None) is None:
+        q.updated_at = now_utc
     q.quote_number = "QT-" + "".join(random.choices(string.digits, k=6))
     session.add(q)
     session.flush()
@@ -13417,7 +13431,7 @@ def add_proposal_comment(uuid: str, body: ProposalCommentCreateRequest, session:
 @app.post("/public/proposals/{uuid}/accept")
 def accept_public_proposal(uuid: str, body: Optional[ProposalAcceptRequest] = None, session: Session = Depends(get_session)):
     from database import Deal, ClientProfile
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     signer = body.signer_name.strip() if body and body.signer_name else None
 
@@ -13434,10 +13448,10 @@ def accept_public_proposal(uuid: str, body: Optional[ProposalAcceptRequest] = No
             deal = session.get(Deal, q.deal_id)
             if deal:
                 deal.stage = "Closed Won"
-                deal.won_at = datetime.utcnow()
+                deal.won_at = datetime.now(timezone.utc)
                 if deal.value and not deal.final_value:
                     deal.final_value = deal.value
-                deal.updated_at = datetime.utcnow()
+                deal.updated_at = datetime.now(timezone.utc)
                 session.add(deal)
 
         _notify_admins_and_salesperson(
@@ -13456,7 +13470,8 @@ def accept_public_proposal(uuid: str, body: Optional[ProposalAcceptRequest] = No
         prop = session.get(Proposal, int(uuid))
     if prop:
         prop.status = "Accepted"
-        prop.signed_at = datetime.utcnow()
+        prop.signed_at = datetime.now(timezone.utc)
+        prop.updated_at = datetime.now(timezone.utc)
         if signer:
             prop.signature_data = signer
         session.add(prop)
@@ -13470,10 +13485,10 @@ def accept_public_proposal(uuid: str, body: Optional[ProposalAcceptRequest] = No
             deal = session.get(Deal, prop.deal_id)
             if deal:
                 deal.stage = "Closed Won"
-                deal.won_at = datetime.utcnow()
+                deal.won_at = datetime.now(timezone.utc)
                 if deal.value and not deal.final_value:
                     deal.final_value = deal.value
-                deal.updated_at = datetime.utcnow()
+                deal.updated_at = datetime.now(timezone.utc)
                 session.add(deal)
 
         _notify_admins_and_salesperson(
