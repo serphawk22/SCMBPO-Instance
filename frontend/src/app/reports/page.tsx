@@ -20,6 +20,7 @@ import {
   Currency, useCurrency, money, num, pctf, PALETTE, TOOLTIP_STYLE, AXIS_TICK,
   Tile, Card, Pill, Skeleton, CurrencyToggle, Segmented, relTime, statusColor, Meter
 } from "@/components/analytics/kit";
+import CompanyOperationsVisualizations from "@/components/CompanyOperationsVisualizations";
 
 // ─── CLASSIC REPORTS TABS & HELPERS ──────────────────────────────────────────
 const classicTabs = [
@@ -114,8 +115,8 @@ export default function ReportsPage() {
   const { role, loading: roleLoading } = useRole();
   const [currency, setCurrency] = useCurrency();
 
-  // Mode: "executive" (Owner Dossier) vs "classic" (Original Operations & Activity Reports)
-  const [viewMode, setViewMode] = useState<"executive" | "classic">("executive");
+  // Mode: "visualizations" (Operations Donut Hub) vs "executive" (Owner Dossier) vs "classic" (Original Reports)
+  const [viewMode, setViewMode] = useState<"visualizations" | "executive" | "classic">("visualizations");
 
   // ── Executive State ──
   const [rangePreset, setRangePreset] = useState<string>("12m");
@@ -207,6 +208,16 @@ export default function ReportsPage() {
       setClassicLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const v = params.get("view");
+      if (v === "visualizations" || v === "visual") setViewMode("visualizations");
+      else if (v === "executive") setViewMode("executive");
+      else if (v === "classic") setViewMode("classic");
+    }
+  }, []);
 
   useEffect(() => {
     if (role && !roleLoading) {
@@ -416,6 +427,16 @@ export default function ReportsPage() {
           {/* VIEW MODE TOGGLE */}
           <div className="flex items-center gap-1 rounded-2xl border border-slate-200 bg-slate-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
             <button
+              onClick={() => setViewMode("visualizations")}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-black transition-all ${
+                viewMode === "visualizations"
+                  ? "bg-white text-indigo-600 shadow-sm dark:bg-zinc-800 dark:text-white"
+                  : "text-slate-600 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white"
+              }`}
+            >
+              <PieChart size={15} /> Operations Visualizations
+            </button>
+            <button
               onClick={() => setViewMode("executive")}
               className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-black transition-all ${
                 viewMode === "executive"
@@ -447,7 +468,7 @@ export default function ReportsPage() {
             >
               <Download size={14} /> Export Dossier PDF
             </button>
-          ) : (
+          ) : viewMode === "classic" ? (
             <div className="flex items-center gap-2">
               <button
                 onClick={downloadClassicTabPdf}
@@ -464,9 +485,30 @@ export default function ReportsPage() {
                 <Download size={14} /> Full Sales Report
               </button>
             </div>
+          ) : (
+            <button
+              onClick={() => {
+                loadExecutiveData();
+                loadClassicData();
+              }}
+              disabled={loading || classicLoading}
+              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={loading || classicLoading ? "animate-spin" : ""} /> Refresh Live Data
+            </button>
           )}
         </div>
       </div>
+
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* ── VIEW MODE 0: OPERATIONS VISUALIZATIONS HUB ───────────────────── */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {viewMode === "visualizations" && (
+        <CompanyOperationsVisualizations
+          executiveData={data}
+          classicData={classicData}
+        />
+      )}
 
       {/* ═════════════════════════════════════════════════════════════════════ */}
       {/* ── VIEW MODE 1: EXECUTIVE OWNER DOSSIER ─────────────────────────── */}

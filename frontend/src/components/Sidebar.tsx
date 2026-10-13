@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock, X
+  Trophy, Star, UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock, X, PieChart
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -42,7 +42,7 @@ const iconMap: Record<string, any> = {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star,
-  UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock
+  UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock, PieChart
 };
 
 interface SidebarProps {
@@ -77,6 +77,7 @@ const defaultSidebarSections = [
       { id: "item-projects", name: "Projects", icon: "FolderOpen", href: "/projects", roles: ["Admin", "Employee", "Intern", "ProjectMember", "Demo"] },
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-visualizations", name: "Visualizations", icon: "PieChart", href: "/reports?view=visualizations", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-follow-ups", name: "Follow-ups", icon: "CalendarClock", href: "/follow-ups", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
       { id: "item-meetings", name: "Meetings", icon: "Calendar", href: "/meetings", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-calls", name: "Calls", icon: "Phone", href: "/calls", roles: ["Admin", "SalesManager", "Demo"] },
