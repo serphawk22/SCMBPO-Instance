@@ -234,6 +234,22 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/*
+          FIRST-LOAD GUARD — runs synchronously during HTML parsing, before
+          React hydrates/paints. Logged-out visits to "/" go straight to the
+          static SCM BPO landing page (served via next.config.ts rewrite), so
+          the app shell / loader never flashes first. No-op for logged-in
+          users (crm_user present) and for every other route.
+        */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            try {
+              if (window.location.pathname === "/" && !window.localStorage.getItem("crm_user")) {
+                window.location.replace("/showcase");
+              }
+            } catch (e) {}
+          })();
+        `}} />
         {/* Suppress Google Translate native toolbar */}
         <style>{`
           .goog-te-banner-frame, .goog-te-balloon-frame { display: none !important; }

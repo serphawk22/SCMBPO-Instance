@@ -215,7 +215,10 @@ export default function HomePage() {
   useEffect(() => {
     if (authLoading) return;
     if (!isAuthenticated) {
-      router.replace("/showcase");
+      // Full page load (not router.replace): /showcase is a static file served
+      // via next.config.ts rewrite, and SPA navigation would render the app
+      // shell (client portal) instead of the landing page.
+      window.location.replace("/showcase");
       return;
     }
     if (role === "Employee") {
