@@ -104,7 +104,7 @@ app.post('/api/ai-agent/dispatch', async (req, res) => {
       [
         recipient || 'marcus@acmesolutions.com',
         subject || 'Updated Proposal & Implementation Roadmap — Acme Solutions',
-        content || 'Updated proposal follow-up dispatched via SCM HUB AI Agent',
+        content || 'Updated proposal follow-up dispatched via SCM BPO AI Agent',
         'dispatched'
       ]
     );
@@ -134,7 +134,7 @@ async function startServer() {
   try {
     await initDb();
     app.listen(PORT, () => {
-      console.log(`SCM HUB CRM Server running at http://localhost:${PORT}`);
+      console.log(`SCM BPO CRM Server running at http://localhost:${PORT}`);
       console.log(`Connected to Neon PostgreSQL database: ${process.env.DATABASE_URL ? 'OK' : 'MISSING'}`);
     });
   } catch (err) {

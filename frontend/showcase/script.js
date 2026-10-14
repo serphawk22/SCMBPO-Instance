@@ -1,5 +1,5 @@
 /**
- * SCM HUB CRM - Core Application Scripts
+ * SCM BPO CRM - Core Application Scripts
  * Monochromatic UI, Theme Toggle, Interactive Demos,
  * and Neon PostgreSQL Real-Time Data Synchronization
  */
@@ -418,7 +418,7 @@
         setTimeout(() => {
           if (statusMsg) {
             statusMsg.style.display = 'block';
-            statusMsg.textContent = 'Inquiry submitted. SCM Hub operations will respond shortly.';
+            statusMsg.textContent = 'Inquiry submitted. SCM BPO operations will respond shortly.';
           }
           if (submitBtn) {
             submitBtn.textContent = 'Inquiry Received';

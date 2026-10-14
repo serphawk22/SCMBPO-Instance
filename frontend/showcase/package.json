@@ -1,7 +1,7 @@
 {
   "name": "scm-hub-crm",
   "version": "1.0.0",
-  "description": "SCM HUB CRM - Unified Enterprise SaaS Workspace with Neon PostgreSQL integration",
+  "description": "SCM BPO CRM - Unified Enterprise SaaS Workspace with Neon PostgreSQL integration",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
