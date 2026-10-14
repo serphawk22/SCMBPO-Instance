@@ -812,6 +812,8 @@ allowed_origins = [
     "https://scmhub-crm.vercel.app",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
     "https://web-production-6cd72.up.railway.app",
     "https://web-production-80e20.up.railway.app",
     "https://web-production-d6daf.up.railway.app",

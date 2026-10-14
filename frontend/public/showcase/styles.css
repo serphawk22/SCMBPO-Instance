@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SCM HUB CRM - Enterprise Design System
+   SCM BPO CRM - Enterprise Design System
    Color Palette: Deep Navy (#0F172A), Blue (#2563EB), Teal (#0D9488)
    Light & Dark Themes | Realistic Production SaaS & Supply Chain Visuals
    ========================================================================== */
@@ -1085,7 +1085,7 @@ button, input, textarea {
 
 
 /* --------------------------------------------------------------------------
-   SECTION 2 — SCM HUB OPERATIONS (6 Realistic Cards)
+   SECTION 2 — SCM BPO OPERATIONS (6 Realistic Cards)
    -------------------------------------------------------------------------- */
 .scm-hub-section {
   padding: 96px 0;
@@ -1704,7 +1704,7 @@ button, input, textarea {
 }
 
 /* --------------------------------------------------------------------------
-   SECTION 7 — SCM HUB + SERP HAWK CRM (Two-Column Visual Bridge)
+   SECTION 7 — SCM BPO + SERP HAWK CRM (Two-Column Visual Bridge)
    -------------------------------------------------------------------------- */
 .integration-section {
   padding: 96px 0;
@@ -1795,7 +1795,7 @@ button, input, textarea {
   background-color: var(--teal-primary);
 }
 
-/* Center connector between SCM Hub and SERP Hawk CRM */
+/* Center connector between SCM BPO and SERP Hawk CRM */
 .bridge-center-connector {
   display: flex;
   flex-direction: column;
