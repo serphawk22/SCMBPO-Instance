@@ -186,7 +186,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem('crm_user');
-    window.location.replace('/login');
+    window.location.replace('/showcase');
   };
 
   return (
