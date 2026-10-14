@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Mail, Phone, Users, TrendingUp, DollarSign, Clock, Activity } from 'lucide-react';
+import { Mail, Phone, Users, TrendingUp, IndianRupee, Clock, Activity } from "lucide-react";
 import { useLanguage } from '@/context/LanguageContext';
 
 interface HealthTabProps {
@@ -92,7 +92,7 @@ export default function HealthTab({ client, activities, emails, timeline, servic
         <MetricCard icon={Phone}      label={language === 'es' ? 'Llamadas Realizadas' : 'Calls Made'}        value={callsMade}  color="bg-amber-300"   />
         <MetricCard icon={Users}      label={language === 'es' ? 'Reuniones' : 'Meetings'}          value={meetings}   color="bg-blue-300"    />
         <MetricCard icon={TrendingUp} label={language === 'es' ? 'Oportunidades Abiertas' : 'Open Opportunities'} value={openOpps} color="bg-emerald-300" />
-        <MetricCard icon={DollarSign} label={language === 'es' ? 'Ingresos Generados' : 'Revenue Generated'} value={revenue}    color="bg-indigo-300"  />
+        <MetricCard icon={IndianRupee} label={language === 'es' ? 'Ingresos Generados' : 'Revenue Generated'} value={revenue}    color="bg-indigo-300"  />
         <MetricCard icon={Activity}   label={language === 'es' ? 'Total Actividades' : 'Total Activities'}  value={activities.length} color="bg-pink-300" />
       </div>
 

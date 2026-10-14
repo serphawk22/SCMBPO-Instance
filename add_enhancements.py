@@ -192,7 +192,7 @@ def seed_demo_data():
                                 created_at, updated_at
                             ) VALUES (
                                 1, '{inv_num}', {q_client if q_client else 'NULL'}, {q_id},
-                                {amount}, 0.0, {amount}, 'USD', 'Sent',
+                                {amount}, 0.0, {amount}, 'INR', 'Sent',
                                 '{(datetime.utcnow() + timedelta(days=30)).strftime("%Y-%m-%d")}',
                                 'Auto-generated from Quote {q_num or q_id}', '[]',
                                 NOW(), NOW()

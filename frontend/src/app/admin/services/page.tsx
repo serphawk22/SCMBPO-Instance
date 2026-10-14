@@ -1,7 +1,7 @@
 'use client';
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, Tag, DollarSign, Image as ImageIcon, Users, FileText, Activity, Layers, CheckCircle } from 'lucide-react';
+import { Plus, Tag, IndianRupee, Image as ImageIcon, Users, FileText, Activity, Layers, CheckCircle } from "lucide-react";
 import { API_BASE_URL } from '@/config';
 import { useRole } from '@/context/RoleContext';
 import PageGuide from '@/components/PageGuide';
@@ -94,7 +94,7 @@ export default function AdminServicesPage() {
             
             <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-widest flex items-center gap-2">
-                   <DollarSign className="w-4 h-4 text-emerald-400"/> {t('services.price')} ($)
+                   <IndianRupee className="w-4 h-4 text-emerald-400"/> {t('services.price')} (₹)
                 </label>
                 <input required type="number" step="0.01" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} className="w-full px-4 py-3 bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none" placeholder="499.00" />
             </div>

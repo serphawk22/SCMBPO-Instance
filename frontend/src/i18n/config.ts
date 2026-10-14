@@ -66,7 +66,7 @@ export function formatDateShort(date: Date | string, locale: string): string {
   return formatDate(date, locale, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export function formatCurrency(amount: number, locale: string, currency = 'USD'): string {
+export function formatCurrency(amount: number, locale: string, currency = 'INR'): string {
   const localeMap: Record<string, string> = {
     en: 'en-US', es: 'es-ES',
   };

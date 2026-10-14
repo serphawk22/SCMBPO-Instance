@@ -136,7 +136,7 @@ def generate_scmbpo_quote_pdf(data):
     title = data.get("title") or "Commercial Quotation & Proposal"
     status = (data.get("status") or "Draft").strip()
     currency = str(data.get("currency") or "MXN").upper()
-    curr_sym = "₹" if currency == "INR" else ("$" if currency in ("USD", "MXN", "CAD", "AUD") else f"{currency} ")
+    curr_sym = "₹" if currency == "INR" else ("Rs. " if currency in ("USD", "MXN", "CAD", "AUD") else f"{currency} ")
 
     created_dt = data.get("created_at") or datetime.now()
     created_str = _format_date(created_dt)

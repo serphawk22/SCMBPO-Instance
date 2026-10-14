@@ -3,11 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Activity, MessageSquare, StickyNote, CheckSquare, Building2, ChevronDown,
-  Target, FolderOpen, HeartPulse, LayoutDashboard, Users,
-  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar
-} from 'lucide-react';
+import { Activity, MessageSquare, StickyNote, CheckSquare, Building2, ChevronDown, Target, FolderOpen, HeartPulse, LayoutDashboard, Users, TrendingUp, TrendingDown, Lightbulb, ShieldAlert, IndianRupee, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ResultCard } from '@/components/email-agent/ResultCard';

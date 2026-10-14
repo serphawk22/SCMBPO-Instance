@@ -127,7 +127,7 @@ export default function OpportunitiesTab({ lead, timeline, serviceRequests, rese
   else if (serviceRequests.length > 0) currentStage = 'Discovery';
   else if (lead?.status === 'Active') currentStage = 'Qualified';
 
-  const dealValue = lead?.deal_value ? `$${Number(lead.deal_value).toLocaleString()}` : '—';
+  const dealValue = lead?.deal_value ? `₹${Number(lead.deal_value).toLocaleString()}` : '—';
 
   // Milestones from timeline
   const milestoneEvents = timeline.filter(e => e.type === 'milestone').slice(0, 5);
@@ -155,7 +155,7 @@ export default function OpportunitiesTab({ lead, timeline, serviceRequests, rese
       eaData.product_portfolio = extractedServices.map((s: any) => ({
         name: s.name || s.title,
         description: s.brief || s.description,
-        pricing_tier: s.approx_cost ? `$${s.approx_cost}` : undefined,
+        pricing_tier: s.approx_cost ? `₹${s.approx_cost}` : undefined,
         target_customer: s.category || "General"
       }));
     }

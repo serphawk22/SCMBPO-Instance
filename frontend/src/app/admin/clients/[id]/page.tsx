@@ -4,11 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  Activity, MessageSquare, StickyNote, Building2, ChevronDown,
-  Target, HeartPulse, LayoutDashboard, Users,
-  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, UserX
-} from 'lucide-react';
+import { Activity, MessageSquare, StickyNote, Building2, ChevronDown, Target, HeartPulse, LayoutDashboard, Users, TrendingUp, TrendingDown, Lightbulb, ShieldAlert, IndianRupee, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, UserX } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ResultCard } from '@/components/email-agent/ResultCard';
@@ -137,12 +133,12 @@ const PROPOSAL_STATUS_BADGE: Record<string, { bg: string; color: string }> = {
   'Rejected':        { bg: '#fee2e2', color: '#dc2626' },
 };
 
-const CUR_SYMBOLS: Record<string, string> = { USD: '$', MXN: '$', COP: '$', EUR: '€', GBP: '£', INR: '₹', BRL: 'R$' };
+const CUR_SYMBOLS: Record<string, string> = { USD: '₹', MXN: '₹', COP: '₹', EUR: '€', GBP: '£', INR: '₹', BRL: '₹' };
 
 function overviewMoney(value: number | null | undefined, currency?: string | null) {
   const n = Number(value || 0);
   const code = String(currency || '').toUpperCase();
-  const sym = CUR_SYMBOLS[code] || (code ? `${code} ` : '$');
+  const sym = CUR_SYMBOLS[code] || (code ? `${code} ` : '₹');
   return `${sym}${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 }
 
@@ -341,8 +337,7 @@ function OverviewTab({ client, employees, serviceRequests, activities, timeline,
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {clientProposals.map((prop: any) => {
                 const badge = PROPOSAL_STATUS_BADGE[prop.status] || { bg: '#f1f5f9', color: '#475569' };
-                const usdVal = prop.currency === 'INR' ? (prop.total_value || 0) / 83.5 : (prop.total_value || 0);
-                const inrVal = prop.currency === 'INR' ? (prop.total_value || 0) : (prop.total_value || 0) * 83.5;
+                const inrVal = prop.total_value || 0;
                 return (
                   <div key={prop.id} className="p-3 rounded-xl border border-slate-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between gap-3 hover:border-blue-300 transition-colors">
                     <div className="min-w-0 flex-1">
@@ -353,9 +348,7 @@ function OverviewTab({ client, employees, serviceRequests, activities, timeline,
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 mt-1">
-                        <strong className="text-blue-600 font-bold">${usdVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD</strong>
-                        {' · '}
-                        <span className="text-slate-400">₹{inrVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR</span>
+                        <strong className="text-blue-600 font-bold">₹{inrVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR</strong>
                       </p>
                     </div>
                     {prop.public_uuid && (
@@ -394,7 +387,7 @@ function OverviewTab({ client, employees, serviceRequests, activities, timeline,
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 mt-1">
-                        <strong className="text-indigo-600 font-bold">${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD</strong>
+                        <strong className="text-indigo-600 font-bold">₹{usd.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR</strong>
                         {' · '}
                         <span className="text-slate-400">₹{inr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} INR</span>
                       </p>

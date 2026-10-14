@@ -216,7 +216,7 @@ def seed() -> dict:
                     stage=stage,
                     client_id=cl.id,
                     assigned_to=uid,
-                    currency="USD",
+                    currency="INR",
                     won_at=now_utc - timedelta(days=12) if stage == "Closed Won" else None,
                     created_at=now_utc - timedelta(days=25),
                     updated_at=now_utc - timedelta(days=2),
@@ -251,7 +251,7 @@ def seed() -> dict:
                     title=p_title,
                     client_id=cl.id,
                     total_value=p_val,
-                    currency="USD",
+                    currency="INR",
                     status=p_st,
                     line_items=line_items,
                     signed_at=now_utc - timedelta(days=10) if p_st == "Accepted" else None,
@@ -268,12 +268,12 @@ def seed() -> dict:
         # 9. Business Costs
         existing_costs = {bc.title for bc in s.exec(select(BusinessCost)).all()}
         cost_templates = [
-            ("Sales Team Payroll & Commissions", "Salary", 18500.0, "USD", "2026-10-01", True),
-            ("AWS Cloud Infrastructure & Database", "Software", 3200.0, "USD", "2026-10-01", True),
-            ("HubSpot & Dialing VoIP Subscriptions", "Software", 1800.0, "USD", "2026-10-01", True),
-            ("Google Ads & LinkedIn B2B Campaigns", "Marketing", 5400.0, "USD", "2026-10-01", True),
-            ("Corporate Office Lease & Utilities", "Rent", 4200.0, "USD", "2026-10-01", True),
-            ("Legal & Accounting Professional Services", "Other", 1500.0, "USD", "2026-10-01", False),
+            ("Sales Team Payroll & Commissions", "Salary", 18500.0, "INR", "2026-10-01", True),
+            ("AWS Cloud Infrastructure & Database", "Software", 3200.0, "INR", "2026-10-01", True),
+            ("HubSpot & Dialing VoIP Subscriptions", "Software", 1800.0, "INR", "2026-10-01", True),
+            ("Google Ads & LinkedIn B2B Campaigns", "Marketing", 5400.0, "INR", "2026-10-01", True),
+            ("Corporate Office Lease & Utilities", "Rent", 4200.0, "INR", "2026-10-01", True),
+            ("Legal & Accounting Professional Services", "Other", 1500.0, "INR", "2026-10-01", False),
         ]
         for c_title, cat, c_amt, curr, c_date, recur in cost_templates:
             if c_title not in existing_costs:

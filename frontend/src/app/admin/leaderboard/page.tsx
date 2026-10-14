@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Trophy, Star, Ticket, DollarSign } from "lucide-react";
+import { Trophy, Star, Ticket, IndianRupee } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
@@ -162,7 +162,7 @@ export default function LeaderboardPage() {
       {/* ── SALES LEADERBOARD ───────────────────────────────────────── */}
       <section className="space-y-6">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-yellow-100 rounded-xl"><DollarSign className="w-5 h-5 text-yellow-600" /></div>
+          <div className="p-2 bg-yellow-100 rounded-xl"><IndianRupee className="w-5 h-5 text-yellow-600" /></div>
           <div>
             <h2 className="text-2xl font-black tracking-tight bg-gradient-to-r from-yellow-600 to-orange-500 bg-clip-text text-transparent">
               Sales Leaderboard

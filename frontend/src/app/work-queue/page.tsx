@@ -126,7 +126,7 @@ export default function WorkQueuePage() {
         break;
       case "deal":
         title = item.title || item.deal_name;
-        sub = item.value ? `$${item.value}` : t("work_queue.deal");
+        sub = item.value ? `₹${item.value}` : t("work_queue.deal");
         time = item.created_at ? new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
         status = item.stage || item.status;
         Icon = Briefcase;

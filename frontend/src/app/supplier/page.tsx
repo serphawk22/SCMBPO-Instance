@@ -2,10 +2,7 @@
 import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Package, DollarSign, Clock, Edit2, CheckCircle, Loader2, X,
-  AlertTriangle, Star, ShoppingCart, Tag, BarChart2, Save, ArrowUpDown, Plus
-} from "lucide-react";
+import { Package, IndianRupee, Clock, Edit2, CheckCircle, Loader2, X, AlertTriangle, Star, ShoppingCart, Tag, BarChart2, Save, ArrowUpDown, Plus } from "lucide-react";
 import { useRole } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
 
@@ -39,14 +36,14 @@ export default function SupplierPortalPage() {
   const [loading, setLoading] = useState(true);
   const [editItem, setEditItem] = useState<SupplierItem | null>(null);
   const [editForm, setEditForm] = useState({
-    unit_cost: 0, currency: "USD", lead_time_days: 0,
+    unit_cost: 0, currency: "INR", lead_time_days: 0,
     lot_number: "", notes: "", current_stock: 0
   });
   const [showAddItem, setShowAddItem] = useState(false);
   const [addItemForm, setAddItemForm] = useState({
     code: "", name: "", description: "", category: "", tags: "",
     unit: "", min_stock: 0, current_stock: 0, unit_cost: 0,
-    currency: "USD", lead_time_days: 0
+    currency: "INR", lead_time_days: 0
   });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
@@ -74,7 +71,7 @@ export default function SupplierPortalPage() {
     setEditItem(item);
     setEditForm({
       unit_cost: item.my_unit_cost || 0,
-      currency: item.my_currency || "USD",
+      currency: item.my_currency || "INR",
       lead_time_days: item.my_lead_time_days || 0,
       lot_number: item.my_lot_number || "",
       notes: item.my_notes || "",
@@ -270,7 +267,7 @@ export default function SupplierPortalPage() {
 
                         <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
                           <div className="flex items-center gap-1.5 mb-1">
-                            <DollarSign className="w-3.5 h-3.5 text-slate-400" />
+                            <IndianRupee className="w-3.5 h-3.5 text-slate-400" />
                             <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{t("supplier.my_price")}</span>
                           </div>
                           <p className="text-lg font-black text-slate-900 dark:text-white">

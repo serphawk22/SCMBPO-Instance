@@ -2,27 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Activity,
-  BarChart3,
-  BrainCircuit,
-  Users,
-  DollarSign,
-  Zap,
-  List,
-  Bell,
-  Download,
-  Clock,
-  RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-  Server,
-  Globe,
-  Filter,
-} from "lucide-react";
+import { Activity, BarChart3, BrainCircuit, Users, IndianRupee, Zap, List, Bell, Download, Clock, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, XCircle, Server, Globe, Filter } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useRouter } from "next/navigation";
@@ -34,7 +14,7 @@ const TAB_ICONS: Record<string, typeof Activity> = {
   overview: BarChart3,
   providers: BrainCircuit,
   sales: Users,
-  clients: DollarSign,
+  clients: IndianRupee,
   endpoints: Server,
   requests: List,
   live: Zap,
@@ -109,7 +89,7 @@ function MiniBar({ data, labels, color }: { data: number[]; labels: string[]; co
       {data.map((v, i) => (
         <div key={i} className="flex-1 flex flex-col items-center gap-1 h-full justify-end group relative">
           <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
-            {typeof v === "number" && v > 0.001 ? (v < 1 ? `$${v.toFixed(3)}` : v.toLocaleString()) : v}
+            {typeof v === "number" && v > 0.001 ? (v < 1 ? `₹${v.toFixed(3)}` : v.toLocaleString()) : v}
           </span>
           <motion.div
             initial={{ height: 0 }}
@@ -340,9 +320,9 @@ export default function ApiIntelligencePage() {
                 {/* Metric cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <StatCard title={t("api_intelligence.total_tokens")} value={overview.tokens.total.toLocaleString()} sub={`${overview.tokens.input.toLocaleString()} in · ${overview.tokens.output.toLocaleString()} out`} icon={BrainCircuit} trend="up" color="#2563eb" />
-                  <StatCard title={t("api_intelligence.total_cost")} value={`$${overview.cost.total.toFixed(4)}`} sub={`$${overview.cost.today.toFixed(2)} ${t("api_intelligence.today")}`} icon={DollarSign} trend="down" color="#10b981" />
+                  <StatCard title={t("api_intelligence.total_cost")} value={`₹${overview.cost.total.toFixed(4)}`} sub={`₹${overview.cost.today.toFixed(2)} ${t("api_intelligence.today")}`} icon={IndianRupee} trend="down" color="#10b981" />
                   <StatCard title={t("api_intelligence.api_calls")} value={overview.calls.total.toLocaleString()} sub={`${overview.calls.today} ${t("api_intelligence.today")}`} icon={Activity} trend="up" color="#6366f1" />
-                  <StatCard title={t("api_intelligence.projected_annual")} value={`$${overview.cost.annual_projection.toFixed(2)}`} sub={t("api_intelligence.based_on_month")} icon={TrendingUp} color="#f59e0b" />
+                  <StatCard title={t("api_intelligence.projected_annual")} value={`₹${overview.cost.annual_projection.toFixed(2)}`} sub={t("api_intelligence.based_on_month")} icon={TrendingUp} color="#f59e0b" />
                 </div>
 
                 {/* Trend charts */}
@@ -394,7 +374,7 @@ export default function ApiIntelligencePage() {
                           {[
                             { label: t("api_intelligence.calls"), value: p.calls.toLocaleString(), color: "#6366f1" },
                             { label: t("api_intelligence.tokens"), value: p.tokens.toLocaleString(), color: "#2563eb" },
-                            { label: t("api_intelligence.total_cost"), value: `$${p.cost.toFixed(4)}`, color: "#10b981" },
+                            { label: t("api_intelligence.total_cost"), value: `₹${p.cost.toFixed(4)}`, color: "#10b981" },
                             { label: t("api_intelligence.avg_latency"), value: `${p.avg_response_time.toFixed(0)}ms`, color: "#f59e0b" },
                           ].map((m) => (
                             <div key={m.label} className="p-2.5 rounded-xl" style={{ background: "var(--background)", border: "1px solid var(--border)" }}>
@@ -623,7 +603,7 @@ export default function ApiIntelligencePage() {
                     {/* Quick alert presets */}
                     <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
                       {[
-                        { title: t("api_intelligence.cost_threshold"), desc: t("api_intelligence.cost_threshold_desc"), icon: DollarSign, color: "#10b981" },
+                        { title: t("api_intelligence.cost_threshold"), desc: t("api_intelligence.cost_threshold_desc"), icon: IndianRupee, color: "#10b981" },
                         { title: t("api_intelligence.error_rate_spike"), desc: t("api_intelligence.error_rate_spike_desc"), icon: AlertTriangle, color: "#f59e0b" },
                         { title: t("api_intelligence.token_limit"), desc: t("api_intelligence.token_limit_desc"), icon: BrainCircuit, color: "#6366f1" },
                       ].map((a) => (

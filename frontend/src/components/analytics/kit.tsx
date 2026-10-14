@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ReactNode, useCallback, useEffect, useState } from "react";
-import { ArrowUpRight, TrendingDown, TrendingUp, Minus, IndianRupee, DollarSign } from "lucide-react";
+import { ArrowUpRight, TrendingDown, TrendingUp, Minus, IndianRupee } from "lucide-react";
 
 /* ───────────────────────── currency ───────────────────────── */
 
@@ -28,7 +28,7 @@ export function useCurrency(): [Currency, (c: Currency) => void] {
 export function money(amount: number | null | undefined, cur: Currency, compact = false): string {
   const a = Number(amount || 0);
   const v = cur === "USD" ? a / EXCHANGE : a;
-  const sym = cur === "USD" ? "$" : "\u20B9";
+  const sym = cur === "USD" ? "₹" : "\u20B9";
   const abs = Math.abs(v);
   if (compact) {
     if (cur === "INR") {
@@ -198,13 +198,13 @@ export function Skeleton({ className = "" }: { className?: string }) {
 export function CurrencyToggle({ value, onChange }: { value: Currency; onChange: (c: Currency) => void }) {
   return (
     <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
-      {(["INR", "USD"] as Currency[]).map((c) => (
+      {(["INR"] as Currency[]).map((c) => (
         <button
           key={c}
           onClick={() => onChange(c)}
           className={`flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors ${value === c ? "bg-[var(--primary)] text-white shadow" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
         >
-          {c === "INR" ? <IndianRupee className="h-3 w-3" /> : <DollarSign className="h-3 w-3" />}
+          {c === "INR" ? <IndianRupee className="h-3 w-3" /> : <IndianRupee className="h-3 w-3" />}
           {c}
         </button>
       ))}

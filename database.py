@@ -1051,7 +1051,7 @@ class Deal(SQLModel, table=True):
     expected_close_date: Optional[str] = Field(default=None, max_length=50)
     # SCM2-56/58: negotiation + won-deal revenue tracking
     final_value: Optional[float] = Field(default=None)   # agreed price after negotiation
-    currency: Optional[str] = Field(default="USD", max_length=10)
+    currency: Optional[str] = Field(default="INR", max_length=10)
     won_at: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -1247,7 +1247,7 @@ class Product(SQLModel, table=True):
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
     category: Optional[str] = Field(default=None, max_length=200)
     unit_price: float = Field(default=0.0)
-    currency: str = Field(default="USD", max_length=10)
+    currency: str = Field(default="INR", max_length=10)
     photo_url: Optional[str] = Field(default=None, max_length=500)
     tax_rate: float = Field(default=0.0)
     stock_quantity: Optional[int] = Field(default=None)
@@ -1288,7 +1288,7 @@ class CRMQuote(SQLModel, table=True):
     tax_total: float = Field(default=0.0)
     discount_total: float = Field(default=0.0)
     grand_total: float = Field(default=0.0)
-    currency: str = Field(default="USD", max_length=10)
+    currency: str = Field(default="INR", max_length=10)
     valid_until: Optional[str] = Field(default=None, max_length=50)
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
     terms: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -1320,7 +1320,7 @@ class SalesOrder(SQLModel, table=True):
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
     status: str = Field(default="Draft", max_length=50)  # Draft, Sent, Received, Cancelled
     grand_total: float = Field(default=0.0)
-    currency: str = Field(default="USD", max_length=10)
+    currency: str = Field(default="INR", max_length=10)
     delivery_date: Optional[str] = Field(default=None, max_length=50)
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
     owner_id: Optional[int] = Field(default=None, foreign_key="users.id")
@@ -1338,7 +1338,7 @@ class PurchaseOrder(SQLModel, table=True):
     vendor_email: Optional[str] = Field(default=None, max_length=255)
     status: str = Field(default="Draft", max_length=50)  # Draft, Sent, Received, Cancelled
     grand_total: float = Field(default=0.0)
-    currency: str = Field(default="USD", max_length=10)
+    currency: str = Field(default="INR", max_length=10)
     expected_delivery: Optional[str] = Field(default=None, max_length=50)
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
     owner_id: Optional[int] = Field(default=None, foreign_key="users.id")
@@ -1692,7 +1692,7 @@ class InventorySupplier(SQLModel, table=True):
     supplier_user_id: Optional[int] = Field(default=None, foreign_key="users.id")  # if supplier has portal login
     lot_number: Optional[str] = Field(default=None, max_length=100)
     unit_cost: Optional[float] = Field(default=None)
-    currency: str = Field(default="USD", max_length=10)
+    currency: str = Field(default="INR", max_length=10)
     lead_time_days: Optional[int] = Field(default=None)
     min_order_qty: Optional[float] = Field(default=None)
     is_preferred: bool = Field(default=False)
@@ -1733,7 +1733,7 @@ class RFQResponse(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     rfq_id: int = Field(foreign_key="rfq_requests.id")
     unit_price: float
-    currency: str = Field(default="USD", max_length=10)
+    currency: str = Field(default="INR", max_length=10)
     lead_time_days: Optional[int] = Field(default=None)
     valid_until: Optional[str] = Field(default=None, max_length=50)
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -1909,7 +1909,7 @@ class BusinessCost(SQLModel, table=True):
     title: str = Field(max_length=255)
     category: str = Field(default="Other", max_length=50)  # Salary, Rent, Software, Marketing, Utilities, Travel, Other
     amount: float = Field(default=0.0)
-    currency: str = Field(default="USD", max_length=10)
+    currency: str = Field(default="INR", max_length=10)
     cost_date: str = Field(max_length=10, index=True)  # YYYY-MM-DD (month the cost applies to)
     is_recurring: bool = Field(default=False)  # monthly recurring: counted every month from cost_date (until end_date)
     end_date: Optional[str] = Field(default=None, max_length=10)

@@ -3,13 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  DollarSign, TrendingUp, Users, Target, Briefcase, Clock, CheckCircle2,
-  AlertCircle, AlertTriangle, ShieldAlert, Sparkles, RefreshCw, ArrowUpRight,
-  ChevronRight, Calendar, Phone, Mail, FileText, ShoppingCart, Package,
-  Layers, Trophy, Flame, Zap, BarChart2, CheckSquare, Activity, FileEdit,
-  FolderOpen, UserCheck, MessageSquare, ArrowRight, TrendingDown
-} from "lucide-react";
+import { IndianRupee, TrendingUp, Users, Target, Briefcase, Clock, CheckCircle2, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, RefreshCw, ArrowUpRight, ChevronRight, Calendar, Phone, Mail, FileText, ShoppingCart, Package, Layers, Trophy, Flame, Zap, BarChart2, CheckSquare, Activity, FileEdit, FolderOpen, UserCheck, MessageSquare, ArrowRight, TrendingDown } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, LineChart, Line
@@ -173,7 +167,7 @@ export default function CommandCenter() {
           value={money(kpis.won_revenue, currency, true)}
           delta={kpis.revenue_change_pct}
           sub={`${num(kpis.won_deals)} closed won deals`}
-          icon={DollarSign}
+          icon={IndianRupee}
           tone="emerald"
           href="/revenue"
         />
@@ -358,80 +352,6 @@ export default function CommandCenter() {
                 </Link>
               );
             })}
-          </div>
-        </Card>
-      </div>
-
-      {/* ── MICROMANAGEMENT HUB: DEALS CLOSING & TOP OPEN DEALS ───── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Closing Soon (<= 14 days) */}
-        <Card
-          title={`Deals Closing Soon (${(pipeline.closing_soon || []).length})`}
-          icon={Clock}
-          tone="amber"
-          href="/pipeline"
-          linkLabel="View Pipeline"
-        >
-          <div className="space-y-2">
-            {(pipeline.closing_soon || []).length === 0 ? (
-              <p className="text-xs text-[var(--text-secondary)] py-6 text-center">No deals closing within next 14 days</p>
-            ) : (
-              (pipeline.closing_soon || []).map((d: any) => (
-                <Link
-                  key={d.id}
-                  href={`/pipeline`}
-                  className="p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/50 hover:border-amber-500 transition-all flex items-center justify-between block text-xs"
-                >
-                  <div className="min-w-0 pr-2">
-                    <p className="font-bold text-[var(--text-primary)] truncate">{d.title}</p>
-                    <p className="text-[10px] text-[var(--text-secondary)]">
-                      {d.client || "No Client"} • Rep: {d.owner}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-extrabold text-amber-600">{money(d.value, currency)}</p>
-                    <p className={`text-[10px] font-bold ${d.days < 0 ? "text-rose-500" : "text-amber-500"}`}>
-                      {d.days < 0 ? `${Math.abs(d.days)}d overdue` : `in ${d.days}d`}
-                    </p>
-                  </div>
-                </Link>
-              ))
-            )}
-          </div>
-        </Card>
-
-        {/* Top High-Value Open Opportunities */}
-        <Card
-          title="Top High-Value Open Deals"
-          icon={Briefcase}
-          tone="teal"
-          href="/pipeline"
-          linkLabel="All Deals"
-        >
-          <div className="space-y-2">
-            {(pipeline.top_open || []).length === 0 ? (
-              <p className="text-xs text-[var(--text-secondary)] py-6 text-center">No open deals</p>
-            ) : (
-              (pipeline.top_open || []).map((d: any) => (
-                <Link
-                  key={d.id}
-                  href={d.client_id ? `/clients/${d.client_id}` : `/pipeline`}
-                  className="p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/50 hover:border-teal-500 transition-all flex items-center justify-between block text-xs"
-                >
-                  <div className="min-w-0 pr-2">
-                    <p className="font-bold text-[var(--text-primary)] truncate">{d.title}</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <Pill color={statusColor(d.stage)}>{d.stage}</Pill>
-                      <span className="text-[10px] text-[var(--text-secondary)] truncate">{d.client || "Direct"}</span>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-extrabold text-emerald-600">{money(d.value, currency)}</p>
-                    <p className="text-[10px] text-[var(--text-secondary)]">Rep: {d.owner}</p>
-                  </div>
-                </Link>
-              ))
-            )}
           </div>
         </Card>
       </div>

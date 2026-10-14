@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock, X, PieChart
+  Trophy, Star, UserX, TrendingDown, TrendingUp, IndianRupee, CalendarClock, X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -42,7 +42,7 @@ const iconMap: Record<string, any> = {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star,
-  UserX, TrendingDown, TrendingUp, DollarSign, CalendarClock, PieChart
+  UserX, TrendingDown, TrendingUp, IndianRupee, CalendarClock
 };
 
 interface SidebarProps {
@@ -104,7 +104,7 @@ const defaultSidebarSections = [
     items: [
       { id: "item-inventory", name: "Inventory", icon: "Package", href: "/inventory", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-orders", name: "Orders", icon: "ShoppingCart", href: "/orders", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-billing", name: "Billing", icon: "FileText", href: "/billing", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-billing", name: "Invoices", icon: "FileText", href: "/billing", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-proposals", name: "Proposals & Quotes", icon: "FileEdit", href: "/proposals", roles: ["Admin", "SalesManager", "Demo", "Client"] },
     ],
   },
@@ -121,9 +121,8 @@ const defaultSidebarSections = [
     heading: "FINANCE",
     items: [
       { id: "item-revenue", name: "Revenue Dashboard", icon: "TrendingUp", href: "/revenue", roles: ["Admin"] },
-      { id: "item-business-costs", name: "Business Costs", icon: "DollarSign", href: "/business-costs", roles: ["Admin"] },
+      { id: "item-business-costs", name: "Business Costs", icon: "IndianRupee", href: "/business-costs", roles: ["Admin"] },
       { id: "item-lead-source-analytics", name: "Lead Source Analytics", icon: "BarChart2", href: "/lead-source-analytics", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-lead-sources", name: "Lead Sources", icon: "Zap", href: "/lead-sources", roles: ["Admin"] },
     ],
   },
 ];

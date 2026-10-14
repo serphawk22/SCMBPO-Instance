@@ -15,7 +15,7 @@ export default function PricingPage() {
     {
       id: 'starter',
       name: t('pricing.plan_starter_name'),
-      price: '$499',
+      price: '₹49,999',
       period: '/month',
       description: t('pricing.plan_starter_desc'),
       features: [
@@ -32,7 +32,7 @@ export default function PricingPage() {
     {
       id: 'growth',
       name: t('pricing.plan_growth_name'),
-      price: '$999',
+      price: '₹99,999',
       period: '/month',
       description: t('pricing.plan_growth_desc'),
       features: [
@@ -50,7 +50,7 @@ export default function PricingPage() {
     {
       id: 'enterprise',
       name: t('pricing.plan_enterprise_name'),
-      price: '$2,499',
+      price: '₹2,49,999',
       period: '/month',
       description: t('pricing.plan_enterprise_desc'),
       features: [

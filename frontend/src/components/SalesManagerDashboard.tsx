@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Briefcase, Users, UserPlus, PhoneCall, Calendar, ArrowRight, TrendingUp, Target, DollarSign, Percent } from 'lucide-react';
+import { Briefcase, Users, UserPlus, PhoneCall, Calendar, ArrowRight, TrendingUp, Target, IndianRupee, Percent } from "lucide-react";
 import Link from 'next/link';
 
 interface Activity {

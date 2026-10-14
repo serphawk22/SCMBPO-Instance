@@ -2,11 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  LayoutGrid, Users, Briefcase, Tag, Clock, Package, Activity,
-  Search, ChevronRight, X, DollarSign, UserCheck, Calendar,
-  CheckCircle, Loader, Send, FileText, AlertCircle, Zap
-} from 'lucide-react';
+import { LayoutGrid, Users, Briefcase, Tag, Clock, Package, Activity, Search, ChevronRight, X, IndianRupee, UserCheck, Calendar, CheckCircle, Loader, Send, FileText, AlertCircle, Zap } from "lucide-react";
 import { API_BASE_URL } from '@/config';
 import PageGuide from '@/components/PageGuide';
 import { useRole } from '@/context/RoleContext';
@@ -149,7 +145,7 @@ export default function ServicesOverviewPage() {
           { label: t('services_overview.total_requests'), value: requests.length,                                                           icon: Package,     color: 'text-indigo-600',  bg: 'bg-indigo-50 border-indigo-100'  },
           { label: t('services_overview.active_work'),    value: (byStatus['In Progress'] || 0) + (byStatus['Accepted'] || 0),             icon: Activity,    color: 'text-violet-600',  bg: 'bg-violet-50 border-violet-100'  },
           { label: t('services_overview.pending_review'), value: byStatus['Pending'] || 0,                                                 icon: Clock,       color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-100'    },
-          { label: t('services_overview.total_revenue'),  value: `$${totalRevenue.toLocaleString()}`,                                      icon: DollarSign,  color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100'},
+          { label: t('services_overview.total_revenue'),  value: `₹${totalRevenue.toLocaleString()}`,                                      icon: IndianRupee,  color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-100'},
         ].map(s => (
           <div key={s.label} className="glass-card p-4 flex items-center gap-3">
             <div className={cn('p-2.5 rounded-xl border', s.bg)}>
@@ -350,7 +346,7 @@ export default function ServicesOverviewPage() {
                 {/* Pricing */}
                 <div className="space-y-2">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <DollarSign className="w-3.5 h-3.5 text-emerald-500" /> {t('services_overview.pricing')}
+                    <IndianRupee className="w-3.5 h-3.5 text-emerald-500" /> {t('services_overview.pricing')}
                   </p>
                   <div className="p-4 rounded-2xl border border-slate-100 dark:border-zinc-800 bg-white dark:bg-zinc-900">
                     {selected.quoted_amount != null ? (

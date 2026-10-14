@@ -52,7 +52,7 @@ function currSymbol(c: string) {
   if (c === "INR") return "₹";
   if (c === "EUR") return "€";
   if (c === "GBP") return "£";
-  return "$";
+  return "₹";
 }
 function fmtMoney(v: number, c: string) {
   return `${currSymbol(c)}${v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -90,7 +90,7 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
     client_id: "" as string | number,
     amount: "",
     tax: "",
-    currency: "MXN",
+    currency: "INR",
     due_date: "",
     notes: "",
   });
@@ -173,7 +173,7 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
 
   // ── Create ───────────────────────────────────────────────────────────────
   function openCreate() {
-    setForm({ client_id: "", amount: "", tax: "", currency: "MXN", due_date: "", notes: "" });
+    setForm({ client_id: "", amount: "", tax: "", currency: "INR", due_date: "", notes: "" });
     setLineItems([{ description: "", amount: 0, provider: "Internal" }]);
     setError(null);
     const clientsUrl = (!isAdmin && user?.id) ? `${API_BASE_URL}/clients?assigned_employee_id=${user.id}` : `${API_BASE_URL}/clients`;
@@ -268,7 +268,7 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
           { label: "Total Invoices", value: invoices.length, c: "text-blue-600" },
           { label: "Pending", value: invoices.filter(i => ["Draft", "Sent"].includes(i.status)).length, c: "text-amber-600" },
           { label: "Paid", value: invoices.filter(i => i.status === "Paid").length, c: "text-emerald-600" },
-          { label: "Total Value", value: `$${filtered.reduce((s, i) => s + (i.total || 0), 0).toFixed(0)}`, c: "text-indigo-600" },
+          { label: "Total Value", value: `₹${filtered.reduce((s, i) => s + (i.total || 0), 0).toFixed(0)}`, c: "text-indigo-600" },
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm">
             <p className={`text-2xl font-black ${s.c}`}>{loading ? "—" : s.value}</p>
@@ -389,11 +389,10 @@ const Invoices = forwardRef<InvoicesHandle, { embedded?: boolean }>(function Inv
                     <label className="text-xs font-semibold text-slate-500 mb-1 block">Currency</label>
                     <select value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}
                       className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm">
-                      <option value="USD">USD ($)</option>
-                      <option value="EUR">EUR (€)</option>
+                                            <option value="EUR">EUR (€)</option>
                       <option value="GBP">GBP (£)</option>
                       <option value="INR">INR (₹)</option>
-                      <option value="MXN">MXN ($)</option>
+                      <option value="MXN">MXN (₹)</option>
                     </select>
                   </div>
                   <div>

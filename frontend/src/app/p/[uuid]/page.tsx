@@ -41,7 +41,7 @@ function currSymbol(c: string) {
   if (c === "INR") return "₹";
   if (c === "EUR") return "€";
   if (c === "GBP") return "£";
-  return "$";
+  return "₹";
 }
 
 function fmtMoney(v: number, c: string) {

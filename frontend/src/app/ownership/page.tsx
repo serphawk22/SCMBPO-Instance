@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  Users, UserCheck, ArrowRightLeft, Shield, RefreshCw,
-  Search, CheckCircle2, AlertCircle, TrendingUp, IndianRupee, DollarSign,
-} from "lucide-react";
+import { Users, UserCheck, ArrowRightLeft, Shield, RefreshCw, Search, CheckCircle2, AlertCircle, TrendingUp, IndianRupee } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useRouter } from "next/navigation";
@@ -14,7 +11,7 @@ const EXCHANGE = 83.5;
 
 function fmt(amount: number, currency: Currency) {
   if (currency === "INR") return "\u20B9" + Math.round(amount).toLocaleString("en-IN");
-  return "$" + Math.round(amount / EXCHANGE).toLocaleString("en-US");
+  return "₹" + Math.round(amount / EXCHANGE).toLocaleString("en-US");
 }
 
 export default function OwnershipPage() {
@@ -70,10 +67,10 @@ export default function OwnershipPage() {
           <div className="flex items-center gap-3">
             {/* Currency toggle */}
             <div className="flex overflow-hidden rounded-xl border border-white/10 bg-white/5">
-              {(["INR", "USD"] as Currency[]).map(c => (
+              {(["INR"] as Currency[]).map(c => (
                 <button key={c} onClick={() => setCurrency(c)}
                   className={"flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold transition-all " + (currency === c ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}>
-                  {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <DollarSign className="h-3.5 w-3.5" />} {c}
+                  {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <IndianRupee className="h-3.5 w-3.5" />} {c}
                 </button>
               ))}
             </div>

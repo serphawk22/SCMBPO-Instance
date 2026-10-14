@@ -43,7 +43,7 @@ export default function ProductsPage() {
     category: 'Other',
     photo_url: '',
     unit_price: 0,
-    currency: 'USD',
+    currency: 'INR',
     tax_rate: 0,
     is_active: true,
   });
@@ -154,7 +154,7 @@ export default function ProductsPage() {
         category: product.category || 'Other',
         photo_url: product.photo_url || '',
         unit_price: product.unit_price,
-        currency: product.currency || 'USD',
+        currency: product.currency || 'INR',
         tax_rate: product.tax_rate || 0,
         is_active: product.is_active,
       });
@@ -202,7 +202,7 @@ export default function ProductsPage() {
           { label: t('products.stat_total'), value: stats.total, color: 'text-emerald-500' },
           { label: t('products.stat_active'), value: stats.active, color: 'text-blue-500' },
           { label: t('products.stat_categories'), value: stats.categories, color: 'text-violet-500' },
-          { label: t('products.stat_avg_price'), value: `$${stats.avgPrice}`, color: 'text-slate-900 dark:text-white' }
+          { label: t('products.stat_avg_price'), value: `₹${stats.avgPrice}`, color: 'text-slate-900 dark:text-white' }
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
             <p className={`text-3xl font-black mb-1 ${s.color}`}>{s.value}</p>

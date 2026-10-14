@@ -6,10 +6,7 @@ import { useRole } from "@/context/RoleContext";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
 import { Sidebar } from "@/components/Sidebar";
-import { 
-  Kanban, Plus, MoreVertical, DollarSign, Calendar, Clock, MapPin, Search, Pencil, FileText, X, ArrowUpRight,
-  Handshake, Check, Tag, Percent
-} from "lucide-react";
+import { Kanban, Plus, MoreVertical, IndianRupee, Calendar, Clock, MapPin, Search, Pencil, FileText, X, ArrowUpRight, Handshake, Check, Tag, Percent } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Deal {
@@ -361,7 +358,7 @@ export default function PipelinePage() {
                       
                       <div className="space-y-2 pt-3 border-t border-slate-100 dark:border-zinc-800">
                         <div className="flex items-center gap-1 text-emerald-600 font-semibold text-sm">
-                          <DollarSign className="w-4 h-4" />
+                          <IndianRupee className="w-4 h-4" />
                           {deal.value.toLocaleString()}
                         </div>
                         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -494,7 +491,7 @@ export default function PipelinePage() {
                           </select>
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">Offer Price ($) *</label>
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Offer Price (₹) *</label>
                           <input
                             type="number"
                             required
@@ -609,7 +606,7 @@ export default function PipelinePage() {
                             </div>
                             <div className="flex items-center justify-between mt-4">
                               <p className="text-lg font-black text-slate-700 dark:text-zinc-300">
-                                {p.currency === "INR" ? "₹" : p.currency === "EUR" ? "€" : p.currency === "GBP" ? "£" : "$"}{p.grand_total.toLocaleString()}
+                                {p.currency === "INR" ? "₹" : p.currency === "EUR" ? "€" : p.currency === "GBP" ? "£" : "₹"}{p.grand_total.toLocaleString()}
                               </p>
                               <a
                                 href={p.is_proposal ? `/proposals` : `/p/${p.public_uuid}`}

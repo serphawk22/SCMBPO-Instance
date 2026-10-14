@@ -4,37 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Globe, 
-  User, 
-  MapPin, 
-  ShieldCheck, 
-  Hash, 
-  MessageSquare, 
-  Activity, 
-  Plus, 
-  Send,
-  Loader2,
-  Trash2,
-  CheckCircle,
-  Clock,
-  Briefcase,
-  Users,
-  Edit2,
-  Save,
-  X,
-  TrendingUp,
-  Zap,
-  ChevronRight,
-  Mail,
-  FolderKanban,
-  Target,
-  Eye,
-  TrendingDown,
-  Lightbulb,
-  ShieldAlert,
-  Brain
-} from 'lucide-react';
+import { Globe, User, MapPin, ShieldCheck, Hash, MessageSquare, Activity, Plus, Send, Loader2, Trash2, CheckCircle, Clock, Briefcase, Users, Edit2, Save, X, TrendingUp, Zap, ChevronRight, Mail, FolderKanban, Target, Eye, TrendingDown, Lightbulb, ShieldAlert, Brain } from "lucide-react";
 import { API_BASE_URL } from '@/config';
 import { useRole } from '@/context/RoleContext';
 import LinkedContacts from '@/components/LinkedContacts';
@@ -42,7 +12,7 @@ import { cn } from '@/lib/utils';
 import PageGuide from '@/components/PageGuide';
 import ClientDealsTab from './ClientDealsTab';
 import axios from 'axios';
-import { DollarSign, XCircle, Radar, Navigation, UserX, UserCheck } from 'lucide-react';
+import { IndianRupee, XCircle, Radar, Navigation, UserX, UserCheck } from "lucide-react";
 import { useLanguage } from '@/context/LanguageContext';
 import DropClientModal from '@/components/DropClientModal';
 import SalesAssignModal from '@/components/SalesAssignModal';
@@ -888,7 +858,7 @@ const handleSaveMetrics = async () => {
               <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-purple-400/20 to-pink-400/20 rounded-full blur-3xl group-hover:scale-110 transition-transform duration-500"></div>
               <div className="relative z-10">
                 <div className="flex items-center gap-3 mb-6">
-                  <div className="p-3 bg-purple-100 text-purple-600 rounded-xl"><DollarSign size={24} /></div>
+                  <div className="p-3 bg-purple-100 text-purple-600 rounded-xl"><IndianRupee size={24} /></div>
                   <h3 className="text-xl font-black text-slate-800 dark:text-zinc-100">{t("client_detail.roi_victory")}</h3>
                 </div>
                 <div>
@@ -1559,9 +1529,9 @@ const handleSaveMetrics = async () => {
               ['monthly_revenue', t('client_detail.this_months_revenue')],
               ['revenue_growth_pct', 'Revenue Growth % (e.g. +28%)'],
               ['total_conversions', t('client_detail.total_conversions')],
-              ['avg_conversion_value', 'Avg Conversion Value (e.g. $27.66)'],
+              ['avg_conversion_value', 'Avg Conversion Value (e.g. ₹27.66)'],
               ['roi_multiple', 'ROI Multiple (e.g. 7.2x)'],
-              ['roi_detail', 'ROI Detail (e.g. $720 back per $100)'],
+              ['roi_detail', 'ROI Detail (e.g. ₹720 back per ₹100)'],
             ] as [string, string][]).map(([key, label]) => (
               <div key={key}>
                 <label className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1 block">{label}</label>

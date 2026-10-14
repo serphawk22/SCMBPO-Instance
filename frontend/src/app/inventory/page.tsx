@@ -3,11 +3,7 @@ import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect, useRef } from "react";
 import { ExportActions } from "@/components/ExportActions";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Package, Plus, Search, Trash2, Edit2, X, ChevronDown, ChevronUp,
-  Loader2, Tag, Building2, DollarSign, Clock, ShoppingCart, Send,
-  CheckCircle, AlertTriangle, Upload, Star, StarOff, MoreHorizontal, ArrowDownUp
-} from "lucide-react";
+import { Package, Plus, Search, Trash2, Edit2, X, ChevronDown, ChevronUp, Loader2, Tag, Building2, IndianRupee, Clock, ShoppingCart, Send, CheckCircle, AlertTriangle, Upload, Star, StarOff, MoreHorizontal, ArrowDownUp } from "lucide-react";
 import { useLanguage } from "@/context/LanguageContext";
 
 interface Supplier {
@@ -48,7 +44,7 @@ const emptyItem = {
 };
 const emptySupplier = {
   supplier_name: "", supplier_brand: "", supplier_email: "", lot_number: "",
-  unit_cost: 0, currency: "USD", lead_time_days: 0, min_order_qty: 0,
+  unit_cost: 0, currency: "INR", lead_time_days: 0, min_order_qty: 0,
   is_preferred: false, notes: ""
 };
 
@@ -635,7 +631,7 @@ export default function InventoryPage() {
                                     </div>
                                   </div>
                                   <div className="space-y-1 text-[12px] text-slate-600 dark:text-slate-400">
-                                    {s.unit_cost != null && <div className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{s.currency} {s.unit_cost} {t("inventory.per_unit")}</div>}
+                                    {s.unit_cost != null && <div className="flex items-center gap-1"><IndianRupee className="w-3 h-3" />{s.currency} {s.unit_cost} {t("inventory.per_unit")}</div>}
                                     {s.lead_time_days != null && <div className="flex items-center gap-1"><Clock className="w-3 h-3" />{s.lead_time_days} {t("inventory.day_lead_time")}</div>}
                                     {s.lot_number && <div className="flex items-center gap-1"><ShoppingCart className="w-3 h-3" />{t("inventory.lot_label")} {s.lot_number}</div>}
                                     {s.supplier_email && <div className="text-blue-500 truncate">{s.supplier_email}</div>}

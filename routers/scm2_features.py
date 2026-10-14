@@ -43,7 +43,7 @@ router = APIRouter(tags=["SCM2"])
 
 FINANCE_ROLES = {"Admin"}  # SCM2: finance / salary / cost pages are Admin-only
 
-CURRENCIES = ["INR", "USD"]  # supported currencies
+CURRENCIES = ["INR"]  # supported currencies
 
 
 DEFAULT_SOURCES = [
@@ -157,7 +157,7 @@ def ensure_scm2_schema() -> None:
         "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_source_id INTEGER;",
         "ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS lead_source_id INTEGER;",
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_value DOUBLE PRECISION;",
-        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'USD';",
+        "ALTER TABLE deals ADD COLUMN IF NOT EXISTS currency VARCHAR(10) DEFAULT 'INR';",
         "ALTER TABLE deals ADD COLUMN IF NOT EXISTS won_at TIMESTAMP;",
         # back-fill won_at for already-won deals so they appear in revenue history
         "UPDATE deals SET won_at = updated_at WHERE stage = 'Closed Won' AND won_at IS NULL;",
@@ -664,7 +664,7 @@ def _deal_value_summary(deal: Deal, rounds: List[DealNegotiation]) -> dict:
         "discount_amount": round(list_value - current, 2) if list_value else 0,
         "discount_pct": round((list_value - current) / list_value * 100, 1) if list_value else 0,
         "rounds": len(rounds),
-        "currency": deal.currency or "USD",
+        "currency": deal.currency or "INR",
         "won_at": _iso(deal.won_at),
     }
 

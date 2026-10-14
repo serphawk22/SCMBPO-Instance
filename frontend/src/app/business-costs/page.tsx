@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  DollarSign, IndianRupee, Plus, Trash2, RefreshCw, Search,
-  SlidersHorizontal, CheckCircle2, X, AlertCircle,
-} from "lucide-react";
+import { IndianRupee, Plus, Trash2, RefreshCw, Search, SlidersHorizontal, CheckCircle2, X, AlertCircle } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useRouter } from "next/navigation";
@@ -15,7 +12,7 @@ const CATEGORIES = ["Salary", "Rent", "Marketing", "Software", "Operations", "Lo
 
 function fmt(amount: number, currency: Currency) {
   if (currency === "INR") return "\u20B9" + amount.toLocaleString("en-IN", { maximumFractionDigits: 0 });
-  return "$" + (amount / EXCHANGE).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return "₹" + (amount / EXCHANGE).toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
 function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
@@ -140,10 +137,10 @@ export default function BusinessCostsPage() {
         <div className="mb-6 flex flex-wrap items-center gap-3">
           {/* Currency */}
           <div className="flex overflow-hidden rounded-xl border border-white/10 bg-white/5">
-            {(["INR", "USD"] as Currency[]).map(c => (
+            {(["INR"] as Currency[]).map(c => (
               <button key={c} onClick={() => setCurrency(c)}
                 className={"flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition-all " + (currency === c ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white")}>
-                {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <DollarSign className="h-3.5 w-3.5" />} {c}
+                {c === "INR" ? <IndianRupee className="h-3.5 w-3.5" /> : <IndianRupee className="h-3.5 w-3.5" />} {c}
               </button>
             ))}
           </div>
@@ -174,7 +171,7 @@ export default function BusinessCostsPage() {
         {/* Summary */}
         <div className="mb-6 flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-600 text-white">
-            {currency === "INR" ? <IndianRupee className="h-5 w-5" /> : <DollarSign className="h-5 w-5" />}
+            {currency === "INR" ? <IndianRupee className="h-5 w-5" /> : <IndianRupee className="h-5 w-5" />}
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Visible Costs</p>
@@ -257,7 +254,6 @@ export default function BusinessCostsPage() {
               <select value={form.currency} onChange={e => setForm({ ...form, currency: e.target.value })}
                 className="w-full rounded-xl border border-white/10 bg-[#1a2235] px-4 py-2.5 text-sm text-white outline-none focus:border-indigo-500">
                 <option value="INR">INR (&#8377;)</option>
-                <option value="USD">USD ($)</option>
               </select>
             </div>
           </div>
