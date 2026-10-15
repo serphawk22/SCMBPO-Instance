@@ -43,11 +43,11 @@ from modules.api_tracker import current_salesperson_id
 
 router = APIRouter(tags=["Follow-ups"])
 
-CHANNELS = ["Email", "Call", "Meeting", "WhatsApp", "Other"]
+CHANNELS = ["Email", "Call", "Meeting", "Webinar", "Walk-in", "Normal Follow-up", "WhatsApp", "Other"]
 PRIORITIES = ["Low", "Medium", "High", "Urgent"]
 PENDING_WINDOW_HOURS = 24
 DEFAULT_REMINDER_MINUTES = 60
-ALL_ROLES = {"admin", "salesmanager", "superadmin"}
+ADMIN_ROLES = {"admin", "superadmin"}
 
 
 def ensure_followup_schema() -> None:
@@ -104,7 +104,7 @@ def _sees_all(user: Optional[User]) -> bool:
     if not user:
         return False
     role = (user.role or "").strip().lower()
-    return role in ALL_ROLES or (user.email or "").lower() == "admin@serphawk.com"
+    return role in ADMIN_ROLES or (user.email or "").lower() in {"admin@serphawk.com", "superadmin@serphawk.in"}
 
 
 def _validate_tz(name: Optional[str]) -> Optional[str]:
@@ -361,8 +361,26 @@ class SendEmailBody(BaseModel):
 def _clean_choice(value: Optional[str], allowed: List[str], default: str) -> str:
     if not value:
         return default
+    val_clean = value.strip().lower()
+    aliases = {
+        "webinar": "Webinar",
+        "walk-in": "Walk-in",
+        "walkin": "Walk-in",
+        "normal follow-up": "Normal Follow-up",
+        "normal followup": "Normal Follow-up",
+        "normal": "Normal Follow-up",
+        "followup": "Normal Follow-up",
+        "call": "Call",
+        "calls": "Call",
+        "meeting": "Meeting",
+        "meetings": "Meeting",
+        "email": "Email",
+        "whatsapp": "WhatsApp",
+    }
+    if val_clean in aliases and aliases[val_clean] in allowed:
+        return aliases[val_clean]
     for a in allowed:
-        if a.lower() == value.strip().lower():
+        if a.lower() == val_clean:
             return a
     return default
 
@@ -390,8 +408,8 @@ def followup_summary(scope: Optional[str] = None, session: Session = Depends(get
 
 def _scoped_rows(session: Session, me: User, scope: Optional[str]) -> List[FollowUp]:
     q = select(FollowUp)
-    mine_only = (scope == "mine") or (scope != "all" and not _sees_all(me))
-    if mine_only:
+    # Salespersons only ever see their own assigned or created follow-ups; admins see all unless scope='mine'
+    if not _sees_all(me) or scope == "mine":
         q = q.where((FollowUp.owner_id == me.id) | (FollowUp.created_by == me.id))
     return list(session.exec(q).all())
 

@@ -3592,53 +3592,124 @@ def list_users(role: Optional[str] = None, session: Session = Depends(get_sessio
 
 @app.get("/users/{user_id}/stats")
 def get_user_stats(user_id: int, session: Session = Depends(get_session)):
+    from database import Deal, Invoice, ClientProfile, Lead, Meeting, CallLog, FollowUp, Task
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    # Sales team stats
-    if user.role in ["Admin", "SalesManager", "Employee"]:
-        # Clients handling
-        clients_count = len(session.exec(select(ClientProfile).where(ClientProfile.assignedEmployeeId == user.id)).all())
+    # Sales team / Staff performance stats
+    if user.role in ["Admin", "SuperAdmin", "SalesManager", "Employee", "Sales", "Demo"]:
+        # Deals & financial figures
+        deals = session.exec(select(Deal).where(Deal.assigned_to == user.id)).all()
+        won_deals = [d for d in deals if str(d.stage).strip().lower() in ["closed won", "won"]]
+        lost_deals = [d for d in deals if str(d.stage).strip().lower() in ["closed lost", "lost"]]
+        in_progress_deals = [d for d in deals if str(d.stage).strip().lower() not in ["closed won", "won", "closed lost", "lost"]]
         
-        # Leads converted
-        converted_leads_count = len(session.exec(select(Lead).where(Lead.owner_id == user.id, Lead.is_converted == True)).all())
+        won_revenue = sum((d.final_value or d.value or 0.0) for d in won_deals)
+        
+        # Clients handling
+        clients = session.exec(select(ClientProfile).where(ClientProfile.assignedEmployeeId == user.id)).all()
+        client_ids = [c.id for c in clients]
+        
+        # Invoices / Due amounts
+        invoices = session.exec(select(Invoice).where(Invoice.client_id.in_(client_ids))).all() if client_ids else []
+        due_invoices = [inv for inv in invoices if str(inv.status).strip().lower() not in ["paid", "cancelled"]]
+        invoiced_due = sum((inv.total or 0.0) for inv in due_invoices)
+        pipeline_due = sum((d.final_value or d.value or 0.0) for d in in_progress_deals)
+        revenue_due = invoiced_due if invoiced_due > 0 else pipeline_due
+        
+        # Also check paid invoices to add to revenue made if available
+        paid_invoices = [inv for inv in invoices if str(inv.status).strip().lower() == "paid"]
+        paid_invoices_total = sum((inv.total or 0.0) for inv in paid_invoices)
+        if paid_invoices_total > won_revenue:
+            won_revenue = paid_invoices_total
+
+        # Client Leads
+        leads = session.exec(select(Lead).where(Lead.owner_id == user.id).order_by(Lead.created_at.desc())).all()
+        converted_leads_count = sum(1 for l in leads if l.is_converted or str(l.status).strip().lower() in ["converted", "won"])
+        
+        # Meetings
+        all_meetings = session.exec(select(Meeting).order_by(Meeting.scheduled_at.desc())).all()
+        meetings = [
+            m for m in all_meetings
+            if m.host_id == user.id or (m.attendees and any((user.name and user.name in str(a)) for a in m.attendees))
+        ]
+        
+        # Calls
+        user_name_str = user.name or ""
+        calls = session.exec(select(CallLog).where(or_(CallLog.assigned_to == user_name_str, CallLog.assigned_to == str(user.id))).order_by(CallLog.received_at.desc())).all()
+        
+        # Follow-ups
+        followups = session.exec(select(FollowUp).where(or_(FollowUp.owner_id == user.id, FollowUp.created_by == user.id)).order_by(FollowUp.due_at.desc())).all()
         
         # Current active tasks
         active_tasks = session.exec(select(Task).where(Task.assigned_to == user.id, Task.status.notin_(["approved", "rejected"]))).all()
-        assigned_cases = session.exec(select(Case).where(Case.assigned_to == user.id)).all()
         
         return {
             "type": "sales",
-            "clients_handling": clients_count,
+            "revenue_made": round(won_revenue, 2),
+            "revenue_due": round(revenue_due, 2),
+            "won_deals_count": len(won_deals),
+            "lost_deals_count": len(lost_deals),
+            "in_progress_deals_count": len(in_progress_deals),
+            "total_deals_count": len(deals),
+            "clients_count": len(clients),
+            "clients": [
+                {"id": c.id, "company_name": c.companyName or "Unnamed Account", "status": getattr(c, "status", "Active")}
+                for c in clients[:20]
+            ],
+            "leads_count": len(leads),
             "leads_converted": converted_leads_count,
-            "cases_assigned": len(assigned_cases),
+            "leads": [
+                {
+                    "id": l.id,
+                    "company_name": l.company_name or "Unnamed Lead",
+                    "status": l.status or "New",
+                    "estimated_value": getattr(l, "estimated_value", getattr(l, "value", 0.0)) or 0.0,
+                    "source": l.source or "Direct",
+                    "created_at": l.created_at.isoformat() if getattr(l, "created_at", None) else None
+                }
+                for l in leads[:30]
+            ],
+            "meetings_count": len(meetings),
+            "meetings": [
+                {
+                    "id": m.id,
+                    "title": m.title,
+                    "scheduled_at": m.scheduled_at.isoformat() if m.scheduled_at else None,
+                    "status": m.status or "Scheduled",
+                    "meeting_type": m.meeting_type or "Meeting",
+                    "location": m.location or m.meeting_link or ""
+                }
+                for m in meetings[:20]
+            ],
+            "calls_count": len(calls),
+            "calls": [
+                {
+                    "id": c.id,
+                    "phone_number": c.phone_number,
+                    "duration_seconds": c.duration_seconds or 0,
+                    "summary": c.summary or "",
+                    "received_at": (c.received_at or c.createdAt).isoformat() if (c.received_at or c.createdAt) else None
+                }
+                for c in calls[:20]
+            ],
+            "followups_count": len(followups),
+            "followups": [
+                {
+                    "id": f.id,
+                    "title": f.title,
+                    "channel": f.channel or "Email",
+                    "priority": f.priority or "Medium",
+                    "status": f.status or "Pending",
+                    "due_at": f.due_at.isoformat() if f.due_at else None
+                }
+                for f in followups[:20]
+            ],
             "active_tasks": [
                 {"id": t.id, "title": t.title, "status": t.status, "priority": t.priority} 
-                for t in active_tasks
+                for t in active_tasks[:10]
             ]
-        }
-        
-    # Dev team stats
-    elif user.role in ["ProjectMember", "Intern"]:
-        if not user.name:
-            tickets = []
-        else:
-            tickets = session.exec(select(ProjectTicket).where(ProjectTicket.current_owner.ilike(user.name))).all()
-            
-        total_tickets = len(tickets)
-        in_dev = sum(1 for t in tickets if t.current_state == "In Dev")
-        in_qa = sum(1 for t in tickets if t.current_state == "Given to QA")
-        in_prod = sum(1 for t in tickets if t.current_state == "Prod Release")
-        assigned_cases = session.exec(select(Case).where(Case.assigned_to == user.id)).all()
-        
-        return {
-            "type": "dev",
-            "total_tickets": total_tickets,
-            "in_dev": in_dev,
-            "in_qa": in_qa,
-            "in_prod": in_prod,
-            "cases_assigned": len(assigned_cases)
         }
         
     return {"type": "unknown"}
@@ -6181,7 +6252,7 @@ def reports_summary(
 ):
     if current_tenant_id.get() == -1 or current_tenant_id.get() is None:
         current_tenant_id.set(1)
-    _require_roles(session, ["Admin"])
+    _require_roles(session, ["Admin", "SuperAdmin"])
     today = datetime.utcnow().date()
     start = _report_date(start_date, today - timedelta(days=29))
     end = _report_date(end_date, today)
@@ -6195,23 +6266,47 @@ def reports_summary(
             query = query.where(model.tenant_id == tenant_id)
         return session.exec(query).all()
 
+    from database import FollowUp
+
+    all_scoped_deals = scoped(Deal)
+    
+    def _deal_won_in_range(d):
+        if str(d.stage).strip().lower() not in ("closed won", "won"):
+            return False
+        d_won_date = d.won_at or d.created_at
+        return _in_report_range(d_won_date, start, end)
+
+    def _deal_lost_in_range(d):
+        if str(d.stage).strip().lower() not in ("closed lost", "lost"):
+            return False
+        d_lost_date = d.won_at or d.updated_at or d.created_at
+        return _in_report_range(d_lost_date, start, end)
+
+    deals = [
+        deal for deal in all_scoped_deals
+        if _in_report_range(deal.created_at, start, end) or _deal_won_in_range(deal) or _deal_lost_in_range(deal)
+    ]
     leads = [lead for lead in scoped(Lead) if _in_report_range(lead.created_at, start, end)]
     all_leads = scoped(Lead)
     clients = scoped(ClientProfile)
-    deals = [deal for deal in scoped(Deal) if _in_report_range(deal.created_at, start, end)]
     emails = [email for email in scoped(SentEmail) if _in_report_range(email.sent_at, start, end)]
     activities = [activity for activity in scoped(ActivityLog) if _in_report_range(activity.createdAt, start, end)]
-    calls = [call for call in scoped(CallLog) if _in_report_range(call.createdAt, start, end)]
+    calls = [call for call in scoped(CallLog) if _in_report_range(call.createdAt or call.received_at, start, end)]
     conversations = [conversation for conversation in scoped(ConversationLog) if _in_report_range(conversation.created_at, start, end)]
     tickets = [ticket for ticket in scoped(ProjectTicket) if _in_report_range(ticket.created_at, start, end)]
     cases = [case for case in scoped(Case) if _in_report_range(case.created_at, start, end)]
     meetings = [meeting for meeting in scoped(Meeting) if meeting.scheduled_at and _in_report_range(meeting.scheduled_at, start, end)]
     task_entries = [entry for entry in scoped(TaskSheetEntry) if start <= date.fromisoformat(entry.work_date) <= end]
+    all_followups = scoped(FollowUp)
+    followups = [
+        f for f in all_followups
+        if (_in_report_range(f.due_at, start, end) or _in_report_range(f.created_at, start, end) or _in_report_range(f.completed_at, start, end))
+    ]
     users = {user.id: user for user in scoped(User)}
 
     converted_leads = [lead for lead in all_leads if lead.is_converted]
-    closed_deals = [deal for deal in deals if deal.stage in ("Closed Won", "Closed Lost")]
-    won_deals = [deal for deal in deals if deal.stage == "Closed Won"]
+    closed_deals = [deal for deal in all_scoped_deals if _deal_won_in_range(deal) or _deal_lost_in_range(deal)]
+    won_deals = [deal for deal in all_scoped_deals if _deal_won_in_range(deal)]
     conversion_percentage = round((len(converted_leads) / len(all_leads)) * 100, 2) if all_leads else 0
     win_rate = round((len(won_deals) / len(closed_deals)) * 100, 2) if closed_deals else 0
 
@@ -6225,62 +6320,216 @@ def reports_summary(
     for bucket in source_map.values():
         bucket["conversion_percentage"] = round((bucket["converted"] / bucket["leads"]) * 100, 2) if bucket["leads"] else 0
 
-    staff: dict[int, dict] = {}
-    def staff_bucket(user_id: Optional[int], name: Optional[str] = None):
-        if not user_id:
-            return None
-        user = users.get(user_id)
-        bucket = staff.setdefault(user_id, {"user_id": user_id, "name": name or (user.name if user else "Unknown"), "role": user.role if user else "Unknown", "activities": 0, "calls": 0, "emails": 0, "tickets": 0, "cases": 0, "meetings": 0, "task_entries": 0, "completed_tasks": 0})
-        return bucket
+    # ── STAFF PERFORMANCE INITIALIZATION ──
+    staff_roles = {"Admin", "SuperAdmin", "SalesManager", "Employee", "Sales", "Demo"}
+    staff_users = [u for u in scoped(User) if u.role in staff_roles]
+    if not staff_users:
+        staff_users = [u for u in scoped(User) if (u.role or "").lower() != "client"]
 
-    for item in activities:
-        if item.userId:
-            staff_bucket(item.userId)["activities"] += 1
+    staff: dict[int, dict] = {}
+    for u in staff_users:
+        staff[u.id] = {
+            "user_id": u.id,
+            "name": u.name or u.email,
+            "email": u.email,
+            "role": u.role,
+            "activities": 0,
+            "calls": 0,
+            "meetings": 0,
+            "followups": 0,
+            "followups_breakdown": {
+                "webinar": 0,
+                "normal": 0,
+                "call": 0,
+                "meeting": 0,
+                "walkin": 0,
+                "email": 0,
+                "whatsapp": 0,
+                "other": 0,
+            },
+            "followups_completed": 0,
+            "followups_pending": 0,
+            "leads": 0,
+            "leads_converted": 0,
+            "deals_created": 0,
+            "deals_won": 0,
+            "won_revenue": 0.0,
+            "pipeline_value": 0.0,
+            "task_entries": 0,
+            "completed_tasks": 0,
+            "total_work": 0,
+            "activity_timeline": [],
+        }
+
+    # 1. Calls mapping
     for item in calls:
-        if item.assigned_to:
-            bucket = staff_bucket(next((u.id for u in users.values() if u.name and u.name == item.assigned_to), None), item.assigned_to)
-            if bucket:
-                bucket["calls"] += 1
-    for item in emails:
-        lead = next((lead for lead in all_leads if lead.email == item.to_email), None)
-        bucket = staff_bucket(lead.owner_id if lead else None)
-        if bucket:
-            bucket["emails"] += 1
-    for item in tickets:
-        owner = next((u for u in users.values() if (u.name or "").lower() == (item.current_owner or "").lower() or str(u.id) == (item.current_owner or "")), None)
-        bucket = staff_bucket(owner.id if owner else None)
-        if bucket:
-            bucket["tickets"] += 1
-    for item in cases:
-        bucket = staff_bucket(item.assigned_to)
-        if bucket:
-            bucket["cases"] += 1
-    for item in meetings:
-        bucket = staff_bucket(item.host_id)
-        if bucket:
-            bucket["meetings"] += 1
+        assigned = str(item.assigned_to or "").strip()
+        matched = next((u for u in staff_users if str(u.id) == assigned or (u.name and u.name.lower() == assigned.lower())), None)
+        if matched and matched.id in staff:
+            b = staff[matched.id]
+            b["calls"] += 1
+            dt = item.createdAt or item.received_at
+            dur = round(item.duration_seconds / 60) if getattr(item, 'duration_seconds', 0) else 0
+            b["activity_timeline"].append({
+                "type": "call",
+                "title": f"Call Logged: {item.phone_number or 'Contact'}",
+                "date": dt.isoformat() if dt else None,
+                "details": item.summary or f"Duration: {dur} min",
+                "status": "Logged",
+                "channel": "Call"
+            })
+
+    # 2. Meetings mapping
+    for m in meetings:
+        for u in staff_users:
+            is_host = (m.host_id == u.id)
+            is_att = bool(m.attendees and any(u.name and u.name.lower() in str(a).lower() for a in m.attendees))
+            if (is_host or is_att) and u.id in staff:
+                b = staff[u.id]
+                b["meetings"] += 1
+                b["activity_timeline"].append({
+                    "type": "meeting",
+                    "title": f"Meeting: {m.title or 'Client Meeting'}",
+                    "date": m.scheduled_at.isoformat() if m.scheduled_at else None,
+                    "details": f"{m.meeting_type or 'Meeting'} | Location: {m.location or 'Online'} | Outcome: {m.outcome or 'N/A'}",
+                    "status": m.status or "Scheduled",
+                    "channel": "Meeting"
+                })
+
+    # 3. Follow-ups mapping (webinar, normal, call, meeting, walkin, etc.)
+    for f in followups:
+        for u in staff_users:
+            if (f.owner_id == u.id or f.created_by == u.id) and u.id in staff:
+                b = staff[u.id]
+                b["followups"] += 1
+                if f.status == "Completed":
+                    b["followups_completed"] += 1
+                else:
+                    b["followups_pending"] += 1
+                
+                ch = (f.channel or "other").strip().lower()
+                if "webinar" in ch:
+                    b["followups_breakdown"]["webinar"] += 1
+                elif "walk" in ch:
+                    b["followups_breakdown"]["walkin"] += 1
+                elif "normal" in ch or "standard" in ch:
+                    b["followups_breakdown"]["normal"] += 1
+                elif "call" in ch:
+                    b["followups_breakdown"]["call"] += 1
+                elif "meet" in ch:
+                    b["followups_breakdown"]["meeting"] += 1
+                elif "email" in ch:
+                    b["followups_breakdown"]["email"] += 1
+                elif "whatsapp" in ch:
+                    b["followups_breakdown"]["whatsapp"] += 1
+                else:
+                    b["followups_breakdown"]["other"] += 1
+
+                f_date = f.completed_at or f.due_at or f.created_at
+                b["activity_timeline"].append({
+                    "type": "followup",
+                    "title": f"Follow-up: {f.title or 'Scheduled Action'}",
+                    "date": f_date.isoformat() if f_date else None,
+                    "details": f"Channel: {f.channel or 'Follow-up'} | Contact: {f.contact_name or f.company_name or 'N/A'} | Notes: {f.notes or ''}",
+                    "status": f.status or "Pending",
+                    "channel": f.channel or "Normal Follow-up"
+                })
+
+    # 4. Leads mapping
+    for l in leads:
+        if l.owner_id and l.owner_id in staff:
+            b = staff[l.owner_id]
+            b["leads"] += 1
+            if l.is_converted or str(l.status).strip().lower() in ["converted", "won"]:
+                b["leads_converted"] += 1
+            b["activity_timeline"].append({
+                "type": "lead",
+                "title": f"Lead Assigned: {l.company_name or 'Lead Record'}",
+                "date": l.created_at.isoformat() if l.created_at else None,
+                "details": f"Source: {l.source or 'Direct'} | Status: {l.status or 'New'}",
+                "status": l.status or "New",
+                "channel": "Lead"
+            })
+
+    # 5. Deals mapping
+    for d in all_scoped_deals:
+        if d.assigned_to and d.assigned_to in staff:
+            b = staff[d.assigned_to]
+            val = float(d.final_value if d.final_value is not None else (d.value or 0.0))
+            is_won = _deal_won_in_range(d)
+            is_created = _in_report_range(d.created_at, start, end)
+
+            if is_won:
+                b["deals_won"] += 1
+                b["won_revenue"] += val
+                d_date = d.won_at or d.created_at
+                b["activity_timeline"].append({
+                    "type": "deal",
+                    "title": f"Deal Won: {d.title or 'Won Opportunity'}",
+                    "date": d_date.isoformat() if d_date else None,
+                    "details": f"Revenue: ₹{val:,.2f} | Stage: {d.stage}",
+                    "status": "Won",
+                    "channel": "Deal"
+                })
+
+            if is_created:
+                b["deals_created"] += 1
+                if str(d.stage).strip().lower() not in ("closed won", "won", "closed lost", "lost"):
+                    b["pipeline_value"] += val
+                b["activity_timeline"].append({
+                    "type": "deal",
+                    "title": f"Deal Created: {d.title or 'Opportunity'}",
+                    "date": d.created_at.isoformat() if d.created_at else None,
+                    "details": f"Value: ₹{val:,.2f} | Stage: {d.stage}",
+                    "status": d.stage or "New",
+                    "channel": "Deal"
+                })
+
+    # 6. Tasks and activities
+    for item in activities:
+        if item.userId and item.userId in staff:
+            staff[item.userId]["activities"] += 1
+
     for item in task_entries:
-        bucket = staff_bucket(item.user_id, "Unknown")
-        if bucket:
-            bucket["task_entries"] += 1
-            if item.status.lower() in ("done", "completed"):
-                bucket["completed_tasks"] += 1
-    for bucket in staff.values():
-        bucket["total_work"] = sum(bucket[key] for key in ("activities", "calls", "emails", "tickets", "cases", "meetings", "task_entries"))
+        if item.user_id and item.user_id in staff:
+            b = staff[item.user_id]
+            b["task_entries"] += 1
+            if item.status and item.status.lower() in ("done", "completed"):
+                b["completed_tasks"] += 1
+
+    # Final tally and sorting
+    for b in staff.values():
+        b["won_revenue"] = round(b["won_revenue"], 2)
+        b["pipeline_value"] = round(b["pipeline_value"], 2)
+        b["total_work"] = (
+            b["calls"] + b["meetings"] + b["followups"] +
+            b["leads"] + b["deals_won"] + b["completed_tasks"] + b["activities"]
+        )
+        b["activity_timeline"].sort(key=lambda x: x.get("date") or "", reverse=True)
 
     daily: dict[str, dict] = {}
     for offset in range((end - start).days + 1):
         day = (start + timedelta(days=offset)).isoformat()
-        daily[day] = {"date": day, "leads": 0, "clients_onboarded": 0, "deals_won": 0, "emails": 0, "activities": 0, "calls": 0, "meetings": 0, "task_entries": 0, "tickets": 0, "cases_resolved": 0}
+        daily[day] = {"date": day, "leads": 0, "clients_onboarded": 0, "deals_won": 0, "emails": 0, "activities": 0, "calls": 0, "meetings": 0, "followups": 0, "task_entries": 0, "tickets": 0, "cases_resolved": 0}
     for lead in leads: daily[lead.created_at.date().isoformat()]["leads"] += 1
     for client in clients:
         user = users.get(client.userId) if client.userId else None
         if user and _in_report_range(user.createdAt, start, end): daily[user.createdAt.date().isoformat()]["clients_onboarded"] += 1
-    for deal in won_deals: daily[deal.created_at.date().isoformat()]["deals_won"] += 1
+    for deal in won_deals:
+        d_date = (deal.won_at or deal.created_at)
+        if d_date:
+            daily[d_date.date().isoformat()]["deals_won"] += 1
     for email in emails: daily[email.sent_at.date().isoformat()]["emails"] += 1
     for activity in activities: daily[activity.createdAt.date().isoformat()]["activities"] += 1
-    for call in calls: daily[call.createdAt.date().isoformat()]["calls"] += 1
+    for call in calls:
+        c_date = call.createdAt or call.received_at
+        if c_date:
+            daily[c_date.date().isoformat()]["calls"] += 1
     for meeting in meetings: daily[meeting.scheduled_at.date().isoformat()]["meetings"] += 1
+    for f in followups:
+        f_dt = f.due_at or f.created_at
+        if f_dt and f_dt.date().isoformat() in daily:
+            daily[f_dt.date().isoformat()]["followups"] += 1
     for entry in task_entries: daily[date.fromisoformat(entry.work_date).isoformat()]["task_entries"] += 1
     for ticket in tickets: daily[ticket.created_at.date().isoformat()]["tickets"] += 1
     for case in cases:
@@ -6289,13 +6538,33 @@ def reports_summary(
     onboarded = [client for client in clients if client.userId and users.get(client.userId) and _in_report_range(users[client.userId].createdAt, start, end)]
     return {
         "range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
-        "summary": {"leads": len(leads), "clients_onboarded": len(onboarded), "total_clients": len(clients), "deals_created": len(deals), "deals_won": len(won_deals), "pipeline_value": round(sum(deal.value or 0 for deal in deals if deal.stage not in ("Closed Lost",)), 2), "won_value": round(sum(deal.value or 0 for deal in won_deals), 2), "emails": len(emails), "activities": len(activities), "calls": len(calls), "meetings": len(meetings), "tickets": len(tickets), "task_entries": len(task_entries), "cases_resolved": sum(1 for case in cases if case.status in ("Resolved", "Closed")), "conversion_percentage": conversion_percentage, "deal_win_rate": win_rate},
-        "sales": {"deals": [{"id": deal.id, "title": deal.title, "value": deal.value, "stage": deal.stage, "assigned_to": users.get(deal.assigned_to).name if deal.assigned_to and users.get(deal.assigned_to) else "Unassigned"} for deal in deals], "won_value": round(sum(deal.value or 0 for deal in won_deals), 2)},
+        "summary": {
+            "leads": len(leads),
+            "clients_onboarded": len(onboarded),
+            "total_clients": len(clients),
+            "deals_created": sum(1 for d in all_scoped_deals if _in_report_range(d.created_at, start, end)),
+            "deals_won": len(won_deals),
+            "pipeline_value": round(sum((deal.final_value if deal.final_value is not None else (deal.value or 0)) for deal in all_scoped_deals if str(deal.stage).strip().lower() not in ("closed won", "won", "closed lost", "lost")), 2),
+            "won_value": round(sum((deal.final_value if deal.final_value is not None else (deal.value or 0)) for deal in won_deals), 2),
+            "emails": len(emails),
+            "activities": len(activities),
+            "calls": len(calls),
+            "meetings": len(meetings),
+            "followups": len(followups),
+            "followups_completed": sum(1 for f in followups if f.status == "Completed"),
+            "tickets": len(tickets),
+            "task_entries": len(task_entries),
+            "cases_resolved": sum(1 for case in cases if case.status in ("Resolved", "Closed")),
+            "conversion_percentage": conversion_percentage,
+            "deal_win_rate": win_rate,
+            "total_staff_work": sum(b["total_work"] for b in staff.values()),
+        },
+        "sales": {"deals": [{"id": deal.id, "title": deal.title, "value": deal.final_value if deal.final_value is not None else deal.value, "stage": deal.stage, "assigned_to": users.get(deal.assigned_to).name if deal.assigned_to and users.get(deal.assigned_to) else "Unassigned"} for deal in deals], "won_value": round(sum((deal.final_value if deal.final_value is not None else (deal.value or 0)) for deal in won_deals), 2)},
         "daily": list(daily.values()),
-        "monthly": [{"month": month, "leads": sum(item["leads"] for item in daily.values() if item["date"][:7] == month), "clients_onboarded": sum(item["clients_onboarded"] for item in daily.values() if item["date"][:7] == month), "deals_won": sum(item["deals_won"] for item in daily.values() if item["date"][:7] == month), "emails": sum(item["emails"] for item in daily.values() if item["date"][:7] == month), "calls": sum(item["calls"] for item in daily.values() if item["date"][:7] == month), "meetings": sum(item["meetings"] for item in daily.values() if item["date"][:7] == month)} for month in sorted({item["date"][:7] for item in daily.values()})],
-        "staff_performance": sorted(staff.values(), key=lambda item: item["total_work"], reverse=True),
+        "monthly": [{"month": month, "leads": sum(item["leads"] for item in daily.values() if item["date"][:7] == month), "clients_onboarded": sum(item["clients_onboarded"] for item in daily.values() if item["date"][:7] == month), "deals_won": sum(item["deals_won"] for item in daily.values() if item["date"][:7] == month), "emails": sum(item["emails"] for item in daily.values() if item["date"][:7] == month), "calls": sum(item["calls"] for item in daily.values() if item["date"][:7] == month), "meetings": sum(item["meetings"] for item in daily.values() if item["date"][:7] == month), "followups": sum(item["followups"] for item in daily.values() if item["date"][:7] == month)} for month in sorted({item["date"][:7] for item in daily.values()})],
+        "staff_performance": sorted(staff.values(), key=lambda item: (item["won_revenue"], item["total_work"]), reverse=True),
         "lead_sources": sorted(source_map.values(), key=lambda item: item["leads"], reverse=True),
-        "calls": [{"id": call.id, "date": call.createdAt.isoformat(), "phone_number": call.phone_number, "assigned_to": call.assigned_to or "Unassigned", "duration_seconds": call.duration_seconds, "summary": call.summary, "followup_needed": call.followup_needed, "followup_date": call.followup_date} for call in calls],
+        "calls": [{"id": call.id, "date": (call.createdAt or call.received_at).isoformat() if (call.createdAt or call.received_at) else None, "phone_number": call.phone_number, "assigned_to": call.assigned_to or "Unassigned", "duration_seconds": call.duration_seconds, "summary": call.summary, "followup_needed": call.followup_needed, "followup_date": call.followup_date} for call in calls],
         "meetings": [{"id": meeting.id, "scheduled_at": meeting.scheduled_at.isoformat(), "title": meeting.title, "meeting_type": meeting.meeting_type, "status": meeting.status, "host": users.get(meeting.host_id).name if meeting.host_id and users.get(meeting.host_id) else "Unassigned", "duration_minutes": meeting.duration_minutes, "location": meeting.location, "outcome": meeting.outcome} for meeting in meetings],
         "onboarding": {"total_clients": len(clients), "new_in_range": len(onboarded), "active": sum(1 for client in clients if client.status == "Active"), "pending": sum(1 for client in clients if client.status == "Pending"), "hold": sum(1 for client in clients if client.status == "Hold")},
     }
@@ -12017,13 +12286,32 @@ def auto_assign_lead_to_salesperson(session: Session, lead: Lead, tenant_id: Opt
     """
     Auto-assign lead to active salesperson using round-robin distribution,
     breaking ties based on sales reps' historical conversion rate and performance.
+    Admins (e.g. System Admin) are strictly excluded from automated lead assignment.
     """
     if not tenant_id or tenant_id == -1:
         tenant_id = 1
-    q_reps = select(User).where(User.role.in_(["SalesManager", "Employee", "Admin"]), User.is_active == True)
+
+    # First priority: actual sales team members (SalesManager, Sales)
+    q_reps = select(User).where(
+        User.role.in_(["SalesManager", "Sales"]),
+        User.is_active == True,
+        User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+    )
     if tenant_id and tenant_id != 1:
         q_reps = q_reps.where(User.tenant_id == tenant_id)
     reps = session.exec(q_reps).all()
+
+    # Fallback to employees if no designated sales reps exist, but never assign to Admin
+    if not reps:
+        q_fallback = select(User).where(
+            User.role.in_(["Employee"]),
+            User.is_active == True,
+            User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+        )
+        if tenant_id and tenant_id != 1:
+            q_fallback = q_fallback.where(User.tenant_id == tenant_id)
+        reps = session.exec(q_fallback).all()
+
     if not reps:
         return None
 
@@ -12650,10 +12938,23 @@ def auto_assign_unassigned_leads(session: Session = Depends(get_session)):
             raise HTTPException(status_code=403, detail="Only Admins can trigger auto-assigning leads.")
 
     tenant_id = current_tenant_id.get()
-    q_reps = select(User).where(User.role.in_(["SalesManager", "Employee", "Admin"]), User.is_active == True)
+    q_reps = select(User).where(
+        User.role.in_(["SalesManager", "Sales"]),
+        User.is_active == True,
+        User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+    )
     if tenant_id and tenant_id != 1:
         q_reps = q_reps.where(User.tenant_id == tenant_id)
     reps = session.exec(q_reps).all()
+    if not reps:
+        q_fallback = select(User).where(
+            User.role.in_(["Employee"]),
+            User.is_active == True,
+            User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+        )
+        if tenant_id and tenant_id != 1:
+            q_fallback = q_fallback.where(User.tenant_id == tenant_id)
+        reps = session.exec(q_fallback).all()
     if not reps:
         raise HTTPException(status_code=400, detail="No active salespeople found to assign leads.")
 

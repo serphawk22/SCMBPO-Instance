@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus, X, Loader2, FileSignature, CheckCircle, Send, Clock, XCircle, IndianRupee, Trash2, Eye, Edit3, Download, PlayCircle, Search, ShoppingCart, Package, ChevronRight, User2, Building2, Minus, AlertCircle, FileText, RefreshCw, ArrowLeft, FilePlus2, Link2, Sparkles, Check, ArrowRightLeft } from "lucide-react";
+import { Plus, X, Loader2, FileSignature, CheckCircle, Send, Clock, XCircle, IndianRupee, Trash2, Eye, Edit3, Download, PlayCircle, Search, ShoppingCart, Package, ChevronRight, User2, Building2, Minus, AlertCircle, FileText, RefreshCw, ArrowLeft, FilePlus2, Link2, Sparkles, Check, ArrowRightLeft, LayoutGrid, List } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
@@ -157,6 +157,7 @@ function ProposalsPageContent() {
 
   // Detail view
   const [selected, setSelected]         = useState<Proposal | null>(null);
+  const [viewMode, setViewMode]         = useState<"cards" | "list">("cards");
 
   // PDF preview
   const [preview, setPreview]           = useState<{ id: number; name: string; url: string } | null>(null);
@@ -518,9 +519,27 @@ function ProposalsPageContent() {
             </button>
           ))}
         </div>
-        <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 font-medium shrink-0 bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800">
-          <ArrowRightLeft className="w-3.5 h-3.5 text-blue-500" />
-          <span>Base Currency: <strong>INR (₹)</strong></span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-xl border border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 p-0.5">
+            <button
+              onClick={() => setViewMode("cards")}
+              className={`p-1.5 rounded-lg transition-all ${viewMode === "cards" ? "bg-white dark:bg-zinc-800 text-blue-600 shadow-sm" : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"}`}
+              title="Cards View"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              className={`p-1.5 rounded-lg transition-all ${viewMode === "list" ? "bg-white dark:bg-zinc-800 text-blue-600 shadow-sm" : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"}`}
+              title="List View"
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 font-medium shrink-0 bg-slate-50 dark:bg-zinc-900 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-zinc-800">
+            <ArrowRightLeft className="w-3.5 h-3.5 text-blue-500" />
+            <span>Base Currency: <strong>INR (₹)</strong></span>
+          </div>
         </div>
       </div>
 
@@ -539,6 +558,111 @@ function ProposalsPageContent() {
                 Create Proposal
               </button>
             )}
+          </div>
+        ) : viewMode === "list" ? (
+          <div className="bg-white dark:bg-[#111] rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 dark:bg-zinc-900/60 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-200 dark:border-slate-800">
+                  <tr>
+                    <th className="px-5 py-3.5">Proposal ID</th>
+                    <th className="px-5 py-3.5">Title</th>
+                    <th className="px-5 py-3.5">Client / Lead</th>
+                    <th className="px-5 py-3.5">Sales Rep</th>
+                    <th className="px-5 py-3.5">Pipeline Stage</th>
+                    <th className="px-5 py-3.5">Status</th>
+                    <th className="px-5 py-3.5 text-right">Value (₹)</th>
+                    <th className="px-5 py-3.5 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/60">
+                  {filtered.map(p => {
+                    const cfg = STATUS_CFG[p.status] || STATUS_CFG.Draft;
+                    const inrVal = p.total_value || 0;
+                    return (
+                      <tr
+                        key={p.id}
+                        onClick={() => setSelected(p)}
+                        className="hover:bg-blue-50/40 dark:hover:bg-zinc-900/40 cursor-pointer transition-colors"
+                      >
+                        <td className="px-5 py-4 font-mono text-xs text-slate-500 font-bold whitespace-nowrap">
+                          PROP-{String(p.id).padStart(4, "0")}
+                        </td>
+                        <td className="px-5 py-4 font-bold text-slate-900 dark:text-white">
+                          <p className="max-w-xs truncate">{p.title}</p>
+                          {p.valid_until && (
+                            <span className="text-[10px] text-slate-400 font-normal">Valid until: {p.valid_until}</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            {p.recipient_type === "lead"
+                              ? <User2 className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                              : <Building2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />}
+                            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                              {p.client_name || "—"}
+                            </span>
+                            <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ml-1 ${
+                              p.recipient_type === "lead"
+                                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                                : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                            }`}>
+                              {p.recipient_type === "lead" ? "Lead" : "Client"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-xs text-slate-600 dark:text-zinc-400 font-medium whitespace-nowrap">
+                          {p.salesperson_name || p.creator_name || "Sales Rep"}
+                        </td>
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          <span className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-semibold text-[11px]">
+                            {p.deal_stage || (p.status === "Sent" ? "Proposal Sent" : p.status === "Accepted" ? "Closed Won" : "Negotiation")}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${cfg.color} bg-slate-100 dark:bg-slate-800`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                            {cfg.label}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-right font-black text-slate-900 dark:text-white whitespace-nowrap">
+                          {fmtInr(inrVal)}
+                        </td>
+                        <td className="px-5 py-4 text-center whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1">
+                            {p.public_uuid && (
+                              <a
+                                href={`/p/${p.public_uuid}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 transition-colors"
+                                title="Open Web Proposal"
+                              >
+                                <Link2 className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                            <button
+                              onClick={() => previewPDF(p.id)}
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-purple-100 text-slate-500 hover:text-purple-600 dark:bg-slate-800 dark:hover:bg-purple-900/30 dark:text-slate-400 dark:hover:text-purple-400 transition-colors"
+                              title="Preview PDF"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setSelected(p)}
+                              className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 transition-colors"
+                              title="View Details"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

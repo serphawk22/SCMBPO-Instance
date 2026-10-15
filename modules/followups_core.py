@@ -45,13 +45,27 @@ STATUSES = (OPEN, DONE, CANCELLED)
 OPEN_STATUSES = (OPEN, "In Progress", "Overdue")
 
 # follow_ups stores the /follow-ups spellings; the /followups API speaks lower case.
-CHANNEL_VALUES = {"email": "Email", "call": "Call", "meeting": "Meeting", "whatsapp": "WhatsApp", "other": "Other"}
+CHANNEL_VALUES = {
+    "email": "Email",
+    "call": "Call",
+    "meeting": "Meeting",
+    "webinar": "Webinar",
+    "walk-in": "Walk-in",
+    "walkin": "Walk-in",
+    "normal follow-up": "Normal Follow-up",
+    "normal followup": "Normal Follow-up",
+    "normal": "Normal Follow-up",
+    "standard": "Normal Follow-up",
+    "whatsapp": "WhatsApp",
+    "other": "Other",
+}
 PRIORITY_VALUES = {"low": "Low", "medium": "Medium", "high": "High", "urgent": "Urgent"}
 DEFAULT_REMINDER_MINUTES = 60
 
 
 def db_channel(value: Optional[str]) -> str:
-    return CHANNEL_VALUES.get((value or "").strip().lower(), "Email")
+    cleaned = (value or "").strip().lower()
+    return CHANNEL_VALUES.get(cleaned, value.strip() if value and value.strip() else "Email")
 
 
 def db_priority(value: Optional[str]) -> str:
