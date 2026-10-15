@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, X, Clock, CheckCircle2, AlertTriangle, CalendarClock, Search, Loader2, Mail, Phone, Video,
   MessageCircle, Bell, BellOff, Pencil, Trash2, Sparkles, Send, RotateCcw, Hourglass, User, Building2,
-  RefreshCw, ChevronRight, Flag, LayoutGrid, Table, Check, ExternalLink, Calendar, ChevronDown, UserCheck,
+  RefreshCw, ChevronRight, Flag, LayoutGrid, Table, Check, ExternalLink, Calendar, ChevronDown, UserCheck, Presentation,
 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
@@ -88,10 +88,13 @@ const STATUS_CONFIG: Record<string, { label: string; icon: any; cls: string; sel
 };
 
 const CHANNELS = [
-  { key: "Email", icon: Mail },
+  { key: "Normal Follow-up", icon: CalendarClock },
+  { key: "Webinar", icon: Presentation },
   { key: "Call", icon: Phone },
   { key: "Meeting", icon: Video },
+  { key: "Walk-in", icon: Building2 },
   { key: "WhatsApp", icon: MessageCircle },
+  { key: "Email", icon: Mail },
   { key: "Other", icon: Flag },
 ];
 
@@ -187,7 +190,7 @@ function Sheet({ open, onClose, title, children, footer }: { open: boolean; onCl
 function RemindersBoard() {
   const { role } = useRole();
   const viewerTz = useMemo(() => detectTimeZone(), []);
-  const canSeeAll = role === "Admin" || role === "SuperAdmin" || role === "SalesManager";
+  const canSeeAll = role === "Admin" || role === "SuperAdmin";
 
   const [items, setItems] = useState<FollowUp[]>([]);
   const [counts, setCounts] = useState<Record<Bucket, number>>({ overdue: 0, pending: 0, upcoming: 0, completed: 0 });
@@ -1352,7 +1355,7 @@ function RemindersBoard() {
         {/* Channel Selection */}
         <div>
           <label className={labelCls}>Communication Channel</label>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {CHANNELS.map(c => (
               <button
                 key={c.key}

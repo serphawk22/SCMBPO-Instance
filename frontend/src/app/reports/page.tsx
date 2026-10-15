@@ -6,7 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, Legend, PieChart, Pie, Cell
 } from "recharts";
-import { FileText, Users, IndianRupee, TrendingUp, TrendingDown, Target, Clock, Calendar, CheckCircle2, AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame, Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, BriefcaseBusiness, FileSpreadsheet, ShieldCheck } from "lucide-react";
+import { FileText, Users, IndianRupee, TrendingUp, TrendingDown, Target, Clock, Calendar, CheckCircle2, AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame, Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, BriefcaseBusiness, FileSpreadsheet, ShieldCheck, Eye, X, Video, Presentation, CalendarClock, MessageCircle } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
@@ -130,6 +130,34 @@ export default function ReportsPage() {
   const [classicData, setClassicData] = useState<any>(null);
   const [classicLoading, setClassicLoading] = useState<boolean>(false);
   const [classicError, setClassicError] = useState<string>("");
+  const [selectedStaffMember, setSelectedStaffMember] = useState<any | null>(null);
+  const [staffSearch, setStaffSearch] = useState<string>("");
+
+  const applyClassicPreset = (preset: "today" | "yesterday" | "7d" | "this_month" | "last_month" | "ytd") => {
+    const now = new Date();
+    let s = "";
+    let e = now.toISOString().slice(0, 10);
+    if (preset === "today") {
+      s = e;
+    } else if (preset === "yesterday") {
+      const d = new Date(); d.setDate(d.getDate() - 1);
+      s = d.toISOString().slice(0, 10);
+      e = s;
+    } else if (preset === "7d") {
+      const d = new Date(); d.setDate(d.getDate() - 7);
+      s = d.toISOString().slice(0, 10);
+    } else if (preset === "this_month") {
+      s = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    } else if (preset === "last_month") {
+      s = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+      e = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().slice(0, 10);
+    } else if (preset === "ytd") {
+      s = new Date(now.getFullYear(), 0, 1).toISOString().slice(0, 10);
+    }
+    setClassicStart(s);
+    setClassicEnd(e);
+    loadClassicData(s, e);
+  };
 
   const getAuthHeaders = (): Record<string, string> => {
     const headers: Record<string, string> = {};
@@ -184,17 +212,24 @@ export default function ReportsPage() {
   };
 
   // Load Classic Data
-  const loadClassicData = async () => {
+  const loadClassicData = async (overrideStart?: string, overrideEnd?: string) => {
     setClassicLoading(true);
     setClassicError("");
     try {
-      const params = new URLSearchParams({ start_date: classicStart, end_date: classicEnd });
+      const s = overrideStart || classicStart;
+      const e = overrideEnd || classicEnd;
+      const params = new URLSearchParams({ start_date: s, end_date: e });
       const response = await fetch(`${API_BASE_URL}/reports/summary?${params.toString()}`, {
         headers: getAuthHeaders(),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || "Unable to load reports");
       setClassicData(payload);
+      // If a staff member was selected in drawer, refresh their activity from the latest payload
+      if (selectedStaffMember) {
+        const updated = (payload.staff_performance || []).find((m: any) => m.user_id === selectedStaffMember.user_id);
+        if (updated) setSelectedStaffMember(updated);
+      }
     } catch (err: any) {
       setClassicError(err.message || "Unable to load reports");
     } finally {
@@ -263,9 +298,9 @@ export default function ReportsPage() {
         format(m.month), format(m.leads), format(m.clients_onboarded), format(m.deals_won), format(m.emails), format(m.calls), format(m.meetings)
       ]);
     } else if (classicTab === "staff_performance") {
-      headers = ["Staff member", "Role", "Total work", "Calls", "Meetings", "Completed tasks", "Tickets", "Cases"];
+      headers = ["Staff member", "Role", "Total work", "Won revenue", "Won deals", "Calls", "Meetings", "Follow-ups", "Leads", "Tasks done"];
       rows = (classicData.staff_performance || []).map((s: any) => [
-        format(s.name), format(s.role), format(s.total_work), format(s.calls), format(s.meetings), format(s.completed_tasks), format(s.tickets), format(s.cases)
+        format(s.name), format(s.role), format(s.total_work), money(s.won_revenue, currency), format(s.deals_won), format(s.calls), format(s.meetings), format(s.followups), format(s.leads), format(s.completed_tasks)
       ]);
     } else if (classicTab === "lead_sources") {
       headers = ["Lead source", "Leads", "Converted", "Conversion %"];
@@ -301,8 +336,10 @@ export default function ReportsPage() {
       },
       {
         title: "Staff Performance",
-        headers: ["Staff member", "Role", "Total work", "Calls", "Meetings", "Completed tasks"],
-        rows: (classicData.staff_performance || []).map((s: any) => [format(s.name), format(s.role), format(s.total_work), format(s.calls), format(s.meetings), format(s.completed_tasks)])
+        headers: ["Staff member", "Role", "Total work", "Won revenue", "Won deals", "Calls", "Meetings", "Follow-ups", "Leads", "Tasks done"],
+        rows: (classicData.staff_performance || []).map((s: any) => [
+          format(s.name), format(s.role), format(s.total_work), money(s.won_revenue, currency), format(s.deals_won), format(s.calls), format(s.meetings), format(s.followups), format(s.leads), format(s.completed_tasks)
+        ])
       },
       {
         title: "Lead Sources Performance",
@@ -382,9 +419,17 @@ export default function ReportsPage() {
     );
   }, [data?.sales_reps, data?.reps, repSearch]);
   const classicSummary = classicData?.summary || {};
-  const staffRows = useMemo(() => (classicData?.staff_performance || []).map((item: any) => [
-    item.name, item.role, item.total_work, item.calls, item.meetings, item.completed_tasks, item.tickets, item.cases
-  ]), [classicData]);
+  const filteredStaffPerformance = useMemo(() => {
+    const list = classicData?.staff_performance || [];
+    if (!list.length) return [];
+    if (!staffSearch.trim()) return list;
+    const q = staffSearch.toLowerCase();
+    return list.filter((s: any) =>
+      (s.name || "").toLowerCase().includes(q) ||
+      (s.email || "").toLowerCase().includes(q) ||
+      (s.role || "").toLowerCase().includes(q)
+    );
+  }, [classicData?.staff_performance, staffSearch]);
 
   if (role !== "Admin" && role !== "SuperAdmin") {
     return (
@@ -961,12 +1006,33 @@ export default function ReportsPage() {
                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold dark:border-zinc-800 dark:bg-zinc-900"
               />
               <button
-                onClick={loadClassicData}
+                onClick={() => loadClassicData()}
                 className="rounded-xl bg-indigo-600 p-2.5 text-white hover:bg-indigo-700"
                 title="Refresh Classic Reports"
               >
                 <RefreshCw size={15} className={classicLoading ? "animate-spin" : ""} />
               </button>
+
+              {/* Quick Presets */}
+              <div className="hidden sm:flex items-center gap-1.5 border-l border-slate-200 pl-3 dark:border-zinc-800">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Presets:</span>
+                {[
+                  { key: "today", label: "Today" },
+                  { key: "yesterday", label: "Yesterday" },
+                  { key: "7d", label: "7D" },
+                  { key: "this_month", label: "This Month" },
+                  { key: "last_month", label: "Last Month" },
+                  { key: "ytd", label: "YTD" },
+                ].map(p => (
+                  <button
+                    key={p.key}
+                    onClick={() => applyClassicPreset(p.key as any)}
+                    className="rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 transition hover:bg-indigo-50 hover:text-indigo-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 dark:hover:text-white"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="text-xs text-slate-500 dark:text-zinc-400">
@@ -992,10 +1058,10 @@ export default function ReportsPage() {
             <ClassicStat label="Calls" value={classicSummary.calls || 0} icon={<Phone size={16} />} tone="bg-cyan-600" />
             <ClassicStat label="Meetings" value={classicSummary.meetings || 0} icon={<CalendarDays size={16} />} tone="bg-fuchsia-600" />
             <ClassicStat
-              label="Work items"
-              value={(classicSummary.activities || 0) + (classicSummary.tickets || 0) + (classicSummary.task_entries || 0)}
-              icon={<BarChart3 size={16} />}
-              tone="bg-slate-700"
+              label="Follow-ups"
+              value={classicSummary.followups || 0}
+              icon={<CalendarClock size={16} />}
+              tone="bg-indigo-700"
             />
           </div>
 
@@ -1107,10 +1173,315 @@ export default function ReportsPage() {
               )}
 
               {classicTab === "staff_performance" && (
-                <ClassicTable
-                  headers={["Staff member", "Role", "Total work", "Calls", "Meetings", "Completed tasks", "Tickets", "Cases"]}
-                  rows={staffRows}
-                />
+                <div className="space-y-4">
+                  {/* Staff Performance Header & Filter Bar */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm">
+                        <Users size={16} />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                          Staff Performance Activity & Workload
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-zinc-400">
+                          Complete operational production across calls, meetings, follow-ups, leads, and closed revenue for <strong>{classicStart}</strong> to <strong>{classicEnd}</strong>.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="relative w-full sm:w-72">
+                      <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={staffSearch}
+                        onChange={e => setStaffSearch(e.target.value)}
+                        placeholder="Search staff by name or role..."
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs font-bold outline-none transition focus:border-indigo-500 dark:border-zinc-700 dark:bg-zinc-800"
+                      />
+                      {staffSearch && (
+                        <button
+                          onClick={() => setStaffSearch("")}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Staff Performance Table */}
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                    <table className="w-full text-left text-sm">
+                      <thead className="border-b border-slate-100 bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400 dark:border-zinc-800 dark:bg-zinc-950">
+                        <tr>
+                          <th className="px-4 py-3.5">Staff Member</th>
+                          <th className="px-4 py-3.5">Role</th>
+                          <th className="px-4 py-3.5 text-center">Total Work</th>
+                          <th className="px-4 py-3.5 text-right">Won Revenue</th>
+                          <th className="px-4 py-3.5 text-center">Deals Won</th>
+                          <th className="px-4 py-3.5 text-center">Calls</th>
+                          <th className="px-4 py-3.5 text-center">Meetings</th>
+                          <th className="px-4 py-3.5">Follow-ups (Channels)</th>
+                          <th className="px-4 py-3.5 text-center">Leads Handled</th>
+                          <th className="px-4 py-3.5 text-center">Tasks Done</th>
+                          <th className="px-4 py-3.5 text-right">Activity Feed</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
+                        {filteredStaffPerformance.length ? filteredStaffPerformance.map((s: any) => (
+                          <tr key={s.user_id} className="hover:bg-slate-50/80 transition-colors dark:hover:bg-zinc-800/40">
+                            <td className="whitespace-nowrap px-4 py-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 font-black text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                                  {s.name?.charAt(0) || "U"}
+                                </div>
+                                <div>
+                                  <p className="text-xs font-black text-slate-900 dark:text-white">{s.name}</p>
+                                  <p className="text-[10px] text-slate-400">{s.email}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-black uppercase text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                {s.role}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-center">
+                              <span className="inline-block rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-black text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-400">
+                                {s.total_work || 0}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right">
+                              <span className="font-black text-emerald-600 dark:text-emerald-400">
+                                {money(s.won_revenue || 0, currency)}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-center font-bold text-slate-700 dark:text-zinc-300">
+                              {s.deals_won || 0}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-center font-bold text-slate-700 dark:text-zinc-300">
+                              {s.calls || 0}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-center font-bold text-slate-700 dark:text-zinc-300">
+                              {s.meetings || 0}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3">
+                              <div className="flex items-center gap-1.5 flex-wrap max-w-xs">
+                                <span className="font-black text-slate-900 dark:text-white mr-1">
+                                  {s.followups || 0}
+                                </span>
+                                {s.followups_breakdown?.webinar > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700 dark:bg-purple-950/60 dark:text-purple-300">
+                                    <Presentation size={9} /> {s.followups_breakdown.webinar} Webinar
+                                  </span>
+                                )}
+                                {s.followups_breakdown?.walkin > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                                    <Building2 size={9} /> {s.followups_breakdown.walkin} Walk-in
+                                  </span>
+                                )}
+                                {s.followups_breakdown?.normal > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                                    <CalendarClock size={9} /> {s.followups_breakdown.normal} Normal
+                                  </span>
+                                )}
+                                {s.followups_breakdown?.call > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-cyan-100 px-1.5 py-0.5 text-[9px] font-bold text-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-300">
+                                    <Phone size={9} /> {s.followups_breakdown.call} Call
+                                  </span>
+                                )}
+                                {s.followups_breakdown?.meeting > 0 && (
+                                  <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+                                    <Video size={9} /> {s.followups_breakdown.meeting} Meet
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-center">
+                              <span className="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                                {s.leads || 0} <span className="text-[10px] text-emerald-600 dark:text-emerald-400">({s.leads_converted || 0} converted)</span>
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-center font-bold text-slate-700 dark:text-zinc-300">
+                              {s.completed_tasks || 0}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-right">
+                              <button
+                                onClick={() => setSelectedStaffMember(s)}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-black text-white shadow-sm hover:bg-indigo-600 transition dark:bg-white dark:text-slate-900 dark:hover:bg-indigo-500 dark:hover:text-white"
+                              >
+                                <Eye size={13} /> View Entire Activity
+                              </button>
+                            </td>
+                          </tr>
+                        )) : (
+                          <tr>
+                            <td colSpan={11} className="px-4 py-12 text-center text-sm text-slate-400">
+                              No staff records found for the selected date range ({classicStart} to {classicEnd}).
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* ── ENTIRE ACTIVITY TIMELINE DRAWER / MODAL ── */}
+                  {selectedStaffMember && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                      <div className="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 overflow-hidden">
+                        {/* Drawer Header */}
+                        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                          <div className="flex items-center gap-3.5">
+                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-lg font-black text-white shadow-sm">
+                              {selectedStaffMember.name?.charAt(0) || "U"}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                                  {selectedStaffMember.name}
+                                </h3>
+                                <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[10px] font-black uppercase text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                                  {selectedStaffMember.role}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 dark:text-zinc-400">
+                                Entire Activity Log from <strong>{classicStart}</strong> to <strong>{classicEnd}</strong> • {selectedStaffMember.email}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setSelectedStaffMember(null)}
+                            className="rounded-xl p-2 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-zinc-800 dark:hover:text-white transition"
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+
+                        {/* Quick KPI Strip inside Drawer */}
+                        <div className="grid grid-cols-2 gap-3 border-b border-slate-100 bg-white p-4 sm:grid-cols-4 dark:border-zinc-800 dark:bg-zinc-900">
+                          <div className="rounded-xl bg-slate-50 p-3 dark:bg-zinc-800/60">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Activities</span>
+                            <p className="text-xl font-black text-indigo-600 dark:text-indigo-400">
+                              {selectedStaffMember.total_work || 0}
+                            </p>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-3 dark:bg-zinc-800/60">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Won Revenue</span>
+                            <p className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+                              {money(selectedStaffMember.won_revenue || 0, currency)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-3 dark:bg-zinc-800/60">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Calls & Meetings</span>
+                            <p className="text-xl font-black text-slate-900 dark:text-white">
+                              {(selectedStaffMember.calls || 0) + (selectedStaffMember.meetings || 0)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl bg-slate-50 p-3 dark:bg-zinc-800/60">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Follow-ups</span>
+                            <p className="text-xl font-black text-amber-600 dark:text-amber-400">
+                              {selectedStaffMember.followups || 0}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Chronological Activity Timeline */}
+                        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                          <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">
+                            Chronological Event Feed ({selectedStaffMember.activity_timeline?.length || 0} Events)
+                          </h4>
+
+                          {selectedStaffMember.activity_timeline?.length ? (
+                            <div className="space-y-3">
+                              {selectedStaffMember.activity_timeline.map((act: any, idx: number) => {
+                                let badgeColor = "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300";
+                                let IconEl = Calendar;
+                                if (act.type === "call") {
+                                  badgeColor = "bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300";
+                                  IconEl = Phone;
+                                } else if (act.type === "meeting") {
+                                  badgeColor = "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300";
+                                  IconEl = Video;
+                                } else if (act.type === "followup") {
+                                  const c = (act.channel || "").toLowerCase();
+                                  if (c.includes("webinar")) {
+                                    badgeColor = "bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300";
+                                    IconEl = Presentation;
+                                  } else if (c.includes("walk")) {
+                                    badgeColor = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300";
+                                    IconEl = Building2;
+                                  } else {
+                                    badgeColor = "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300";
+                                    IconEl = CalendarClock;
+                                  }
+                                } else if (act.type === "deal") {
+                                  badgeColor = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300";
+                                  IconEl = Award;
+                                } else if (act.type === "lead") {
+                                  badgeColor = "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300";
+                                  IconEl = Target;
+                                }
+
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 transition hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-900/40"
+                                  >
+                                    <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${badgeColor}`}>
+                                      <IconEl size={16} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <h5 className="text-xs font-black text-slate-900 dark:text-white">
+                                            {act.title}
+                                          </h5>
+                                          {act.channel && (
+                                            <span className="rounded-md bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-zinc-800 dark:text-zinc-300">
+                                              {act.channel}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="text-[10px] font-bold text-slate-400">
+                                          {act.date ? new Date(act.date).toLocaleString() : "Date N/A"}
+                                        </span>
+                                      </div>
+                                      <p className="mt-1 text-xs text-slate-600 dark:text-zinc-300 leading-relaxed">
+                                        {act.details}
+                                      </p>
+                                    </div>
+                                    <span className="shrink-0 rounded-full bg-slate-200/60 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">
+                                      {act.status}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl border-2 border-dashed border-slate-200 p-8 text-center text-xs text-slate-400 dark:border-zinc-800">
+                              No activity recorded for {selectedStaffMember.name} in this date range ({classicStart} to {classicEnd}).
+                              Try adjusting the date range or clicking a preset above.
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Drawer Footer */}
+                        <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/70 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+                          <span className="text-xs text-slate-400">
+                            Showing activities for <strong>{selectedStaffMember.name}</strong>
+                          </span>
+                          <button
+                            onClick={() => setSelectedStaffMember(null)}
+                            className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900"
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
 
               {classicTab === "lead_sources" && (

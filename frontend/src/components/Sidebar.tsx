@@ -76,15 +76,13 @@ const defaultSidebarSections = [
       { id: "item-leads", name: "Leads", icon: "Radar", href: "/leads", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-contacts", name: "Contacts", icon: "Users", href: "/contacts", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-clients", name: "Clients", icon: "CheckCircle", href: "/clients", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-deals", name: "Deals", icon: "Briefcase", href: "/pipeline", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-dropped-clients", name: "Dropped Clients", icon: "UserX", href: "/dropped-clients", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
     ],
   },
   {
     id: "section-projects",
-    heading: "PROJECTS & ACTIVITIES",
+    heading: "ACTIVITIES",
     items: [
-      { id: "item-projects", name: "Projects", icon: "FolderOpen", href: "/projects", roles: ["Admin", "Employee", "Intern", "ProjectMember", "Demo"] },
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-follow-ups", name: "Follow-ups", icon: "CalendarClock", href: "/follow-ups", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
@@ -98,7 +96,6 @@ const defaultSidebarSections = [
     items: [
       { id: "item-teams", name: "Team Directory", icon: "Users", href: "/teams", roles: ["Admin", "Demo"] },
       { id: "item-leaderboard", name: "Leaderboard", icon: "Trophy", href: "/admin/leaderboard", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-ownership", name: "Ownership Report", icon: "Users", href: "/ownership", roles: ["Admin", "Demo"] },
     ],
   },
   {
@@ -464,9 +461,17 @@ export function Sidebar({ role }: SidebarProps) {
 
             const stripDisabled = (sec: any) => ({
               ...sec,
+              heading: sec.heading === "PROJECTS & ACTIVITIES" ? "ACTIVITIES" : sec.heading,
               items: (sec.items || []).filter((i: any) =>
                 !String(i.id || "").toLowerCase().includes("automation") &&
-                !String(i.href || "").toLowerCase().includes("automation")),
+                !String(i.href || "").toLowerCase().includes("automation") &&
+                i.id !== "item-deals" &&
+                i.id !== "item-projects" &&
+                i.id !== "item-ownership" &&
+                i.href !== "/pipeline" &&
+                i.href !== "/projects" &&
+                i.href !== "/ownership"
+              ),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             
