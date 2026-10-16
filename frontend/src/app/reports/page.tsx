@@ -12,9 +12,12 @@ import {
   Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, 
   ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, 
   BriefcaseBusiness, FileSpreadsheet, ShieldCheck, Eye, X, Video, Presentation, 
-  CalendarClock, MessageCircle, Send, Copy, Check, Bot, Lightbulb, Compass, ArrowRight 
+  CalendarClock, MessageCircle, Send, Copy, Check, Bot, Lightbulb, Compass, ArrowRight,
+  SlidersHorizontal, FileCode, BarChart2, CheckCheck
 } from "lucide-react";
 import { jsPDF } from "jspdf";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import {
@@ -128,6 +131,8 @@ export default function ReportsPage() {
   const [aiQuickPrompts, setAiQuickPrompts] = useState<any[]>([]);
   const [aiRepsList, setAiRepsList] = useState<any[]>([]);
   const [aiCopied, setAiCopied] = useState<boolean>(false);
+  const [aiReportView, setAiReportView] = useState<"dossier" | "raw">("dossier");
+  const [aiActiveVisualTab, setAiActiveVisualTab] = useState<"revenue" | "closure" | "outcomes" | "dealsize">("revenue");
 
   // ── Executive State ──
   const [rangePreset, setRangePreset] = useState<string>("12m");
@@ -304,13 +309,27 @@ export default function ReportsPage() {
     }
   };
 
+  const downloadMarkdownFile = () => {
+    if (!aiReport?.detailed_markdown) return;
+    const blob = new Blob([aiReport.detailed_markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const cleanTitle = (aiReport.title || "CRM_Sales_Comparison_Dossier").replace(/[^a-zA-Z0-9_-]/g, "_");
+    a.download = `${cleanTitle}_${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const downloadAiReportPdf = () => {
     if (!aiReport) return;
     const doc = new jsPDF();
     doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(15, 23, 42);
-    doc.text(aiReport.title || "CRM AI Intelligence Report", 14, 18);
+    doc.text(aiReport.title || "CRM Executive Sales Intelligence Dossier", 14, 18);
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100, 116, 139);
-    doc.text(`Generated: ${new Date(aiReport.generated_at || Date.now()).toLocaleString()} | Engine: ${aiReport.ai_engine || "CRM Intelligence"} | Currency: ${currency}`, 14, 25);
+    doc.text(`Generated: ${new Date(aiReport.generated_at || Date.now()).toLocaleString()} | Perspective: Business Owner / C-Suite | Currency: ${currency}`, 14, 25);
     doc.setFont("helvetica", "italic"); doc.setFontSize(10); doc.setTextColor(51, 65, 85);
     const summaryLines = doc.splitTextToSize(aiReport.summary || "", 180);
     doc.text(summaryLines, 14, 32);
@@ -318,40 +337,67 @@ export default function ReportsPage() {
 
     if (aiReport.kpis && aiReport.kpis.length > 0) {
       const kpiRows = aiReport.kpis.map((k: any) => [k.label, k.value, k.sub || ""]);
-      yOffset = drawPdfTable(doc, ["KPI Metric", "Value", "Context"], kpiRows, yOffset);
+      yOffset = drawPdfTable(doc, ["Executive KPI", "Value", "Business Owner Meaning"], kpiRows, yOffset);
       yOffset += 8;
     }
 
     if (aiReport.comparison_table?.headers && aiReport.comparison_table?.rows) {
-      if (yOffset > 220) {
+      if (yOffset > 210) {
         doc.addPage();
         yOffset = 18;
       }
       doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
-      doc.text("Performance Breakdown Matrix", 14, yOffset);
+      doc.text("Head-to-Head Commercial Performance Matrix", 14, yOffset);
       yOffset += 6;
       yOffset = drawPdfTable(doc, aiReport.comparison_table.headers, aiReport.comparison_table.rows, yOffset);
       yOffset += 8;
     }
 
     if (aiReport.insights && aiReport.insights.length > 0) {
-      if (yOffset > 220) {
+      if (yOffset > 210) {
         doc.addPage();
         yOffset = 18;
       }
       doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
-      doc.text("Strategic Insights & Observations", 14, yOffset);
+      doc.text("Strategic Insights & Bottom-Line Analysis", 14, yOffset);
       yOffset += 6;
       aiReport.insights.forEach((ins: string) => {
         const clean = ins.replace(/\*\*/g, "");
         const lines = doc.splitTextToSize(`• ${clean}`, 180);
         doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(51, 65, 85);
+        if (yOffset + (lines.length * 5) > 275) {
+          doc.addPage();
+          yOffset = 18;
+        }
+        doc.text(lines, 14, yOffset);
+        yOffset += lines.length * 5 + 2;
+      });
+      yOffset += 6;
+    }
+
+    if (aiReport.recommendations && aiReport.recommendations.length > 0) {
+      if (yOffset > 210) {
+        doc.addPage();
+        yOffset = 18;
+      }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+      doc.text("Actionable Directives for Executive Leadership", 14, yOffset);
+      yOffset += 6;
+      aiReport.recommendations.forEach((rec: string, i: number) => {
+        const clean = rec.replace(/\*\*/g, "");
+        const lines = doc.splitTextToSize(`${i + 1}. ${clean}`, 180);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(30, 41, 59);
+        if (yOffset + (lines.length * 5) > 275) {
+          doc.addPage();
+          yOffset = 18;
+        }
         doc.text(lines, 14, yOffset);
         yOffset += lines.length * 5 + 2;
       });
     }
 
-    doc.save(`ai-crm-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+    const cleanFileTitle = (aiReport.title || "CRM_Executive_Report").toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    doc.save(`${cleanFileTitle}_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
   useEffect(() => {
@@ -633,11 +679,19 @@ export default function ReportsPage() {
           ) : viewMode === "ai" ? (
             <div className="flex items-center gap-2">
               <button
+                onClick={downloadMarkdownFile}
+                disabled={!aiReport || aiLoading}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-black text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                title="Download report as Raw Markdown (.md)"
+              >
+                <Download size={14} className="text-indigo-600 dark:text-indigo-400" /> Download .md
+              </button>
+              <button
                 onClick={downloadAiReportPdf}
                 disabled={!aiReport || aiLoading}
-                className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
               >
-                <Download size={14} /> Export AI PDF
+                <Download size={14} /> Export PDF
               </button>
               <button
                 onClick={() => {
@@ -648,7 +702,7 @@ export default function ReportsPage() {
                   }
                 }}
                 disabled={!aiReport || aiLoading}
-                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
               >
                 {aiCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                 {aiCopied ? "Copied" : "Copy Markdown"}
@@ -1952,62 +2006,235 @@ export default function ReportsPage() {
                 </div>
               )}
 
-              {/* Visual Comparison Charts */}
+              {/* Executive Visual Comparison Center (Business Owner POV - Guaranteed Working Graphs) */}
               {aiReport.chart_data?.items && aiReport.chart_data.items.length > 0 && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Chart 1: Revenue vs Pipeline */}
-                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                    <div className="mb-4 flex items-center justify-between">
-                      <div>
-                        <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                          <IndianRupee size={15} className="text-emerald-500" /> Won Revenue vs Active Pipeline Value
-                        </h3>
-                        <p className="text-xs text-slate-400">Booked revenue vs near-term opportunities by representative</p>
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4 dark:border-zinc-800">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400">
+                          Interactive Visualizer
+                        </span>
+                        <span className="text-xs text-slate-400">•</span>
+                        <span className="text-xs font-semibold text-slate-500">Business Owner Commercial Audit</span>
                       </div>
+                      <h3 className="mt-1 text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <BarChart2 size={18} className="text-indigo-600" /> Commercial Performance Comparison Visuals
+                      </h3>
                     </div>
-                    <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={aiReport.chart_data.items} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} interval={0} angle={-25} textAnchor="end" />
-                          <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
-                          <Tooltip
-                            formatter={(value: any) => [`${currency === "USD" ? "$" : "₹"}${Number(value).toLocaleString()}`, ""]}
-                            contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)" }}
-                          />
-                          <Bar dataKey="won_revenue" name="Won Revenue" fill="#10b981" radius={[4, 4, 0, 0]} />
-                          <Bar dataKey="pipeline_value" name="Open Pipeline" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+
+                    {/* Visualizer Tab Switcher */}
+                    <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 bg-slate-100 p-1 dark:border-zinc-800 dark:bg-zinc-800/80">
+                      {[
+                        { id: "revenue", label: "Revenue Share %", icon: <IndianRupee size={13} /> },
+                        { id: "closure", label: "Win Rate vs Conv %", icon: <Target size={13} /> },
+                        { id: "outcomes", label: "Deal Outcomes", icon: <SlidersHorizontal size={13} /> },
+                        { id: "dealsize", label: "Contract ACV", icon: <TrendingUp size={13} /> },
+                      ].map((tab) => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setAiActiveVisualTab(tab.id as any)}
+                          className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all ${
+                            aiActiveVisualTab === tab.id
+                              ? "bg-white text-indigo-600 shadow-sm dark:bg-zinc-900 dark:text-white"
+                              : "text-slate-600 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white"
+                          }`}
+                        >
+                          {tab.icon}
+                          <span>{tab.label}</span>
+                        </button>
+                      ))}
                     </div>
                   </div>
 
-                  {/* Chart 2: Deal Closure Rate % vs Lead Conversion Rate % */}
-                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                    <div className="mb-4 flex items-center justify-between">
-                      <div>
-                        <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                          <Target size={15} className="text-indigo-500" /> Deal Closure Rate (%) vs Lead Conversion Rate (%)
-                        </h3>
-                        <p className="text-xs text-slate-400">Win percentage on closed deals vs lead progression</p>
+                  {/* 1. REVENUE SHARE VISUAL GRAPH */}
+                  {aiActiveVisualTab === "revenue" && (
+                    <div className="space-y-4">
+                      <div className="text-xs text-slate-500 dark:text-zinc-400 flex items-center justify-between">
+                        <span>Booked revenue realized per representative and proportion of total commercial bookings:</span>
+                        <span className="text-[11px] font-bold text-slate-400">Proportional comparison</span>
+                      </div>
+                      <div className="space-y-3">
+                        {(() => {
+                          const maxRev = Math.max(...aiReport.chart_data.items.map((it: any) => Number(it.won_revenue) || 0), 1);
+                          return aiReport.chart_data.items.map((it: any, idx: number) => {
+                            const pct = Math.max(5, Math.round(((Number(it.won_revenue) || 0) / maxRev) * 100));
+                            return (
+                              <div key={idx} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 transition hover:bg-slate-50 dark:border-zinc-800/80 dark:bg-zinc-800/40">
+                                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-indigo-100 text-xs font-black text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300">
+                                      {it.name.charAt(0)}
+                                    </div>
+                                    <div>
+                                      <span className="text-sm font-black text-slate-900 dark:text-white">{it.name}</span>
+                                      <span className="ml-2 rounded-md bg-slate-200/80 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-zinc-700 dark:text-zinc-300">
+                                        {it.role}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3 text-xs">
+                                    <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                                      {it.won_revenue_formatted || `${currency === "USD" ? "$" : "₹"}${Number(it.won_revenue || 0).toLocaleString()}`}
+                                    </span>
+                                    <span className="inline-flex items-center rounded-lg bg-emerald-100/70 px-2.5 py-0.5 font-bold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                                      {it.revenue_share_pct || 0}% share
+                                    </span>
+                                    {it.pipeline_value > 0 && (
+                                      <span className="text-[11px] font-semibold text-slate-400">
+                                        Pipeline: {it.pipeline_value_formatted}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="h-3 w-full rounded-full bg-slate-200/80 dark:bg-zinc-700 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-all duration-500"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
-                    <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={aiReport.chart_data.items} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} interval={0} angle={-25} textAnchor="end" />
-                          <YAxis tick={{ fontSize: 11, fill: "#64748b" }} unit="%" />
-                          <Tooltip
-                            formatter={(value: any) => [`${value}%`, ""]}
-                            contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)" }}
-                          />
-                          <Bar dataKey="closure_rate" name="Deal Closure Rate %" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                          <Bar dataKey="conv_rate" name="Lead Conv. Rate %" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+                  )}
+
+                  {/* 2. DEAL WIN RATE & LEAD CONVERSION */}
+                  {aiActiveVisualTab === "closure" && (
+                    <div className="space-y-4">
+                      <div className="text-xs text-slate-500 dark:text-zinc-400">
+                        Side-by-side comparison of Deal Closure Rate (Win %) against Lead Progression Conversion Rate (%):
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {aiReport.chart_data.items.map((it: any, idx: number) => {
+                          const closureVal = Number(it.closure_rate) || 0;
+                          const convVal = Number(it.lead_conversion_rate) || 0;
+                          return (
+                            <div key={idx} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-zinc-800/80 dark:bg-zinc-800/40 space-y-3">
+                              <div className="flex items-center justify-between border-b border-slate-200/60 pb-2 dark:border-zinc-700/60">
+                                <span className="font-black text-sm text-slate-900 dark:text-white">{it.name}</span>
+                                <span className="text-xs font-bold text-slate-500">{it.won_deals || 0} won / {(it.won_deals || 0) + (it.lost_deals || 0)} closed</span>
+                              </div>
+                              <div>
+                                <div className="flex justify-between text-xs font-bold mb-1">
+                                  <span className="text-indigo-600 dark:text-indigo-400">Deal Win Rate</span>
+                                  <span className="font-black text-slate-800 dark:text-white">{closureVal}%</span>
+                                </div>
+                                <div className="h-2.5 w-full rounded-full bg-slate-200 dark:bg-zinc-700 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-600"
+                                    style={{ width: `${Math.min(100, Math.max(4, closureVal))}%` }}
+                                  />
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex justify-between text-xs font-bold mb-1">
+                                  <span className="text-blue-600 dark:text-blue-400">Lead Conversion Rate</span>
+                                  <span className="font-black text-slate-800 dark:text-white">{convVal}%</span>
+                                </div>
+                                <div className="h-2.5 w-full rounded-full bg-slate-200 dark:bg-zinc-700 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-500"
+                                    style={{ width: `${Math.min(100, Math.max(4, convVal))}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
+
+                  {/* 3. DEAL OUTCOMES STACKED BAR */}
+                  {aiActiveVisualTab === "outcomes" && (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="text-slate-500 dark:text-zinc-400">Distribution of Won, In-Negotiation (Open), and Lost opportunities:</span>
+                        <div className="flex items-center gap-3 font-bold text-[11px]">
+                          <span className="flex items-center gap-1 text-emerald-600"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500"></span> Won</span>
+                          <span className="flex items-center gap-1 text-indigo-600"><span className="h-2.5 w-2.5 rounded-full bg-indigo-500"></span> In Negotiation</span>
+                          <span className="flex items-center gap-1 text-rose-500"><span className="h-2.5 w-2.5 rounded-full bg-rose-400"></span> Lost</span>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {aiReport.chart_data.items.map((it: any, idx: number) => {
+                          const total = (it.won_deals || 0) + (it.open_deals || 0) + (it.lost_deals || 0) || 1;
+                          const wonPct = Math.round(((it.won_deals || 0) / total) * 100);
+                          const openPct = Math.round(((it.open_deals || 0) / total) * 100);
+                          const lostPct = 100 - wonPct - openPct;
+
+                          return (
+                            <div key={idx} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-zinc-800/80 dark:bg-zinc-800/40">
+                              <div className="flex items-center justify-between mb-2 text-xs font-bold">
+                                <span className="font-black text-slate-900 dark:text-white text-sm">{it.name}</span>
+                                <span className="text-slate-500">{total} total opportunities</span>
+                              </div>
+                              <div className="h-4 w-full rounded-full bg-slate-200 dark:bg-zinc-700 overflow-hidden flex">
+                                {it.won_deals > 0 && (
+                                  <div
+                                    title={`${it.won_deals} Won Deals (${wonPct}%)`}
+                                    className="h-full bg-emerald-500 transition-all text-[9px] font-black text-white flex items-center justify-center"
+                                    style={{ width: `${wonPct}%` }}
+                                  >
+                                    {wonPct >= 15 ? `${it.won_deals}W` : ""}
+                                  </div>
+                                )}
+                                {it.open_deals > 0 && (
+                                  <div
+                                    title={`${it.open_deals} Open Deals (${openPct}%)`}
+                                    className="h-full bg-indigo-500 transition-all text-[9px] font-black text-white flex items-center justify-center"
+                                    style={{ width: `${openPct}%` }}
+                                  >
+                                    {openPct >= 15 ? `${it.open_deals}O` : ""}
+                                  </div>
+                                )}
+                                {it.lost_deals > 0 && (
+                                  <div
+                                    title={`${it.lost_deals} Lost Deals (${lostPct}%)`}
+                                    className="h-full bg-rose-400 transition-all text-[9px] font-black text-white flex items-center justify-center"
+                                    style={{ width: `${lostPct}%` }}
+                                  >
+                                    {lostPct >= 15 ? `${it.lost_deals}L` : ""}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 4. CONTRACT ACV & TOUCHPOINTS */}
+                  {aiActiveVisualTab === "dealsize" && (
+                    <div className="space-y-4">
+                      <div className="text-xs text-slate-500 dark:text-zinc-400">
+                        Average contract ticket size (ACV) and client engagement touches logged:
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {aiReport.chart_data.items.map((it: any, idx: number) => (
+                          <div key={idx} className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4 dark:border-zinc-800/80 dark:bg-zinc-800/40">
+                            <span className="text-sm font-black text-slate-900 dark:text-white">{it.name}</span>
+                            <div className="mt-3 flex items-baseline justify-between">
+                              <span className="text-[11px] font-bold text-slate-400 uppercase">Avg Contract Size</span>
+                              <span className="text-base font-black text-indigo-600 dark:text-indigo-400">
+                                {it.avg_deal_size_formatted || `${currency === "USD" ? "$" : "₹"}${Number(it.avg_deal_size || 0).toLocaleString()}`}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-zinc-400 border-t border-slate-200/60 pt-2 dark:border-zinc-700/60">
+                              <span>Activity Touches:</span>
+                              <span className="font-bold text-slate-700 dark:text-zinc-200">
+                                {it.calls_count || 0} calls • {it.meetings_count || 0} meetings
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2118,28 +2345,147 @@ export default function ReportsPage() {
                 )}
               </div>
 
-              {/* Full Markdown Narrative Section */}
+              {/* Full Markdown Narrative Section (Executive Boardroom Dossier) */}
               {aiReport.detailed_markdown && (
                 <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                  <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3 dark:border-zinc-800">
-                    <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                      <FileText size={16} className="text-slate-600" /> Detailed Report Narrative
-                    </h3>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(aiReport.detailed_markdown);
-                        setAiCopied(true);
-                        setTimeout(() => setAiCopied(false), 2000);
-                      }}
-                      className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
-                    >
-                      {aiCopied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
-                      {aiCopied ? "Copied" : "Copy Raw Markdown"}
-                    </button>
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4 dark:border-zinc-800">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400">
+                          Primary Report Artifact
+                        </span>
+                        <span className="text-xs text-slate-400">•</span>
+                        <span className="text-xs font-semibold text-slate-500">Boardroom Quality Markdown</span>
+                      </div>
+                      <h3 className="mt-1 text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <FileText size={18} className="text-indigo-600" /> Executive Commercial Dossier
+                      </h3>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* View Switcher: Rendered vs Raw Markdown */}
+                      <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-800">
+                        <button
+                          type="button"
+                          onClick={() => setAiReportView("dossier")}
+                          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                            aiReportView === "dossier"
+                              ? "bg-white text-indigo-600 shadow-sm dark:bg-zinc-900 dark:text-white"
+                              : "text-slate-600 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white"
+                          }`}
+                        >
+                          <FileText size={13} /> Rendered Dossier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAiReportView("raw")}
+                          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                            aiReportView === "raw"
+                              ? "bg-white text-indigo-600 shadow-sm dark:bg-zinc-900 dark:text-white"
+                              : "text-slate-600 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white"
+                          }`}
+                        >
+                          <FileCode size={13} /> Raw Markdown
+                        </button>
+                      </div>
+
+                      {/* Download .md */}
+                      <button
+                        onClick={downloadMarkdownFile}
+                        className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                        title="Download Raw Markdown (.md)"
+                      >
+                        <Download size={13} className="text-indigo-600 dark:text-indigo-400" /> .md
+                      </button>
+
+                      {/* Download PDF */}
+                      <button
+                        onClick={downloadAiReportPdf}
+                        className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                        title="Download formatted PDF"
+                      >
+                        <Download size={13} className="text-indigo-600 dark:text-indigo-400" /> PDF
+                      </button>
+
+                      {/* Copy Raw Markdown */}
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(aiReport.detailed_markdown);
+                          setAiCopied(true);
+                          setTimeout(() => setAiCopied(false), 2000);
+                        }}
+                        className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                      >
+                        {aiCopied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+                        {aiCopied ? "Copied" : "Copy"}
+                      </button>
+                    </div>
                   </div>
-                  <div className="prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed text-slate-700 dark:text-zinc-300 whitespace-pre-line">
-                    {aiReport.detailed_markdown}
-                  </div>
+
+                  {/* Rendered View */}
+                  {aiReportView === "dossier" ? (
+                    <div className="prose prose-slate dark:prose-invert max-w-none text-xs leading-relaxed">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          table: ({ node, ...props }) => (
+                            <div className="overflow-x-auto my-4 rounded-2xl border border-slate-200 dark:border-zinc-800 shadow-sm">
+                              <table className="w-full text-left text-xs" {...props} />
+                            </div>
+                          ),
+                          thead: ({ node, ...props }) => (
+                            <thead className="bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 font-black uppercase text-[10px] tracking-wider border-b border-slate-200 dark:border-zinc-700" {...props} />
+                          ),
+                          th: ({ node, ...props }) => (
+                            <th className="px-4 py-3 whitespace-nowrap" {...props} />
+                          ),
+                          td: ({ node, ...props }) => (
+                            <td className="px-4 py-3 border-b border-slate-100 dark:border-zinc-800 text-slate-800 dark:text-zinc-200" {...props} />
+                          ),
+                          h1: ({ node, ...props }) => (
+                            <h1 className="text-xl font-black text-slate-900 dark:text-white mt-6 mb-3 border-b border-slate-200 dark:border-zinc-800 pb-2" {...props} />
+                          ),
+                          h2: ({ node, ...props }) => (
+                            <h2 className="text-base font-black text-indigo-700 dark:text-indigo-400 mt-6 mb-3 flex items-center gap-2" {...props} />
+                          ),
+                          h3: ({ node, ...props }) => (
+                            <h3 className="text-sm font-bold text-slate-900 dark:text-white mt-4 mb-2" {...props} />
+                          ),
+                          blockquote: ({ node, ...props }) => (
+                            <blockquote className="border-l-4 border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/30 p-4 rounded-r-2xl my-3 text-slate-700 dark:text-zinc-300 italic" {...props} />
+                          ),
+                          ul: ({ node, ...props }) => (
+                            <ul className="space-y-1.5 my-2.5 list-disc pl-5 text-xs text-slate-700 dark:text-zinc-300" {...props} />
+                          ),
+                          ol: ({ node, ...props }) => (
+                            <ol className="space-y-1.5 my-2.5 list-decimal pl-5 text-xs text-slate-700 dark:text-zinc-300" {...props} />
+                          ),
+                          li: ({ node, ...props }) => (
+                            <li className="leading-relaxed" {...props} />
+                          ),
+                          strong: ({ node, ...props }) => (
+                            <strong className="font-black text-slate-900 dark:text-white" {...props} />
+                          ),
+                          hr: ({ node, ...props }) => (
+                            <hr className="my-6 border-slate-200 dark:border-zinc-800" {...props} />
+                          ),
+                        }}
+                      >
+                        {aiReport.detailed_markdown}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    /* Raw Markdown View */
+                    <div className="relative">
+                      <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                        <span>raw_markdown_output.md • UTF-8</span>
+                        <span>{aiReport.detailed_markdown.split(/\s+/).length} words</span>
+                      </div>
+                      <pre className="overflow-x-auto rounded-2xl bg-slate-950 p-6 text-xs text-slate-100 font-mono whitespace-pre-wrap leading-relaxed selection:bg-indigo-500/30 border border-slate-800">
+                        {aiReport.detailed_markdown}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
