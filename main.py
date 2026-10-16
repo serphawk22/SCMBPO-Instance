@@ -636,6 +636,10 @@ app.include_router(scm2_router, prefix="/scm2")
 from routers.command_center import router as command_center_router
 app.include_router(command_center_router)
 
+# AI Reports: Natural-language prompt-based CRM reporting & sales conversion analysis
+from routers.ai_reports import router as ai_reports_router
+app.include_router(ai_reports_router)
+
 @app.on_event("startup")
 def _scm2_startup():
     try:
