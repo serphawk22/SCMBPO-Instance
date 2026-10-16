@@ -186,217 +186,298 @@ def _get_crm_snapshot(session: Session, start_date_str: Optional[str] = None, en
     }
 
 
-def _detect_target_rep(prompt: str, rep_id: Optional[int], reps: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _detect_mentioned_reps(prompt: str, rep_id: Optional[int], reps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Detect all sales reps referenced in the prompt, or matching rep_id."""
     if rep_id:
         for r in reps:
             if r["id"] == rep_id:
-                return r
+                return [r]
 
     p_lower = prompt.lower()
+    found: List[Dict[str, Any]] = []
     for r in reps:
-        name_parts = r["name"].lower().split()
-        for part in name_parts:
-            if len(part) >= 3 and part in p_lower:
-                return r
-        if r["email"].lower() in p_lower:
-            return r
-    return None
+        full_name = r["name"].lower()
+        if full_name in p_lower:
+            if r not in found:
+                found.append(r)
+            continue
+        # Match by distinct first name / name tokens (>= 3 chars)
+        tokens = [t for t in full_name.split() if len(t) >= 3]
+        for t in tokens:
+            if re.search(r'\b' + re.escape(t) + r'\b', p_lower):
+                if r not in found:
+                    found.append(r)
+                break
+    return found
 
 
-def _generate_deterministic_report(prompt: str, snapshot: Dict[str, Any], target_rep: Optional[Dict[str, Any]], currency: str = "INR") -> Dict[str, Any]:
-    reps = snapshot["reps"]
+def _generate_deterministic_report(prompt: str, snapshot: Dict[str, Any], target_reps: List[Dict[str, Any]], currency: str = "INR") -> Dict[str, Any]:
+    all_reps = snapshot["reps"]
     macro = snapshot["macro"]
     p_lower = prompt.lower()
 
-    # Determine report type
-    is_individual = target_rep is not None
-    is_comparison = any(k in p_lower for k in ["compare", "comparison", "vs", "rank", "ranking", "who", "all staff", "closure rate", "leaderboard"]) or not is_individual
-    is_activity = any(k in p_lower for k in ["call", "meeting", "activity", "followup", "productivity", "effort"])
-    is_revenue = any(k in p_lower for k in ["revenue", "financial", "pipeline", "money", "deal size", "quota", "earnings"])
-
-    top_closer = max(reps, key=lambda r: r["deal_closure_rate"]) if reps else None
-    top_revenue = max(reps, key=lambda r: r["won_revenue"]) if reps else None
-    top_converter = max(reps, key=lambda r: r["lead_conversion_rate"]) if reps else None
-
-    if is_individual and target_rep:
-        # Individual Rep Analysis
-        rep = target_rep
-        name = rep["name"]
-        won_str = _format_money(rep["won_revenue"], currency)
-        pipe_str = _format_money(rep["pipeline_value"], currency)
-        avg_str = _format_money(rep["avg_deal_size"], currency)
-
-        title = f"Sales Conversion & Performance Audit: {name}"
-        summary = (
-            f"Comprehensive analysis for {name} ({rep['role']}): Generated {won_str} in won revenue across "
-            f"{rep['won_deals']} closed deals with an impressive deal closure rate of {rep['deal_closure_rate']}%. "
-            f"{name} currently manages {rep['total_leads']} leads with a {rep['lead_conversion_rate']}% lead conversion rate "
-            f"and has an active open pipeline valued at {pipe_str}."
-        )
-
-        kpis = [
-            {"label": "Won Revenue", "value": won_str, "sub": f"{rep['won_deals']} deals won", "trend": "up", "color": "emerald"},
-            {"label": "Deal Closure Rate", "value": f"{rep['deal_closure_rate']}%", "sub": f"{rep['won_deals']} won / {rep['won_deals'] + rep['lost_deals']} closed", "trend": "up" if rep['deal_closure_rate'] >= 40 else "neutral", "color": "indigo"},
-            {"label": "Lead Conversion Rate", "value": f"{rep['lead_conversion_rate']}%", "sub": f"{rep['converted_leads']} of {rep['total_leads']} leads", "trend": "up" if rep['lead_conversion_rate'] >= 25 else "neutral", "color": "blue"},
-            {"label": "Open Pipeline", "value": pipe_str, "sub": f"{rep['open_deals']} active opportunities", "trend": "neutral", "color": "amber"},
-            {"label": "Avg Deal Size", "value": avg_str, "sub": "Per won contract", "trend": "up", "color": "violet"},
-            {"label": "Client Accounts", "value": str(rep['clients_count']), "sub": "Active managed clients", "trend": "neutral", "color": "teal"},
-        ]
-
-        table_headers = ["Metric", "Representative Metric", "Team Benchmark Average", "Status / Variance"]
-        team_avg_closure = macro["overall_deal_closure_rate"]
-        team_avg_conv = macro["overall_lead_conversion_rate"]
-        team_avg_won = macro["total_won_revenue"] / len(reps) if reps else 0
-
-        table_rows = [
-            ["Deal Closure Rate (Win %)", f"{rep['deal_closure_rate']}%", f"{team_avg_closure}%", "Above Benchmark" if rep['deal_closure_rate'] >= team_avg_closure else "Below Benchmark"],
-            ["Lead Conversion Rate (%)", f"{rep['lead_conversion_rate']}%", f"{team_avg_conv}%", "Above Benchmark" if rep['lead_conversion_rate'] >= team_avg_conv else "Needs Attention"],
-            ["Total Won Revenue", won_str, _format_money(team_avg_won, currency), "Top Tier" if rep['won_revenue'] >= team_avg_won else "Standard"],
-            ["Active Open Pipeline", pipe_str, "–", f"{rep['open_deals']} open deals"],
-            ["Logged Calls & Follow-ups", f"{rep['calls_count']} calls / {rep['followups_count']} followups", "–", "Active Engagement" if rep['calls_count'] + rep['followups_count'] > 0 else "Low Activity"],
-            ["Scheduled & Held Meetings", f"{rep['meetings_count']} meetings", "–", "High Touch" if rep['meetings_count'] > 0 else "Standard"],
-        ]
-
-        chart_items = [
-            {"name": "Won Deals", "value": rep["won_deals"]},
-            {"name": "Lost Deals", "value": rep["lost_deals"]},
-            {"name": "In Negotiation / Open", "value": rep["open_deals"]},
-            {"name": "Converted Leads", "value": rep["converted_leads"]},
-        ]
-
-        insights = [
-            f"**Conversion Efficiency:** {name} closes {rep['deal_closure_rate']}% of all negotiated opportunities, with an average deal size of {avg_str}.",
-            f"**Pipeline Health:** Currently holds {pipe_str} across {rep['open_deals']} open opportunities. Nurturing these could yield an estimated {won_str} in incremental bookings.",
-            f"**Activity Cadence:** Recorded {rep['calls_count']} calls, {rep['meetings_count']} client meetings, and {rep['followups_count']} follow-up touches.",
-            f"**Conversion Funnel:** Out of {rep['total_leads']} assigned leads, {rep['converted_leads']} have officially progressed to clients/deals ({rep['lead_conversion_rate']}% conversion rate).",
-        ]
-
-        recommendations = [
-            f"Prioritize closing high-value deals currently in negotiation ({pipe_str} total pipeline value).",
-            f"Streamline response time on new lead assignments to further elevate lead conversion rate past {min(rep['lead_conversion_rate'] + 10, 100)}%.",
-            f"Leverage {name}'s sales methodology across team coaching sessions, specifically on negotiation tactics.",
-        ]
-
-        detailed_md = f"""### Executive Sales Rep Audit: {name}
-
-#### Performance Synthesis
-{name} ({rep['role']}) currently accounts for **{won_str}** in closed won revenue. The representative has closed **{rep['won_deals']} deals** successfully with a **{rep['deal_closure_rate']}% closure rate**, outperforming general CRM baseline levels.
-
-#### Lead-to-Deal Conversion Funnel
-- **Total Leads Handled:** {rep['total_leads']}
-- **Converted Leads:** {rep['converted_leads']} ({rep['lead_conversion_rate']}%)
-- **Active Pipeline:** {pipe_str} ({rep['open_deals']} open opportunities)
-- **Average Deal Value:** {avg_str}
-
-#### Engagement & Touchpoint Velocity
-- **Phone Calls Logged:** {rep['calls_count']}
-- **Client Meetings Scheduled:** {rep['meetings_count']}
-- **Follow-up Tasks Executed:** {rep['followups_count']}
-
-#### Strategic Verdict
-{name} demonstrates solid pipeline hygiene. Closing the active opportunities in their pipeline will guarantee quarter-end quota achievement.
-"""
-
+    # Determine cohort
+    is_head_to_head = len(target_reps) >= 2
+    is_single_rep_audit = len(target_reps) == 1 and not any(k in p_lower for k in ["compare", "vs", "versus", "benchmark", "ranking", "team"])
+    
+    if is_head_to_head or is_single_rep_audit:
+        eval_reps = target_reps
     else:
-        # Staff Comparison & Whole Team Analysis
-        title = "Sales Staff Performance & Conversion Comparison Report"
-        won_total_str = _format_money(macro["total_won_revenue"], currency)
-        pipe_total_str = _format_money(macro["total_pipeline_value"], currency)
+        eval_reps = all_reps
 
-        top_closer_name = top_closer["name"] if top_closer else "N/A"
-        top_closer_rate = top_closer["deal_closure_rate"] if top_closer else 0
-        top_rev_name = top_revenue["name"] if top_revenue else "N/A"
-        top_rev_amt = _format_money(top_revenue["won_revenue"], currency) if top_revenue else "₹0"
+    if not eval_reps:
+        eval_reps = all_reps
 
+    # Sort cohort by won revenue descending, then closure rate
+    eval_reps = sorted(eval_reps, key=lambda r: (r["won_revenue"], r["deal_closure_rate"]), reverse=True)
+
+    # Key benchmarks
+    top_closer = max(eval_reps, key=lambda r: r["deal_closure_rate"]) if eval_reps else None
+    top_revenue = max(eval_reps, key=lambda r: r["won_revenue"]) if eval_reps else None
+    top_converter = max(eval_reps, key=lambda r: r["lead_conversion_rate"]) if eval_reps else None
+
+    # Calculate business owner metrics
+    cohort_won_rev = sum(r["won_revenue"] for r in eval_reps)
+    cohort_pipeline = sum(r["pipeline_value"] for r in eval_reps)
+    cohort_won_deals = sum(r["won_deals"] for r in eval_reps)
+    cohort_lost_deals = sum(r["lost_deals"] for r in eval_reps)
+    cohort_closed_deals = cohort_won_deals + cohort_lost_deals
+    cohort_closure_rate = round((cohort_won_deals / cohort_closed_deals * 100), 1) if cohort_closed_deals > 0 else 0.0
+    
+    avg_team_deal_size = round(cohort_won_rev / cohort_won_deals, 1) if cohort_won_deals > 0 else 0.0
+    est_lost_revenue = sum(r["lost_deals"] * (r["avg_deal_size"] or avg_team_deal_size) for r in eval_reps)
+
+    top_rep_name = top_revenue["name"] if top_revenue else "N/A"
+    top_rep_rev = top_revenue["won_revenue"] if top_revenue else 0.0
+    rev_concentration_pct = round((top_rep_rev / cohort_won_rev * 100), 1) if cohort_won_rev > 0 else 0.0
+
+    # Build comparison bars payload
+    comparison_items = []
+    for r in eval_reps:
+        share_pct = round((r["won_revenue"] / cohort_won_rev * 100), 1) if cohort_won_rev > 0 else 0.0
+        comparison_items.append({
+            "id": r["id"],
+            "name": r["name"],
+            "role": r["role"],
+            "won_revenue": r["won_revenue"],
+            "won_revenue_formatted": _format_money(r["won_revenue"], currency),
+            "pipeline_value": r["pipeline_value"],
+            "pipeline_value_formatted": _format_money(r["pipeline_value"], currency),
+            "revenue_share_pct": share_pct,
+            "won_deals": r["won_deals"],
+            "lost_deals": r["lost_deals"],
+            "open_deals": r["open_deals"],
+            "total_deals": r["won_deals"] + r["lost_deals"] + r["open_deals"],
+            "closure_rate": r["deal_closure_rate"],
+            "lead_conversion_rate": r["lead_conversion_rate"],
+            "total_leads": r["total_leads"],
+            "converted_leads": r["converted_leads"],
+            "avg_deal_size": r["avg_deal_size"],
+            "avg_deal_size_formatted": _format_money(r["avg_deal_size"], currency),
+            "calls_count": r["calls_count"],
+            "meetings_count": r["meetings_count"],
+            "followups_count": r["followups_count"],
+        })
+
+    # Prepare report titles and summaries
+    if is_single_rep_audit:
+        rep = eval_reps[0]
+        name = rep["name"]
+        title = f"Business Owner Commercial Audit: {name} ({rep['role']})"
         summary = (
-            f"Across {len(reps)} active sales staff members, the team has accumulated {won_total_str} in won revenue "
-            f"and maintains an active pipeline of {pipe_total_str}. The team average deal closure rate stands at "
-            f"{macro['overall_deal_closure_rate']}%, with {top_closer_name} leading in closure efficiency at {top_closer_rate}% "
-            f"and {top_rev_name} leading in total won revenue at {top_rev_amt}."
+            f"Executive evaluation of {name} from a Business Owner & P&L perspective. "
+            f"{name} has generated {_format_money(rep['won_revenue'], currency)} in booked revenue ({rep['won_deals']} deals) "
+            f"with a {rep['deal_closure_rate']}% deal closure rate and {rep['lead_conversion_rate']}% lead conversion rate. "
+            f"Currently maintains an active pipeline of {_format_money(rep['pipeline_value'], currency)} ({rep['open_deals']} opportunities). "
+            f"Average deal size stands at {_format_money(rep['avg_deal_size'], currency)}."
+        )
+        report_type = "individual_rep"
+    elif is_head_to_head:
+        names_str = " vs ".join(r["name"] for r in eval_reps)
+        title = f"Head-to-Head Sales Comparison: {names_str}"
+        summary = (
+            f"Comparative commercial evaluation between {names_str} for leadership decision-making. "
+            f"Together they have delivered {_format_money(cohort_won_rev, currency)} in realized revenue across {cohort_won_deals} closed deals "
+            f"and steward {_format_money(cohort_pipeline, currency)} in forward pipeline. "
+            f"{top_rep_name} leads revenue production, while {top_closer['name'] if top_closer else 'N/A'} leads in closure efficiency ({top_closer['deal_closure_rate'] if top_closer else 0}%)."
+        )
+        report_type = "head_to_head"
+    else:
+        title = "Executive Sales Staff Commercial Performance & ROI Comparison"
+        summary = (
+            f"Comprehensive C-Suite audit across all {len(eval_reps)} sales representatives. "
+            f"Total realized revenue stands at {_format_money(cohort_won_rev, currency)} with an active open pipeline of {_format_money(cohort_pipeline, currency)}. "
+            f"Team average deal closure rate is {cohort_closure_rate}%, with {top_rep_name} contributing {rev_concentration_pct}% of total firm bookings. "
+            f"Estimated lost opportunity cost across closed lost deals is {_format_money(est_lost_revenue, currency)}."
+        )
+        report_type = "team_comparison"
+
+    # Business Owner KPI cards
+    kpis = [
+        {
+            "label": "Total Booked Revenue",
+            "value": _format_money(cohort_won_rev, currency),
+            "sub": f"{cohort_won_deals} deals won across cohort",
+            "trend": "up",
+            "color": "emerald"
+        },
+        {
+            "label": "Active Pipeline Value",
+            "value": _format_money(cohort_pipeline, currency),
+            "sub": f"{sum(r['open_deals'] for r in eval_reps)} open opportunities",
+            "trend": "neutral",
+            "color": "indigo"
+        },
+        {
+            "label": "Deal Closure Rate (Win %)",
+            "value": f"{cohort_closure_rate}%",
+            "sub": f"{cohort_won_deals} won / {cohort_lost_deals} lost",
+            "trend": "up" if cohort_closure_rate >= 35 else "neutral",
+            "color": "blue"
+        },
+        {
+            "label": "Avg Contract Value (ACV)",
+            "value": _format_money(avg_team_deal_size, currency),
+            "sub": "Average ticket per won client",
+            "trend": "up",
+            "color": "violet"
+        },
+        {
+            "label": "Revenue Concentration",
+            "value": f"{rev_concentration_pct}%",
+            "sub": f"Attributable to {top_rep_name}",
+            "trend": "neutral" if rev_concentration_pct < 50 else "down",
+            "color": "amber"
+        },
+        {
+            "label": "Lost Opportunity Cost",
+            "value": _format_money(est_lost_revenue, currency),
+            "sub": f"{cohort_lost_deals} lost deals leakage",
+            "trend": "down",
+            "color": "teal"
+        },
+    ]
+
+    # Comparison Table Headers and Rows
+    table_headers = [
+        "Sales Representative", "Role", "Leads Assigned", "Conv. %", 
+        "Won Deals", "Lost Deals", "Win Rate %", "Won Revenue", "% Rev Share", "Open Pipeline", "Avg Deal Size"
+    ]
+    table_rows = []
+    for r in eval_reps:
+        share = round((r["won_revenue"] / cohort_won_rev * 100), 1) if cohort_won_rev > 0 else 0.0
+        table_rows.append([
+            r["name"],
+            r["role"],
+            str(r["total_leads"]),
+            f"{r['lead_conversion_rate']}%",
+            str(r["won_deals"]),
+            str(r["lost_deals"]),
+            f"{r['deal_closure_rate']}%",
+            _format_money(r["won_revenue"], currency),
+            f"{share}%",
+            _format_money(r["pipeline_value"], currency),
+            _format_money(r["avg_deal_size"], currency),
+        ])
+
+    # Strategic Insights from Owner POV
+    insights = [
+        f"**Commercial Contribution:** {top_rep_name} is the primary commercial engine, accounting for **{_format_money(top_rep_rev, currency)} ({rev_concentration_pct}%)** of all realized sales.",
+        f"**Negotiation & Win Rate:** {top_closer['name'] if top_closer else 'N/A'} holds the benchmark deal closure rate at **{top_closer['deal_closure_rate'] if top_closer else 0}%**, closing nearly 1 in every {max(1, round(100 / max(1, top_closer['deal_closure_rate'] if top_closer else 1)))} negotiated proposals.",
+        f"**Sales Pipeline Reserve:** The active pipeline of **{_format_money(cohort_pipeline, currency)}** across {sum(r['open_deals'] for r in eval_reps)} in-flight deals represents a substantial revenue accelerator if closed at standard win rates.",
+        f"**Funnel Leakage & Opportunity Cost:** An estimated **{_format_money(est_lost_revenue, currency)}** has leaked across {cohort_lost_deals} lost opportunities, highlighting an urgent need for executive intervention on stalled high-ticket deals.",
+    ]
+
+    # Actionable Recommendations for Business Owner
+    recommendations = [
+        f"Mitigate key-person dependency by pairing high-potential reps with {top_rep_name} and {top_closer['name'] if top_closer else 'senior closers'} during late-stage proposal presentations.",
+        f"Prioritize the {_format_money(cohort_pipeline, currency)} open pipeline with weekly executive reviews focused on deals in 'Negotiation' and 'Proposal Sent'.",
+        f"Route high-intent inbound marketing leads preferentially to reps with lead conversion rates exceeding {macro['overall_lead_conversion_rate']}%.",
+        f"Conduct a post-mortem on the {_format_money(est_lost_revenue, currency)} in lost opportunities to identify pricing vs feature objections.",
+    ]
+
+    # Detailed Boardroom Markdown Report
+    markdown_lines = [
+        f"# 👔 Executive Commercial Performance & Sales Staff Audit",
+        f"",
+        f"**Document Type:** C-Suite Commercial Dossier | **Reporting Perspective:** Business Owner / P&L Leadership  ",
+        f"**Generated:** {datetime.now().strftime('%B %d, %Y - %H:%M')} | **Currency:** {currency}  ",
+        f"",
+        f"---",
+        f"",
+        f"## 💼 1. Executive Summary & Bottom-Line Financial Impact",
+        f"",
+        f"{summary}",
+        f"",
+        f"- **Total Realized Cashflow / Revenue:** {_format_money(cohort_won_rev, currency)} ({cohort_won_deals} closed deals won)",
+        f"- **Active Pipeline at Stake:** {_format_money(cohort_pipeline, currency)} ({sum(r['open_deals'] for r in eval_reps)} open opportunities)",
+        f"- **Commercial Win Rate (Closed Deals):** {cohort_closure_rate}%",
+        f"- **Average Contract Value (ACV):** {_format_money(avg_team_deal_size, currency)}",
+        f"- **Revenue Concentration Index:** {rev_concentration_pct}% produced by top representative ({top_rep_name})",
+        f"",
+        f"---",
+        f"",
+        f"## 📊 2. Commercial Performance & Head-to-Head Comparison Matrix",
+        f"",
+        f"| Sales Representative | Role | Leads Assigned | Lead Conv. % | Deals Won | Deals Lost | Win Rate % | Won Revenue | Rev Share % | Active Pipeline | Avg Deal Size |",
+        f"| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+    ]
+
+    for r in eval_reps:
+        share = round((r["won_revenue"] / cohort_won_rev * 100), 1) if cohort_won_rev > 0 else 0.0
+        markdown_lines.append(
+            f"| **{r['name']}** | {r['role']} | {r['total_leads']} | {r['lead_conversion_rate']}% | "
+            f"{r['won_deals']} | {r['lost_deals']} | {r['deal_closure_rate']}% | "
+            f"**{_format_money(r['won_revenue'], currency)}** | **{share}%** | "
+            f"{_format_money(r['pipeline_value'], currency)} | {_format_money(r['avg_deal_size'], currency)} |"
         )
 
-        kpis = [
-            {"label": "Total Won Revenue", "value": won_total_str, "sub": f"{macro['total_won_deals']} deals won", "trend": "up", "color": "emerald"},
-            {"label": "Team Deal Closure Rate", "value": f"{macro['overall_deal_closure_rate']}%", "sub": f"{macro['total_won_deals']} won / {macro['total_lost_deals']} lost", "trend": "up", "color": "indigo"},
-            {"label": "Overall Lead Conversion", "value": f"{macro['overall_lead_conversion_rate']}%", "sub": f"{macro['converted_leads']} of {macro['total_leads']} leads", "trend": "up", "color": "blue"},
-            {"label": "Total Open Pipeline", "value": pipe_total_str, "sub": "Active deals in pipeline", "trend": "neutral", "color": "amber"},
-            {"label": "Top Closer", "value": f"{top_closer_rate}%", "sub": top_closer_name, "trend": "up", "color": "violet"},
-            {"label": "Top Revenue Rep", "value": top_rev_amt, "sub": top_rev_name, "trend": "up", "color": "teal"},
-        ]
+    markdown_lines.extend([
+        f"",
+        f"---",
+        f"",
+        f"## ⚖️ 3. Business Owner ROI & Revenue Concentration Audit",
+        f"",
+        f"A sustainable agency model avoids single-rep vulnerability. Key findings from an ownership standpoint:",
+        f"",
+        f"- **Key Person Risk:** {top_rep_name} currently generates **{rev_concentration_pct}%** of company sales. If this figure exceeds 45%, the business is vulnerable to salesperson turnover.",
+        f"- **Capacity & Activity Velocity:** Representatives logged a total of {sum(r['calls_count'] for r in eval_reps)} calls, {sum(r['meetings_count'] for r in eval_reps)} meetings, and {sum(r['followups_count'] for r in eval_reps)} follow-up touches during this window.",
+        f"- **Lead Progression Efficiency:** Lead-to-deal conversion ranges between {min(r['lead_conversion_rate'] for r in eval_reps)}% and {max(r['lead_conversion_rate'] for r in eval_reps)}%. High-performing reps convert at over 2x the velocity of lagging peers.",
+        f"",
+        f"---",
+        f"",
+        f"## 📉 4. Funnel Leakage & Lost Opportunity Analysis",
+        f"",
+        f"- **Lost Deals Count:** {cohort_lost_deals} opportunities closed as Lost.",
+        f"- **Estimated Lost Revenue:** **{_format_money(est_lost_revenue, currency)}** in unrealized top-line bookings based on average deal sizing.",
+        f"- **Remediation Priority:** Implementing standardized mid-funnel objection handling can recover an estimated 15-20% of lost deals, adding upwards of {_format_money(est_lost_revenue * 0.18, currency)} to annualized earnings.",
+        f"",
+        f"---",
+        f"",
+        f"## 🎯 5. Actionable Directives for Executive Leadership",
+        f"",
+        f"1. **Dynamic Lead Allocation:** Automatically assign highest-ticket inbound leads to closers with win rates above {cohort_closure_rate}%.",
+        f"2. **Pipeline Unfreezing:** Mandate senior management check-ins on all proposals exceeding {_format_money(avg_team_deal_size * 1.5, currency)} that have been in 'Negotiation' for more than 14 days.",
+        f"3. **Peer Mentorship & Playbook Distribution:** Codify the negotiation scripts and follow-up templates used by {top_closer['name'] if top_closer else 'top performers'} into a mandatory onboarding track.",
+        f"4. **Quota Alignment:** Realign quarterly quotas to match active pipeline coverage (aiming for 3x pipeline-to-quota ratio per head).",
+    ])
 
-        table_headers = [
-            "Representative", "Role", "Leads", "Conversions", "Conv. %", 
-            "Won Deals", "Closure Rate %", "Won Revenue", "Pipeline Value", "Avg Deal"
-        ]
-
-        table_rows = []
-        for r in reps:
-            table_rows.append([
-                r["name"],
-                r["role"],
-                str(r["total_leads"]),
-                str(r["converted_leads"]),
-                f"{r['lead_conversion_rate']}%",
-                str(r["won_deals"]),
-                f"{r['deal_closure_rate']}%",
-                _format_money(r["won_revenue"], currency),
-                _format_money(r["pipeline_value"], currency),
-                _format_money(r["avg_deal_size"], currency),
-            ])
-
-        chart_items = [
-            {
-                "name": r["name"],
-                "won_revenue": r["won_revenue"],
-                "pipeline_value": r["pipeline_value"],
-                "closure_rate": r["deal_closure_rate"],
-                "conv_rate": r["lead_conversion_rate"],
-            }
-            for r in reps[:8]
-        ]
-
-        insights = [
-            f"**Closure Leader:** {top_closer_name} exhibits the highest deal closure rate at **{top_closer_rate}%**, demonstrating superior late-stage negotiation ability.",
-            f"**Revenue Leader:** {top_rev_name} leads total revenue generated at **{top_rev_amt}**.",
-            f"**Conversion Disparity:** Lead conversion rates range from {min(r['lead_conversion_rate'] for r in reps)}% to {max(r['lead_conversion_rate'] for r in reps)}%, indicating an opportunity to redistribute high-intent inbound leads to top converters.",
-            f"**Active Pipeline Reserves:** The team is carrying {pipe_total_str} in active opportunities, representing substantial near-term revenue potential.",
-        ]
-
-        recommendations = [
-            "Pair representatives with closure rates below team average with top closers for high-stakes proposal calls.",
-            "Implement standardized follow-up cadence rules to decrease lead-to-opportunity cycle times.",
-            "Focus management review on deals in 'Negotiation' stage to accelerate conversion to Closed Won.",
-        ]
-
-        detailed_md = f"""### Comprehensive Sales Staff Performance Matrix
-
-#### Macro Overview
-The organization currently fields **{len(reps)} active sales staff members**, tracking a cumulative pipeline of **{pipe_total_str}** and having secured **{won_total_str}** in closed business.
-
-| Sales Representative | Role | Leads Handled | Conv. % | Deals Won | Closure Rate % | Won Revenue | Open Pipeline |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-""" + "\n".join([f"| **{r['name']}** | {r['role']} | {r['total_leads']} | {r['lead_conversion_rate']}% | {r['won_deals']} | {r['deal_closure_rate']}% | {_format_money(r['won_revenue'], currency)} | {_format_money(r['pipeline_value'], currency)} |" for r in reps]) + f"""
-
-#### Key Conversion Observations
-1. **Deal Closure Dominance:** Staff members maintaining active meeting touchpoints achieve up to **{top_closer_rate}%** win rates.
-2. **Pipeline Concentration:** Substantial revenue is concentrated in top-tier proposals; accelerating sign-offs will significantly boost quarter results.
-3. **Actionable Step:** Maintain weekly pipeline reviews focused on moving deals from 'Proposal Sent' to 'Closed Won'.
-"""
+    detailed_md = "\n".join(markdown_lines)
 
     return {
-        "report_type": "individual_rep" if is_individual else "comparison",
+        "report_type": report_type,
         "title": title,
         "summary": summary,
-        "target_rep": {"id": target_rep["id"], "name": target_rep["name"]} if target_rep else None,
+        "target_reps": [{"id": r["id"], "name": r["name"]} for r in eval_reps],
         "kpis": kpis,
         "comparison_table": {
             "headers": table_headers,
             "rows": table_rows,
         },
         "chart_data": {
-            "type": "pie" if is_individual else "bar",
-            "title": "Stage Distribution" if is_individual else "Won Revenue vs Pipeline Value by Representative",
-            "items": chart_items,
+            "type": "comparison_bars",
+            "title": "Commercial Comparison Visuals",
+            "items": comparison_items,
         },
         "insights": insights,
         "recommendations": recommendations,
@@ -436,13 +517,13 @@ def generate_ai_report(payload: AIReportRequest, session: Session = Depends(get_
     # Fetch fresh CRM snapshot
     snapshot = _get_crm_snapshot(session, start_date_str, end_date_str)
     reps = snapshot["reps"]
-    target_rep = _detect_target_rep(prompt, payload.rep_id, reps)
+    detected_reps = _detect_mentioned_reps(prompt, payload.rep_id, reps)
     currency = payload.currency or "INR"
 
     # Base report from CRM intelligence
-    base_report = _generate_deterministic_report(prompt, snapshot, target_rep, currency)
+    base_report = _generate_deterministic_report(prompt, snapshot, detected_reps, currency)
 
-    # Check if OpenAI is available to enrich the narrative
+    # Check if OpenAI is available to enrich the narrative from Business Owner POV
     openai_key = os.getenv("OPENAI_API_KEY")
     if openai_key and len(openai_key.strip()) > 10:
         try:
@@ -450,15 +531,17 @@ def generate_ai_report(payload: AIReportRequest, session: Session = Depends(get_
             client = openai.OpenAI(api_key=openai_key)
             
             system_prompt = (
-                "You are an elite C-Suite Revenue Operations & Sales Intelligence Analyst. "
+                "You are an elite C-Suite Revenue Operations & Management Advisor presenting directly to the Business Owner / CEO. "
                 "Analyze the provided factual CRM data to answer the user's specific reporting query. "
+                "Always write strictly from a Business Owner perspective: emphasize profit realization, revenue concentration risk, "
+                "sales rep ROI, deal win rates, funnel leakage, and high-impact leadership directives. "
                 "Always adhere to the provided numbers — NEVER invent figures. Return a JSON object matching this schema:\n"
                 "{\n"
-                '  "title": "Clear concise report title",\n'
-                '  "summary": "Executive summary paragraph explaining the findings",\n'
-                '  "insights": ["Insight 1 with bold key figures", "Insight 2", "Insight 3"],\n'
-                '  "recommendations": ["Actionable recommendation 1", "Actionable recommendation 2"],\n'
-                '  "detailed_markdown": "Rich detailed markdown report with headings, bullet points, and analysis"\n'
+                '  "title": "Clear concise executive report title",\n'
+                '  "summary": "Executive summary paragraph explaining bottom-line findings and commercial impact",\n'
+                '  "insights": ["Insight 1 with bold key figures and commercial meaning", "Insight 2", "Insight 3", "Insight 4"],\n'
+                '  "recommendations": ["Actionable owner directive 1", "Actionable owner directive 2", "Actionable owner directive 3"],\n'
+                '  "detailed_markdown": "Rich GitHub-flavored markdown report starting with # title, ## 1. Executive Summary, ## 2. Performance Matrix Table, ## 3. Owner ROI & Concentration, ## 4. Funnel Leakage, ## 5. Directives for Leadership"\n'
                 "}"
             )
 
@@ -466,7 +549,7 @@ def generate_ai_report(payload: AIReportRequest, session: Session = Depends(get_
                 "user_prompt": prompt,
                 "currency": currency,
                 "macro_summary": snapshot["macro"],
-                "staff_members": [
+                "cohort_evaluated": [
                     {
                         "name": r["name"],
                         "role": r["role"],
@@ -482,9 +565,8 @@ def generate_ai_report(payload: AIReportRequest, session: Session = Depends(get_
                         "calls": r["calls_count"],
                         "meetings": r["meetings_count"],
                     }
-                    for r in reps
+                    for r in (detected_reps if detected_reps else reps)
                 ],
-                "target_rep": target_rep["name"] if target_rep else None,
             }
 
             completion = client.chat.completions.create(
