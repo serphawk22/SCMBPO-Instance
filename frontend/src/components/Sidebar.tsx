@@ -597,9 +597,14 @@ export function Sidebar({ role }: SidebarProps) {
                 transition={{ duration: 0.15 }}
                 className="flex-1 min-w-0 overflow-hidden flex items-center justify-between"
               >
-                <div>
-                  <span className="block font-bold text-[14px] leading-tight tracking-tight truncate" style={{ color: "var(--text-primary)" }}>SERP Hawk</span>
-                  <span className="block text-[10px] font-medium truncate" style={{ color: "var(--text-secondary)" }}>{t("sidebar.corporate_hq")}</span>
+                <div className="min-w-0 flex items-center">
+                  <img
+                    src="https://scmhub.com/img/scm-hub-logo-c.png"
+                    alt="SCM Hub"
+                    className="h-7 w-auto max-w-full object-contain object-left"
+                    height={28}
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
                 </div>
                 <div className="flex items-center gap-1">
                   {isMobile && (
