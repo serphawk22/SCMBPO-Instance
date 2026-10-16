@@ -6,7 +6,14 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, Legend, PieChart, Pie, Cell
 } from "recharts";
-import { FileText, Users, IndianRupee, TrendingUp, TrendingDown, Target, Clock, Calendar, CheckCircle2, AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame, Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, BriefcaseBusiness, FileSpreadsheet, ShieldCheck, Eye, X, Video, Presentation, CalendarClock, MessageCircle } from "lucide-react";
+import { 
+  FileText, Users, IndianRupee, TrendingUp, TrendingDown, Target, Clock, Calendar, 
+  CheckCircle2, AlertCircle, AlertTriangle, Briefcase, Zap, Phone, Mail, Award, Flame, 
+  Download, RefreshCw, Search, ChevronRight, UserCheck, ShieldAlert, ArrowUpRight, 
+  ArrowUpDown, Filter, Sparkles, Building2, Layers, CalendarDays, BarChart3, 
+  BriefcaseBusiness, FileSpreadsheet, ShieldCheck, Eye, X, Video, Presentation, 
+  CalendarClock, MessageCircle, Send, Copy, Check, Bot, Lightbulb, Compass, ArrowRight 
+} from "lucide-react";
 import { jsPDF } from "jspdf";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
@@ -108,8 +115,19 @@ export default function ReportsPage() {
   const { role, loading: roleLoading } = useRole();
   const [currency, setCurrency] = useCurrency();
 
-  // Mode: "executive" (Owner Dossier) vs "classic" (Original Operations & Activity Reports)
-  const [viewMode, setViewMode] = useState<"executive" | "classic">("executive");
+  // Mode: "executive" (Owner Dossier) vs "classic" (Original Operations & Activity Reports) vs "ai" (Prompt-Based AI Reports)
+  const [viewMode, setViewMode] = useState<"executive" | "classic" | "ai">("executive");
+
+  // ── AI Reports State ──
+  const [aiPrompt, setAiPrompt] = useState<string>("Compare all sales staff performance including leads, conversions, revenue and deal closure rates");
+  const [aiTimeRange, setAiTimeRange] = useState<string>("12m");
+  const [aiSelectedRep, setAiSelectedRep] = useState<string>("all");
+  const [aiReport, setAiReport] = useState<any>(null);
+  const [aiLoading, setAiLoading] = useState<boolean>(false);
+  const [aiError, setAiError] = useState<string>("");
+  const [aiQuickPrompts, setAiQuickPrompts] = useState<any[]>([]);
+  const [aiRepsList, setAiRepsList] = useState<any[]>([]);
+  const [aiCopied, setAiCopied] = useState<boolean>(false);
 
   // ── Executive State ──
   const [rangePreset, setRangePreset] = useState<string>("12m");
@@ -237,14 +255,121 @@ export default function ReportsPage() {
     }
   };
 
+  // ── AI Reports Handlers ──
+  const loadAiQuickPrompts = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/reports/ai/quick-prompts`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setAiQuickPrompts(d.prompts || []);
+        setAiRepsList(d.reps || []);
+      }
+    } catch (err) {
+      console.error("Failed to load quick prompts:", err);
+    }
+  };
+
+  const generateAiReport = async (overridePrompt?: string, overrideRep?: string, overrideTime?: string) => {
+    const promptToRun = (overridePrompt !== undefined ? overridePrompt : aiPrompt).trim();
+    if (!promptToRun) return;
+    setAiLoading(true);
+    setAiError("");
+    try {
+      const repVal = overrideRep !== undefined ? overrideRep : aiSelectedRep;
+      const repId = repVal !== "all" && repVal ? Number(repVal) : null;
+      const timeVal = overrideTime !== undefined ? overrideTime : aiTimeRange;
+
+      const res = await fetch(`${API_BASE_URL}/reports/ai/generate`, {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: promptToRun,
+          time_range: timeVal,
+          rep_id: repId,
+          currency: currency,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Failed to generate AI report");
+      setAiReport(json);
+    } catch (err: any) {
+      setAiError(err.message || "Failed to generate AI report");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const downloadAiReportPdf = () => {
+    if (!aiReport) return;
+    const doc = new jsPDF();
+    doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(15, 23, 42);
+    doc.text(aiReport.title || "CRM AI Intelligence Report", 14, 18);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(100, 116, 139);
+    doc.text(`Generated: ${new Date(aiReport.generated_at || Date.now()).toLocaleString()} | Engine: ${aiReport.ai_engine || "CRM Intelligence"} | Currency: ${currency}`, 14, 25);
+    doc.setFont("helvetica", "italic"); doc.setFontSize(10); doc.setTextColor(51, 65, 85);
+    const summaryLines = doc.splitTextToSize(aiReport.summary || "", 180);
+    doc.text(summaryLines, 14, 32);
+    let yOffset = 32 + (summaryLines.length * 5) + 6;
+
+    if (aiReport.kpis && aiReport.kpis.length > 0) {
+      const kpiRows = aiReport.kpis.map((k: any) => [k.label, k.value, k.sub || ""]);
+      yOffset = drawPdfTable(doc, ["KPI Metric", "Value", "Context"], kpiRows, yOffset);
+      yOffset += 8;
+    }
+
+    if (aiReport.comparison_table?.headers && aiReport.comparison_table?.rows) {
+      if (yOffset > 220) {
+        doc.addPage();
+        yOffset = 18;
+      }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+      doc.text("Performance Breakdown Matrix", 14, yOffset);
+      yOffset += 6;
+      yOffset = drawPdfTable(doc, aiReport.comparison_table.headers, aiReport.comparison_table.rows, yOffset);
+      yOffset += 8;
+    }
+
+    if (aiReport.insights && aiReport.insights.length > 0) {
+      if (yOffset > 220) {
+        doc.addPage();
+        yOffset = 18;
+      }
+      doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(15, 23, 42);
+      doc.text("Strategic Insights & Observations", 14, yOffset);
+      yOffset += 6;
+      aiReport.insights.forEach((ins: string) => {
+        const clean = ins.replace(/\*\*/g, "");
+        const lines = doc.splitTextToSize(`• ${clean}`, 180);
+        doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(51, 65, 85);
+        doc.text(lines, 14, yOffset);
+        yOffset += lines.length * 5 + 2;
+      });
+    }
+
+    doc.save(`ai-crm-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const v = params.get("view");
       if (v === "classic") setViewMode("classic");
       else if (v === "executive") setViewMode("executive");
+      else if (v === "ai") setViewMode("ai");
     }
   }, []);
+
+  useEffect(() => {
+    if (viewMode === "ai") {
+      if (!aiQuickPrompts.length) loadAiQuickPrompts();
+      if (!aiReport && !aiLoading) generateAiReport();
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     if (role && !roleLoading) {
@@ -483,6 +608,16 @@ export default function ReportsPage() {
             >
               <FileSpreadsheet size={15} /> Classic Operations & Activity
             </button>
+            <button
+              onClick={() => setViewMode("ai")}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-black transition-all ${
+                viewMode === "ai"
+                  ? "bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-500/25"
+                  : "text-slate-600 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white"
+              }`}
+            >
+              <Sparkles size={15} className={viewMode === "ai" ? "animate-pulse" : "text-amber-500"} /> AI Reports
+            </button>
           </div>
 
           <CurrencyToggle value={currency} onChange={setCurrency} />
@@ -495,6 +630,30 @@ export default function ReportsPage() {
             >
               <Download size={14} /> Export Dossier PDF
             </button>
+          ) : viewMode === "ai" ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={downloadAiReportPdf}
+                disabled={!aiReport || aiLoading}
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
+              >
+                <Download size={14} /> Export AI PDF
+              </button>
+              <button
+                onClick={() => {
+                  if (aiReport?.detailed_markdown) {
+                    navigator.clipboard.writeText(aiReport.detailed_markdown);
+                    setAiCopied(true);
+                    setTimeout(() => setAiCopied(false), 2000);
+                  }
+                }}
+                disabled={!aiReport || aiLoading}
+                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-black text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+              >
+                {aiCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                {aiCopied ? "Copied" : "Copy Markdown"}
+              </button>
+            </div>
           ) : (
             <div className="flex items-center gap-2">
               <button
@@ -1500,6 +1659,488 @@ export default function ReportsPage() {
                     key.replaceAll("_", " "), value as any
                   ])}
                 />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* ── VIEW MODE 3: PROMPT-BASED AI REPORTS & CONVERSION INTELLIGENCE ─── */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {viewMode === "ai" && (
+        <div className="space-y-6">
+          {/* AI Prompt Hero Box */}
+          <div className="relative overflow-hidden rounded-3xl border border-indigo-200/80 bg-gradient-to-br from-white via-indigo-50/30 to-violet-50/40 p-6 shadow-sm dark:border-zinc-800 dark:from-zinc-900 dark:via-zinc-900/90 dark:to-indigo-950/20">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 text-white shadow-md shadow-indigo-500/20">
+                  <Bot size={22} />
+                </div>
+                <div>
+                  <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    AI Prompt-Based CRM Reporting Engine
+                    <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300">
+                      Live CRM Grounded
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400">
+                    Ask natural-language questions to generate accurate conversion audits, sales rep comparisons, and revenue breakdowns.
+                  </p>
+                </div>
+              </div>
+
+              {/* Quick Filter Selectors */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Rep Filter */}
+                <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold shadow-sm dark:border-zinc-800 dark:bg-zinc-800">
+                  <UserCheck size={14} className="text-indigo-500" />
+                  <select
+                    value={aiSelectedRep}
+                    onChange={(e) => {
+                      setAiSelectedRep(e.target.value);
+                      if (e.target.value !== "all") {
+                        const repObj = aiRepsList.find(r => String(r.id) === e.target.value);
+                        if (repObj) {
+                          const p = `Sales conversion and performance analysis for ${repObj.name}`;
+                          setAiPrompt(p);
+                          generateAiReport(p, e.target.value);
+                        }
+                      }
+                    }}
+                    className="bg-transparent text-xs font-bold text-slate-700 outline-none dark:text-zinc-200"
+                  >
+                    <option value="all">All Sales Staff</option>
+                    {aiRepsList.map(r => (
+                      <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Time Window */}
+                <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold shadow-sm dark:border-zinc-800 dark:bg-zinc-800">
+                  <Clock size={14} className="text-indigo-500" />
+                  <select
+                    value={aiTimeRange}
+                    onChange={(e) => {
+                      setAiTimeRange(e.target.value);
+                      generateAiReport(undefined, undefined, e.target.value);
+                    }}
+                    className="bg-transparent text-xs font-bold text-slate-700 outline-none dark:text-zinc-200"
+                  >
+                    <option value="all">All Time</option>
+                    <option value="12m">Past 12 Months</option>
+                    <option value="6m">Past 6 Months</option>
+                    <option value="this_month">This Month</option>
+                    <option value="30d">Last 30 Days</option>
+                    <option value="7d">Last 7 Days</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Natural-Language Input Bar */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                generateAiReport();
+              }}
+              className="relative mt-2"
+            >
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="Ask anything: e.g. 'Compare sales staff performance including leads, conversions, revenue and deal closure rates'..."
+                  className="w-full rounded-2xl border-2 border-indigo-200/90 bg-white py-4 pl-5 pr-36 text-sm font-semibold text-slate-900 shadow-inner placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white dark:focus:border-indigo-400"
+                />
+                <button
+                  type="submit"
+                  disabled={aiLoading || !aiPrompt.trim()}
+                  className="absolute right-2 flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-black text-white shadow-md shadow-indigo-500/25 transition-all hover:opacity-95 hover:shadow-lg disabled:opacity-50"
+                >
+                  {aiLoading ? (
+                    <>
+                      <RefreshCw size={14} className="animate-spin" />
+                      <span>Analyzing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={14} />
+                      <span>Generate Report</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+            {/* Quick Prompt Templates */}
+            <div className="mt-4">
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-slate-400 dark:text-zinc-500">
+                <Compass size={13} /> Quick Prompts & Analytics Presets:
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  {
+                    label: "⚡ Compare All Sales Staff (Leads, Conversions, Closure Rates)",
+                    prompt: "Compare all sales staff performance including leads, conversions, revenue and deal closure rates",
+                  },
+                  {
+                    label: "🏆 Highest Deal Closure Rate Analysis",
+                    prompt: "Which sales representative has the highest deal closure rate and who needs coaching?",
+                  },
+                  {
+                    label: "💰 Won Revenue vs Active Pipeline Audit",
+                    prompt: "Analyze won revenue vs active open pipeline value across all sales representatives",
+                  },
+                  {
+                    label: "📞 Activity vs Closure Correlation (Calls & Meetings)",
+                    prompt: "How do logged calls and meetings correlate with closed won deals for each rep?",
+                  },
+                  {
+                    label: "🎯 Conversion Funnel & Drop-off Breakdown",
+                    prompt: "Analyze lead conversion rates across the team and identify funnel drop-offs",
+                  },
+                  ...(aiRepsList.slice(0, 3).map(r => ({
+                    label: `👤 Conversion Analysis: ${r.name}`,
+                    prompt: `Sales conversion and performance analysis for ${r.name}`,
+                    repId: String(r.id),
+                  }))),
+                ].map((item: { label: string; prompt: string; repId?: string }, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setAiPrompt(item.prompt);
+                      if (item.repId) setAiSelectedRep(item.repId);
+                      else setAiSelectedRep("all");
+                      generateAiReport(item.prompt, item.repId || "all");
+                    }}
+                    className="rounded-xl border border-slate-200/90 bg-white/80 px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm backdrop-blur-sm transition-all hover:border-indigo-300 hover:bg-indigo-50/80 hover:text-indigo-600 dark:border-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-300 dark:hover:border-indigo-500 dark:hover:bg-zinc-700 dark:hover:text-white"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Error Message */}
+          {aiError && (
+            <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50/80 p-4 text-xs font-bold text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/20 dark:text-rose-400">
+              <AlertCircle size={16} />
+              <span>{aiError}</span>
+            </div>
+          )}
+
+          {/* AI Loading State */}
+          {aiLoading && (
+            <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
+                <Sparkles size={28} className="animate-spin" />
+              </div>
+              <h3 className="mt-4 text-base font-black text-slate-900 dark:text-white">
+                Generating Prompt-Based CRM Report...
+              </h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">
+                Querying live database records, compiling conversion funnels, and synthesizing strategic takeaways.
+              </p>
+              <div className="mx-auto mt-6 flex max-w-lg flex-col gap-2 text-left">
+                {[
+                  "Grounded query resolution against User, Lead, Deal, Client & Call tables",
+                  "Calculating individual closure rates (% Won / Closed) and lead conversion %",
+                  "Cross-referencing pipeline values, won revenue figures, and average deal sizes",
+                  "Synthesizing actionable executive recommendations",
+                ].map((step, i) => (
+                  <div key={i} className="flex items-center gap-2.5 text-xs font-semibold text-slate-600 dark:text-zinc-400">
+                    <CheckCircle2 size={14} className="text-indigo-500 shrink-0" />
+                    <span>{step}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* AI Report Content Display */}
+          {aiReport && !aiLoading && (
+            <div className="space-y-6">
+              {/* Executive Summary Card */}
+              <div className="rounded-3xl border border-indigo-100 bg-gradient-to-r from-indigo-900 via-indigo-950 to-slate-950 p-6 text-white shadow-xl shadow-indigo-950/10">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-indigo-500/30 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-indigo-200">
+                        {aiReport.report_type === "individual_rep" ? "Individual Rep Audit" : "Team Performance Matrix"}
+                      </span>
+                      <span className="text-xs text-indigo-300/60">•</span>
+                      <span className="text-xs font-medium text-indigo-200/80">Engine: {aiReport.ai_engine || "CRM Intelligence"}</span>
+                    </div>
+                    <h2 className="mt-1.5 text-2xl font-black tracking-tight text-white">
+                      {aiReport.title}
+                    </h2>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={downloadAiReportPdf}
+                      className="flex items-center gap-1.5 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white backdrop-blur-md transition hover:bg-white/20"
+                    >
+                      <Download size={14} /> PDF
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (aiReport.detailed_markdown) {
+                          navigator.clipboard.writeText(aiReport.detailed_markdown);
+                          setAiCopied(true);
+                          setTimeout(() => setAiCopied(false), 2000);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white backdrop-blur-md transition hover:bg-white/20"
+                    >
+                      {aiCopied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                      {aiCopied ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 text-sm leading-relaxed text-indigo-100/90 font-medium">
+                  {aiReport.summary}
+                </div>
+              </div>
+
+              {/* KPI Cards Grid */}
+              {aiReport.kpis && aiReport.kpis.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  {aiReport.kpis.map((kpi: any, idx: number) => {
+                    const colorStyles: Record<string, string> = {
+                      emerald: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 dark:text-emerald-400",
+                      indigo: "text-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 dark:text-indigo-400",
+                      blue: "text-blue-600 bg-blue-50 dark:bg-blue-950/50 dark:text-blue-400",
+                      amber: "text-amber-600 bg-amber-50 dark:bg-amber-950/50 dark:text-amber-400",
+                      violet: "text-violet-600 bg-violet-50 dark:bg-violet-950/50 dark:text-violet-400",
+                      teal: "text-teal-600 bg-teal-50 dark:bg-teal-950/50 dark:text-teal-400",
+                    };
+                    const badgeClass = colorStyles[kpi.color] || colorStyles.indigo;
+
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            {kpi.label}
+                          </span>
+                          {kpi.trend === "up" ? (
+                            <TrendingUp size={13} className="text-emerald-500" />
+                          ) : (
+                            <Target size={13} className="text-indigo-500" />
+                          )}
+                        </div>
+                        <p className="mt-2 text-xl font-black text-slate-900 dark:text-white">
+                          {kpi.value}
+                        </p>
+                        {kpi.sub && (
+                          <p className="mt-1 truncate text-[11px] font-semibold text-slate-500 dark:text-zinc-400">
+                            {kpi.sub}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Visual Comparison Charts */}
+              {aiReport.chart_data?.items && aiReport.chart_data.items.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Chart 1: Revenue vs Pipeline */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                          <IndianRupee size={15} className="text-emerald-500" /> Won Revenue vs Active Pipeline Value
+                        </h3>
+                        <p className="text-xs text-slate-400">Booked revenue vs near-term opportunities by representative</p>
+                      </div>
+                    </div>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={aiReport.chart_data.items} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} interval={0} angle={-25} textAnchor="end" />
+                          <YAxis tick={{ fontSize: 11, fill: "#64748b" }} />
+                          <Tooltip
+                            formatter={(value: any) => [`${currency === "USD" ? "$" : "₹"}${Number(value).toLocaleString()}`, ""]}
+                            contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)" }}
+                          />
+                          <Bar dataKey="won_revenue" name="Won Revenue" fill="#10b981" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="pipeline_value" name="Open Pipeline" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Chart 2: Deal Closure Rate % vs Lead Conversion Rate % */}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                          <Target size={15} className="text-indigo-500" /> Deal Closure Rate (%) vs Lead Conversion Rate (%)
+                        </h3>
+                        <p className="text-xs text-slate-400">Win percentage on closed deals vs lead progression</p>
+                      </div>
+                    </div>
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={aiReport.chart_data.items} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#64748b" }} interval={0} angle={-25} textAnchor="end" />
+                          <YAxis tick={{ fontSize: 11, fill: "#64748b" }} unit="%" />
+                          <Tooltip
+                            formatter={(value: any) => [`${value}%`, ""]}
+                            contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)" }}
+                          />
+                          <Bar dataKey="closure_rate" name="Deal Closure Rate %" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="conv_rate" name="Lead Conv. Rate %" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Staff Performance Comparison Table */}
+              {aiReport.comparison_table?.headers && aiReport.comparison_table?.rows && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                        <Users size={18} className="text-indigo-600" /> Performance & Conversion Matrix
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-zinc-400">
+                        Side-by-side comparison across leads, conversions, win rates, and booked revenue
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-zinc-800">
+                    <table className="w-full text-left text-xs">
+                      <thead className="border-b border-slate-200 bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-400">
+                        <tr>
+                          {aiReport.comparison_table.headers.map((h: string, idx: number) => (
+                            <th key={idx} className="whitespace-nowrap px-4 py-3.5">
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
+                        {aiReport.comparison_table.rows.map((row: string[], rIdx: number) => (
+                          <tr key={rIdx} className="hover:bg-slate-50/70 dark:hover:bg-zinc-800/50 transition">
+                            {row.map((cell: string, cIdx: number) => {
+                              const isRate = cell.includes("%");
+                              const isWon = cell.startsWith("₹") || cell.startsWith("$");
+                              const isRepName = cIdx === 0;
+
+                              return (
+                                <td key={cIdx} className="whitespace-nowrap px-4 py-3 font-medium text-slate-700 dark:text-zinc-200">
+                                  {isRepName ? (
+                                    <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+                                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-black text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">
+                                        {cell.charAt(0)}
+                                      </div>
+                                      <span>{cell}</span>
+                                    </div>
+                                  ) : isRate ? (
+                                    <span className="inline-flex items-center rounded-lg bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                                      {cell}
+                                    </span>
+                                  ) : isWon ? (
+                                    <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                                      {cell}
+                                    </span>
+                                  ) : (
+                                    <span>{cell}</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Insights & Recommendations Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Strategic Insights */}
+                {aiReport.insights && aiReport.insights.length > 0 && (
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2 mb-3">
+                      <Lightbulb size={16} className="text-amber-500" /> Key Conversion & Performance Insights
+                    </h3>
+                    <div className="space-y-2.5">
+                      {aiReport.insights.map((ins: string, i: number) => (
+                        <div
+                          key={i}
+                          className="flex items-start gap-2.5 rounded-2xl border border-slate-100 bg-slate-50/60 p-3 text-xs leading-relaxed text-slate-700 dark:border-zinc-800 dark:bg-zinc-800/40 dark:text-zinc-300"
+                        >
+                          <CheckCircle2 size={15} className="text-indigo-500 shrink-0 mt-0.5" />
+                          <div dangerouslySetInnerHTML={{ __html: ins.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommendations */}
+                {aiReport.recommendations && aiReport.recommendations.length > 0 && (
+                  <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2 mb-3">
+                      <Target size={16} className="text-indigo-500" /> Actionable Leadership Recommendations
+                    </h3>
+                    <div className="space-y-2.5">
+                      {aiReport.recommendations.map((rec: string, i: number) => (
+                        <div
+                          key={i}
+                          className="flex items-start gap-2.5 rounded-2xl border border-slate-100 bg-indigo-50/30 p-3 text-xs leading-relaxed text-slate-700 dark:border-zinc-800 dark:bg-indigo-950/20 dark:text-zinc-300"
+                        >
+                          <ArrowRight size={15} className="text-indigo-600 shrink-0 mt-0.5" />
+                          <div dangerouslySetInnerHTML={{ __html: rec.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Full Markdown Narrative Section */}
+              {aiReport.detailed_markdown && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3 dark:border-zinc-800">
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                      <FileText size={16} className="text-slate-600" /> Detailed Report Narrative
+                    </h3>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(aiReport.detailed_markdown);
+                        setAiCopied(true);
+                        setTimeout(() => setAiCopied(false), 2000);
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                    >
+                      {aiCopied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+                      {aiCopied ? "Copied" : "Copy Raw Markdown"}
+                    </button>
+                  </div>
+                  <div className="prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed text-slate-700 dark:text-zinc-300 whitespace-pre-line">
+                    {aiReport.detailed_markdown}
+                  </div>
+                </div>
               )}
             </div>
           )}
