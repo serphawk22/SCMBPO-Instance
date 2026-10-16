@@ -4,6 +4,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Briefcase, Users, UserPlus, PhoneCall, Calendar, ArrowRight, TrendingUp, Target, IndianRupee, Percent } from "lucide-react";
 import Link from 'next/link';
+import FollowUpsWidget from '@/components/followups/FollowUpsWidget';
 
 interface Activity {
   type: string;
@@ -124,6 +125,8 @@ export function SalesManagerDashboard({ stats, name }: { stats: SalesManagerStat
         <div className="rounded-2xl border bg-white dark:bg-zinc-900 p-5"><p className="text-xs font-bold text-slate-400 uppercase">Lead Conversion</p><p className="text-2xl font-black dark:text-white">{stats.metrics?.conversion_percentage || 0}%</p></div>
         <div className="rounded-2xl border bg-white dark:bg-zinc-900 p-5"><p className="text-xs font-bold text-slate-400 uppercase">Deal Win Rate</p><p className="text-2xl font-black dark:text-white">{stats.metrics?.deal_win_rate || 0}%</p></div>
       </motion.div>
+
+      <FollowUpsWidget />
 
     </div>
   );

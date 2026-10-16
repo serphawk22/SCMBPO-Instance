@@ -11,8 +11,17 @@ from sqlmodel import Session
 from modules.scraper import research_and_map_company
 from pydantic import BaseModel
 
-from database import engine, SentEmail
+from database import engine, SentEmail, EmailReply, utc_now
+from database import ContactClientLink, ContactLeadLink, ProjectTicketNote  # used by the contact-link and ticket-note routes
 from sqlmodel import select
+
+
+# Module level on purpose: with `from __future__ import annotations` FastAPI resolves a body model by
+# name from this module's globals, so a class defined inside the function below would be taken for a
+# query parameter (every bulk delete would fail with 422).
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
 
 def register_sent_emails_endpoint(app, get_session):
     from fastapi import Depends
@@ -27,12 +36,33 @@ def register_sent_emails_endpoint(app, get_session):
             query = query.where(SentEmail.client_id == client_id)
             total_query = total_query.where(SentEmail.client_id == client_id)
             manual_query = manual_query.where(SentEmail.client_id == client_id)
-        
+
         total_count = session.exec(total_query).first() or 0
         manual_count = session.exec(manual_query).first() or 0
         auto_count = total_count - manual_count
-        
+
         emails = session.exec(query.limit(limit)).all()
+
+        # One query for every reply across this page of emails, instead of N+1.
+        email_ids = [e.id for e in emails]
+        replies_by_email: dict[int, list] = {}
+        if email_ids:
+            all_replies = session.exec(
+                select(EmailReply)
+                .where(EmailReply.sent_email_id.in_(email_ids))
+                .order_by(EmailReply.received_at.asc())
+            ).all()
+            for r in all_replies:
+                replies_by_email.setdefault(r.sent_email_id, []).append({
+                    "id": r.id,
+                    "from_address": r.from_address,
+                    "subject": r.subject,
+                    "body_text": r.body_text,
+                    "body_text_full": r.body_text_full,
+                    "body_html": r.body_html,
+                    "received_at": r.received_at.isoformat() if r.received_at else None,
+                })
+
         return {
             "totalSent": total_count,
             "manualCount": manual_count,
@@ -49,11 +79,44 @@ def register_sent_emails_endpoint(app, get_session):
                     "manual": e.manual,
                     "draft_json": e.draft_json,
                     "status": e.status,
-                    "sent_at": e.sent_at.isoformat() if e.sent_at else None
+                    "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+                    "opened_at": e.opened_at.isoformat() if e.opened_at else None,
+                    "last_opened_at": e.last_opened_at.isoformat() if e.last_opened_at else None,
+                    "open_count": e.open_count,
+                    "replied_at": e.replied_at.isoformat() if e.replied_at else None,
+                    "reply_from": e.reply_from,
+                    "reply_subject": e.reply_subject,
+                    "reply_body": e.reply_body,
+                    "replies": replies_by_email.get(e.id, []),
                 }
                 for e in emails
             ]
         }
+
+    # The frontend's per-row trash icon and "Select All" bulk-delete have always
+    # called these two routes, but neither existed on the backend — delete was
+    # silently a no-op (optimistic UI removal that reverted on next refresh).
+    @app.delete("/sent-emails/{email_id}")
+    def delete_sent_email(email_id: int, session: Session = Depends(get_session)):
+        email = session.get(SentEmail, email_id)
+        if not email:
+            raise HTTPException(status_code=404, detail="Sent email not found")
+        session.delete(email)
+        session.commit()
+        return {"ok": True}
+
+    @app.post("/sent-emails/bulk-delete")
+    def bulk_delete_sent_emails(body: BulkDeleteRequest, session: Session = Depends(get_session)):
+        if not body.ids:
+            return {"ok": True, "deleted": 0}
+        deleted = 0
+        for email_id in body.ids:
+            email = session.get(SentEmail, email_id)
+            if email:
+                session.delete(email)
+                deleted += 1
+        session.commit()
+        return {"ok": True, "deleted": deleted}
 
 import hashlib
 import re
@@ -68,6 +131,15 @@ def _to_naive_dt(dt):
         except Exception:
             return dt.replace(tzinfo=None)
     return dt
+
+
+def _to_aware_dt(dt):
+    """Aware UTC for writes and query binds (sqlmodel 0.0.47 rejects naive datetimes); naive input is read as UTC."""
+    if dt is None:
+        return None
+    if getattr(dt, "tzinfo", None) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 from typing import Any, Dict, List, Optional, Union
 
@@ -129,6 +201,8 @@ from database import (
     Tenant,
     PageVisitTelemetry,
     User,
+    EmailAgentProfile,
+    UserEmailIntegration,
     create_db_and_tables,
     engine,
     InventoryItem,
@@ -544,6 +618,15 @@ app.include_router(email_tracking_router)
 from routers.leaderboard import router as leaderboard_router
 app.include_router(leaderboard_router)
 
+from routers.inbox import router as inbox_router
+app.include_router(inbox_router)
+
+from routers.followups import router as followups_router
+app.include_router(followups_router)
+
+from routers.email_campaigns import router as email_campaigns_router
+app.include_router(email_campaigns_router)
+
 # SCM2: lead sources, revenue & costs, negotiation, ownership, meeting history, timezone
 from routers.scm2_features import router as scm2_router, ensure_scm2_schema, resolve_lead_source, reassign_owner
 app.include_router(scm2_router)
@@ -553,6 +636,10 @@ app.include_router(scm2_router, prefix="/scm2")
 from routers.command_center import router as command_center_router
 app.include_router(command_center_router)
 
+# AI Reports: Natural-language prompt-based CRM reporting & sales conversion analysis
+from routers.ai_reports import router as ai_reports_router
+app.include_router(ai_reports_router)
+
 @app.on_event("startup")
 def _scm2_startup():
     try:
@@ -560,17 +647,133 @@ def _scm2_startup():
     except Exception as e:
         print(f"[scm2] schema bootstrap failed: {e}")
 
-# Follow-ups: scheduling, AI-personalised emails, automatic reminders
-from routers.followups import router as followups_router, ensure_followup_schema, start_reminder_worker
-app.include_router(followups_router)
+# Follow-ups (/follow-ups): scheduling, AI-personalised emails, automatic reminders. Same follow_ups
+# table as the email stack's /followups router included above.
+from routers.follow_ups import router as follow_ups_router, ensure_followup_schema, start_reminder_worker
+app.include_router(follow_ups_router)
 
 @app.on_event("startup")
 def _followups_startup():
     try:
         ensure_followup_schema()
-        start_reminder_worker(60)
+        from modules.background import jobs_enabled
+        if jobs_enabled():
+            start_reminder_worker(60)
+        else:
+            print("[followups] BACKGROUND_JOBS=0: reminder worker NOT started.")
     except Exception as e:
         print(f"[followups] startup failed: {e}")
+
+def _ensure_email_tables(bind=None):
+    """Create the email-stack tables when missing. database.create_db_and_tables() only runs when
+    .migration_done is absent, and that file is tracked in git, so without this they would never appear
+    on a deployed database. Idempotent: create_all only creates what is missing.
+
+    create_all leaves a table that already exists alone, so an email table created earlier by another build
+    on the same database (e.g. an older follow_ups without contact_name) gets every model column it lacks
+    added here. Additive only: nothing is dropped, renamed or retyped, and added columns are nullable.
+    Returns the "table.column" names added."""
+    from sqlalchemy import inspect, text
+    from sqlmodel import SQLModel
+    from database import (EmailAgentProfile, EmailCampaign, EmailCampaignRecipient, EmailReply, FollowUp,
+                          FollowUpNoteScan, InboxMessage, UserEmailIntegration)
+    bind = bind or engine
+    tables = [m.__table__ for m in (EmailReply, InboxMessage, EmailAgentProfile, UserEmailIntegration, FollowUp,
+                                    FollowUpNoteScan, EmailCampaign, EmailCampaignRecipient)]
+    SQLModel.metadata.create_all(bind, tables=tables)
+
+    added = []
+    if_not_exists = "IF NOT EXISTS " if bind.dialect.name == "postgresql" else ""
+    insp = inspect(bind)
+    for table in tables:
+        existing = insp.get_columns(table.name)
+        have = {c["name"] for c in existing}
+        for col in table.columns:
+            if col.name in have:
+                continue
+            if col.primary_key:
+                print(f"[startup] email table {table.name} has no {col.name} primary key; left unchanged")
+                continue
+            ddl = (f'ALTER TABLE {table.name} ADD COLUMN {if_not_exists}"{col.name}" '
+                   f"{col.type.compile(dialect=bind.dialect)}")
+            try:
+                with bind.begin() as conn:
+                    conn.execute(text(ddl))
+                added.append(f"{table.name}.{col.name}")
+            except Exception as e:
+                print(f"[startup] could not add {table.name}.{col.name}: {type(e).__name__}: {e}")
+        # Columns the code doesn't know about stay; a NOT NULL one without a default would make inserts fail.
+        for c in existing:
+            if c["name"] not in table.columns and not c.get("nullable", True) and c.get("default") is None:
+                print(f"[startup] email table {table.name} has an extra NOT NULL column {c['name']} "
+                      f"without a default; inserts from this build will fail until it gets one")
+    if added:
+        print(f"[startup] email tables: added missing columns {', '.join(added)}")
+    return added
+
+
+def _email_stack_startup():
+    """Runs on every boot: email-stack tables and sent_emails columns, the database log line, and the
+    background pollers (unless BACKGROUND_JOBS=0)."""
+    from sqlalchemy import text
+    try:
+        _ensure_email_tables()
+    except Exception as e:
+        print(f"[startup] email-stack tables could not be created: {type(e).__name__}: {e}")
+
+    # Auto-migrate sent_emails open/reply tracking columns
+    email_tracking_migrations = [
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS opened_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS replied_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS last_opened_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS open_count INTEGER DEFAULT 0;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_from VARCHAR(255);",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_subject VARCHAR(500);",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_body TEXT;",
+    ]
+    for sql in email_tracking_migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+        except Exception as e:
+            print(f"Migration sent_emails tracking: {e}")
+
+    # Say which database this process is bound to (never the credentials), so two environments that
+    # accidentally share one database are easy to spot in the logs.
+    try:
+        print(f"[startup] database: {engine.url.get_backend_name()} host={engine.url.host or 'local file'} "
+              f"name={engine.url.database}")
+    except Exception:
+        pass
+
+    # Background pollers. BACKGROUND_JOBS=0 turns them all off (modules/background.py): only one
+    # environment per database should run them.
+    from modules.background import jobs_enabled
+    if not jobs_enabled():
+        print("[startup] BACKGROUND_JOBS=0: inbox sync, reply checker and follow-up scheduler are NOT started.")
+        return
+    # Detect replies to sent emails (IMAP-based).
+    try:
+        from modules.email_sender import start_reply_checker_thread
+        start_reply_checker_thread()
+    except Exception as e:
+        print(f"Reply checker thread failed to start: {e}")
+
+    # Mirror every inbound email into inbox_messages for the in-app Inbox (+ AI triage).
+    try:
+        from modules.inbox_sync import start_inbox_sync_thread
+        start_inbox_sync_thread()
+    except Exception as e:
+        print(f"Inbox sync thread failed to start: {e}")
+
+    # Follow-up reminders, automatic follow-up emails, AI note scanning and campaign resume.
+    try:
+        from modules.followups_core import start_followup_scheduler_thread
+        start_followup_scheduler_thread()
+    except Exception as e:
+        print(f"Follow-up scheduler failed to start: {e}")
+
 
 def _run_startup_migrations():
     from sqlalchemy import text
@@ -731,6 +934,10 @@ def on_startup():
         except Exception as e:
             print(f"[startup] migrations skipped: {e}")
     
+    # Email stack: unconditional, after the gated block above (.migration_done is tracked in git, so
+    # deploys never run create_db_and_tables / _run_startup_migrations).
+    _email_stack_startup()
+
     # Ensure SuperAdmin exists
     try:
         from sqlmodel import Session, select
@@ -1322,49 +1529,62 @@ def send_manual(body: SendManualRequest, session: Session = Depends(get_session)
         draft_json=_draft_json_payload,
         manual=body.manual if body.manual is not None else True,
         status="Draft" if body.action_type == "Draft" else "Sent",
-        sent_at=datetime.utcnow(),
+        sent_at=utc_now(),
     )
     session.add(sent_email)
     session.commit()
     session.refresh(sent_email)
 
-    # Step 3.5: Send the actual email (unless skip_send is True).
-    # Primary path is direct SMTP via the configured crm@serphawk.in mailbox.
+    # Step 3.5: Send the actual email (unless skip_send is True) from the sender's mailbox chain (D3):
+    # their own Email Integration, else the company mailbox (Settings -> SMTP), else the server mailbox.
     # The N8N webhook is still fired best-effort for follow-up automation.
     if not body.skip_send:
         import os
         import httpx
-        sender = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "contact@scmbpo.com")
-        password = os.getenv("EMAIL_AGENT_PASSWORD") or os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD", "")
-        smtp_server = os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER", "mail.serphawk.in")
-        smtp_port = os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT", 587)
+        from modules import company_mailer
+        sender_profile = _email_agent_sender(session)
+        _sig = sender_profile.get("signature") if sender_profile.get("auto_append") else ""
+        try:
+            account = _email_agent_account(session)
+        except company_mailer.MailAccountError as e:
+            if str(e) != company_mailer.NOT_CONFIGURED_MESSAGE:
+                raise HTTPException(status_code=500, detail={
+                    "code": "email_integration_decrypt_failed",
+                    "message": "Unable to decrypt stored email credentials. Please re-save your Email Integration settings.",
+                })
+            account = None
+        sender_email = account.email if account else None
 
         try:
             bodies = [b for b in [body.english_body, body.spanish_body] if b and b.strip()]
             full_body = "\n\n---\n\n".join(bodies) if bodies else ""
 
-            # Send directly over SMTP from crm@serphawk.in so mail goes out even if n8n is down.
-            if sender and password:
-                from modules.email_sender import send_email_outlook
-                send_email_outlook(
-                    to_email=body.to_email,
-                    subject=body.subject,
-                    body=full_body or body.english_body or body.spanish_body or "",
-                    sender_email=sender,
-                    sender_password=password,
-                    smtp_server=smtp_server,
-                    smtp_port=int(smtp_port),
-                )
-                print(f"Email sent via SMTP to {body.to_email} from {sender}")
+            # Send directly over SMTP from the configured mailbox so mail goes out even if n8n is down.
+            if account is not None:
+                try:
+                    company_mailer.send_via(
+                        account,
+                        to=body.to_email,
+                        subject=body.subject,
+                        body=_apply_signature(full_body or body.english_body or body.spanish_body or "", _sig),
+                        tracking_id=sent_email.id,
+                    )
+                except Exception as send_err:
+                    print(f"Email send failed via SMTP: {send_err}")
+                    raise HTTPException(status_code=502, detail={
+                        "code": "email_integration_send_failed",
+                        "message": f"Unable to send email: {company_mailer.friendly_smtp_error(send_err)}",
+                    })
+                print(f"Email sent via SMTP to {body.to_email} from {sender_email} ({account.source})")
             else:
-                print("SMTP not configured (missing EMAIL_SENDER/EMAIL_PASSWORD) - skipping direct send")
+                print("SMTP not configured (missing credentials) - skipping direct send")
 
             # Fire the N8N webhook best-effort for follow-up automation (never blocks the reply).
             webhook_url = os.getenv("N8N_EMAIL_WEBHOOK_URL", "https://primary-production-d40bc.up.railway.app/webhook/trigger-cold-email")
             payload = {
                 "event": "email_sent",
                 "email_id": sent_email.id,
-                "sender": sender,
+                "sender": sender_email,
                 "to_email": body.to_email,
                 "subject": body.subject,
                 "body": full_body,
@@ -1382,6 +1602,8 @@ def send_manual(body: SendManualRequest, session: Session = Depends(get_session)
                     print(f"Webhook successfully triggered and responded from manual send to {webhook_url}")
             except Exception as e:
                 print(f"Manual Email send failed via webhook: {e}")
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Manual Email send failed: {e}")
 
@@ -2018,6 +2240,179 @@ def _verify_password(plain: str, user: User) -> bool:
 def _user_dict(u: User) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "phone": getattr(u, "phone", None), "role": _normalize_role(u.role), "tenant_id": u.tenant_id}
 
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _generate_signature(name, email, phone) -> str:
+    """Build the default email signature from the agent profile values.
+
+    Missing values are omitted entirely (never rendered as undefined/null).
+    """
+    lines = ["Best Regards,"]
+    if (name or "").strip():
+        lines.append(name.strip())
+    if (email or "").strip():
+        lines.append(f"Email: {email.strip()}")
+    if (phone or "").strip():
+        lines.append(f"Phone: {phone.strip()}")
+    return "\n".join(lines)
+
+
+def _get_agent_profile(session: Session, user: User) -> Optional[EmailAgentProfile]:
+    """Read-only lookup of the user's Email Agent profile row (no writes)."""
+    if not user or not user.id:
+        return None
+    return session.exec(select(EmailAgentProfile).where(EmailAgentProfile.user_id == user.id)).first()
+
+
+def _agent_profile_dict(prof: Optional[EmailAgentProfile], user: Optional[User], integ: Optional[UserEmailIntegration] = None) -> dict:
+    """Serialize the agent profile, falling back to the configured SMTP email or login record READ-ONLY
+    for display defaults when no agent profile email is set."""
+    name = (prof.agent_name if prof else None) or (user.name if user else None) or ""
+    email = (prof.agent_email if prof else None) or (integ.email if integ and integ.email else None) or (user.email if user else None) or ""
+    phone = (prof.agent_phone if prof else None) or (getattr(user, "phone", None) if user else None) or ""
+    return {
+        "agent_name": name,
+        "agent_email": email,
+        "agent_phone": phone,
+        "signature": (prof.signature if prof else None) or "",
+        "auto_append_signature": bool(prof.auto_append_signature) if prof else True,
+    }
+
+
+def _email_agent_sender(session: Session) -> dict:
+    """Resolve the authenticated user's sender identity for the Email Agent.
+
+    Source of truth is the email_agent_profiles table (sender name/email/phone/
+    signature/auto-append), fully separate from login credentials. When no agent
+    profile row exists yet, the login record is used READ-ONLY as a display
+    fallback — it is never written from this path. SMTP credentials always stay
+    on the configured mailbox. Fallbacks: the user's name, else "SCMHub Logistics"
+    (the default From name); the sending mailbox's address; no phone.
+    """
+    user_id = current_salesperson_id.get()
+    user = session.get(User, user_id) if user_id else None
+    server_address = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL") or ""
+    if not user:
+        return {
+            "name": "SCMHub Logistics",
+            "email": server_address,
+            "phone": "",
+            "signature": "",
+            "auto_append": False,
+        }
+    integ = _get_user_email_integration(session, user_id)
+    prof = _get_agent_profile(session, user)
+    d = _agent_profile_dict(prof, user, integ)
+    return {
+        "name": (d["agent_name"] or "").strip() or "SCMHub Logistics",
+        "email": (d["agent_email"] or "").strip() or server_address,
+        "phone": (d["agent_phone"] or "").strip(),
+        "signature": d["signature"] or "",
+        "auto_append": d["auto_append_signature"],
+    }
+
+def _email_agent_server_account():
+    """Server-mailbox step of the Email Agent chain, with this backend's existing env names and defaults:
+    EMAIL_AGENT_SENDER / EMAIL_AGENT_PASSWORD (a dedicated Email Agent mailbox) win over EMAIL_SENDER."""
+    from modules.company_mailer import MailAccount
+    sender = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL")
+    password = os.getenv("EMAIL_AGENT_PASSWORD") or os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD")
+    if not (sender and password):
+        return None
+    return MailAccount(
+        email=sender, password=password,
+        smtp_host=os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER") or "mail.serphawk.in",
+        smtp_port=int(os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT") or 587),
+        source="server_env", imap_host=os.getenv("IMAP_SERVER") or None,
+    )
+
+def _email_agent_account(session: Session):
+    """The mailbox a person's Email Agent mail (send-manual, auto-send) goes out from (D3): their own
+    Email Integration, else the company mailbox (Settings -> SMTP), else the server mailbox.
+    Raises company_mailer.MailAccountError: NOT_CONFIGURED_MESSAGE when there is none, another
+    message when the person's stored app password can't be decrypted."""
+    from modules import company_mailer
+    user_id = current_salesperson_id.get()
+    user = session.get(User, user_id) if user_id else None
+    tenant_id = user.tenant_id if user else None
+    try:
+        return company_mailer.resolve_account(session, user_id, tenant_id)
+    except company_mailer.MailAccountError as e:
+        if str(e) != company_mailer.NOT_CONFIGURED_MESSAGE:
+            raise
+    account = _email_agent_server_account()
+    if account is None:
+        raise company_mailer.MailAccountError(company_mailer.NOT_CONFIGURED_MESSAGE)
+    if user:
+        prof = _get_agent_profile(session, user)
+        account.from_name = (prof.agent_name if prof else None) or user.name or None
+    return account
+
+
+def _get_user_email_integration(session: Session, user_id: Optional[int]) -> Optional[UserEmailIntegration]:
+    """Read the authenticated user's Email Integration row — never another user's."""
+    if not user_id:
+        return None
+    return session.exec(select(UserEmailIntegration).where(UserEmailIntegration.user_id == user_id)).first()
+
+
+def _email_integration_safe_dict(row: Optional[UserEmailIntegration]) -> dict:
+    """Serialize integration config WITHOUT any credential material."""
+    if not row:
+        return {"configured": False, "smtp_status": "not_configured", "imap_status": "not_configured"}
+    return {
+        "configured": True,
+        "email": row.email,
+        "provider": row.provider,
+        "smtp_host": row.smtp_host,
+        "smtp_port": row.smtp_port,
+        "smtp_security": row.smtp_security,
+        "imap_host": row.imap_host,
+        "imap_port": row.imap_port,
+        "imap_security": row.imap_security,
+        "is_active": bool(row.is_active),
+        "smtp_status": row.smtp_status or "not_tested",
+        "imap_status": row.imap_status or "not_tested",
+        "last_tested_at": row.last_tested_at.isoformat() if row.last_tested_at else None,
+    }
+
+
+_DEFAULT_SIGNOFF_GREETING_RE = re.compile(
+    r"^\s*(?:Best regards,?|Saludos cordiales,?|Saludos,?|Warm regards,?|Best,?|Regards,?)\s*$",
+    re.IGNORECASE,
+)
+
+_SIGNOFF_SHAPE_RE = re.compile(
+    r"scm\s*(?:bpo|hub|shipping)|dapros|(?:^|\s)[^@\s]+@[^@\s]+\.[^@\s]+|^(?:Email|Phone):\s",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _apply_signature(body: str, signature: str) -> str:
+    """Idempotently apply the user's saved email signature to a generated body.
+
+    - Empty signature: body unchanged.
+    - Signature already present in the body: unchanged (never appended twice).
+    - Otherwise: strip a trailing sign-off block (a greeting line followed by up
+      to 4 lines shaped like a signature — mentioning SCM BPO / SCMHub / SCM Shipping / Dapros, an email
+      address, or Email:/Phone: lines) and append the signature with line
+      breaks preserved exactly. This also handles a signature that changed
+      after a draft was written, so only one sign-off is ever sent.
+    """
+    if not body or not signature or not signature.strip():
+        return body
+    if signature.strip() in body:
+        return body
+    lines = body.rstrip().split("\n")
+    for i in range(len(lines) - 1, max(len(lines) - 6, 0) - 1, -1):
+        if _DEFAULT_SIGNOFF_GREETING_RE.match(lines[i]):
+            block = lines[i + 1:]
+            if block and _SIGNOFF_SHAPE_RE.search("\n".join(block)):
+                lines = lines[:i]
+                break
+    return "\n".join(lines).rstrip() + "\n\n" + signature.rstrip()
 
 def _client_dict(cp: ClientProfile, session: Session, users: Optional[Dict[int, User]] = None, last_activities: Optional[Dict[int, ActivityLog]] = None) -> dict:
     # Batch lookups: callers rendering many clients (e.g. /clients list) pass in
@@ -2669,7 +3064,7 @@ def forgot_password(body: ForgotPasswordRequest, session: Session = Depends(get_
         session.add(PasswordResetToken(
             user_id=user.id,
             token=token,
-            expires_at=datetime.utcnow() + timedelta(hours=1),
+            expires_at=utc_now() + timedelta(hours=1),
         ))
         session.commit()
 
@@ -2707,7 +3102,7 @@ def reset_password(body: ResetPasswordRequest, session: Session = Depends(get_se
             PasswordResetToken.token == body.token,
         )
     ).first()
-    if not rec or rec.used or rec.expires_at < _dt.utcnow():
+    if not rec or rec.used or _to_naive_dt(rec.expires_at) < _dt.utcnow():
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
 
     if not body.new_password or len(body.new_password) < 6:
@@ -2842,6 +3237,347 @@ def update_current_user(body: UserUpdateMe, session: Session = Depends(get_sessi
     return {"user": _user_dict(user)}
 
 
+class AgentProfileUpdate(BaseModel):
+    agent_name: Optional[str] = None
+    agent_email: Optional[str] = None
+    agent_phone: Optional[str] = None
+    signature: Optional[str] = None
+    auto_append_signature: Optional[bool] = None
+
+@app.get("/users/me/agent-profile")
+def get_email_agent_profile(session: Session = Depends(get_session)):
+    """Email Agent sender profile (separate from the login record)."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    integ = _get_user_email_integration(session, user_id)
+    return {"agent_profile": _agent_profile_dict(_get_agent_profile(session, user), user, integ)}
+
+@app.put("/users/me/agent-profile")
+def update_email_agent_profile(body: AgentProfileUpdate, session: Session = Depends(get_session)):
+    """Update the Email Agent sender profile.
+
+    Writes ONLY to email_agent_profiles — the users table (login email,
+    password) is never touched. When any sender field changes, the signature is
+    regenerated from the NEW values in the same transaction; an explicit
+    `signature` in the payload (manual Save Signature) wins over regeneration.
+    Agent emails are sender identities, not accounts, so no uniqueness check
+    applies.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prof = _get_agent_profile(session, user)
+    if prof is None:
+        integ = _get_user_email_integration(session, user_id)
+        fallback_email = (integ.email if integ and integ.email else None) or user.email
+        prof = EmailAgentProfile(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            agent_name=user.name,
+            agent_email=fallback_email,
+            agent_phone=getattr(user, "phone", None),
+            signature=getattr(user, "signature", None),
+            auto_append_signature=bool(getattr(user, "auto_append_signature", True)),
+        )
+        session.add(prof)
+
+    profile_touched = body.agent_name is not None or body.agent_email is not None or body.agent_phone is not None
+
+    if body.agent_email is not None:
+        new_email = body.agent_email.strip()
+        if new_email and not _EMAIL_RE.match(new_email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        prof.agent_email = new_email
+    if body.agent_name is not None:
+        prof.agent_name = body.agent_name
+    if body.agent_phone is not None:
+        prof.agent_phone = body.agent_phone
+
+    if profile_touched:
+        name = (prof.agent_name or "").strip() or (user.name or "")
+        email = (prof.agent_email or "").strip() or (user.email or "")
+        phone = (prof.agent_phone or "").strip() or (getattr(user, "phone", None) or "")
+        prof.signature = _generate_signature(name, email, phone)
+
+    if body.signature is not None:
+        prof.signature = body.signature
+    if body.auto_append_signature is not None:
+        prof.auto_append_signature = bool(body.auto_append_signature)
+
+    session.commit()
+    session.refresh(prof)
+    integ = _get_user_email_integration(session, user_id)
+    return {"agent_profile": _agent_profile_dict(prof, user, integ)}
+
+
+class SignatureUpdate(BaseModel):
+    signature: Optional[str] = None
+
+@app.put("/users/me/signature")
+def update_current_user_signature(body: SignatureUpdate, session: Session = Depends(get_session)):
+    """Alias kept for compatibility — writes the signature to the agent profile
+    table (never to the login record)."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prof = _get_agent_profile(session, user)
+    if prof is None:
+        prof = EmailAgentProfile(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            agent_name=user.name,
+            agent_email=user.email,
+            agent_phone=getattr(user, "phone", None),
+            signature=getattr(user, "signature", None),
+            auto_append_signature=bool(getattr(user, "auto_append_signature", True)),
+        )
+        session.add(prof)
+    prof.signature = body.signature
+    session.commit()
+    session.refresh(prof)
+    return {"ok": True}
+
+
+_EMAIL_INTEGRATION_PROVIDERS = {"gmail", "outlook", "yahoo", "zoho", "custom"}
+_EMAIL_INTEGRATION_SECURITY_ALIASES = {"ssl": "ssl", "ssltls": "ssl", "tls": "ssl", "starttls": "starttls", "none": "none", "": "none"}
+
+
+def _normalize_integration_security(value: Optional[str], label: str) -> Optional[str]:
+    if value is None:
+        return None
+    v = str(value).strip().lower().replace(" ", "").replace("/", "").replace("_", "")
+    if v not in _EMAIL_INTEGRATION_SECURITY_ALIASES:
+        raise HTTPException(status_code=400, detail=f"Invalid {label} security value. Use ssl, starttls, or none.")
+    return _EMAIL_INTEGRATION_SECURITY_ALIASES[v]
+
+
+def _validate_integration_port(port: Optional[int], label: str) -> Optional[int]:
+    if port is None:
+        return None
+    if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
+        raise HTTPException(status_code=400, detail=f"Invalid {label} port. Use a number between 1 and 65535.")
+    return port
+
+
+class EmailIntegrationUpdate(BaseModel):
+    email: Optional[str] = None
+    app_password: Optional[str] = None
+    provider: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_security: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_security: Optional[str] = None
+
+
+@app.get("/users/me/email-integration")
+def get_email_integration(session: Session = Depends(get_session)):
+    """Safe view of the authenticated user's Email Integration. No credentials returned."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    row = _get_user_email_integration(session, user_id)
+    return {"integration": _email_integration_safe_dict(row)}
+
+
+@app.put("/users/me/email-integration")
+def update_email_integration(body: EmailIntegrationUpdate, session: Session = Depends(get_session)):
+    """Create/update the authenticated user's Email Integration.
+
+    The app password is encrypted at rest and NEVER returned. Server/port/
+    security fields can be updated without re-entering the password.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    row = _get_user_email_integration(session, user_id)
+    creating = row is None
+    if creating:
+        row = UserEmailIntegration(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            email="",
+            encrypted_app_password="",
+            smtp_host="",
+            imap_host="",
+        )
+        session.add(row)
+
+    if body.email is not None:
+        email = body.email.strip()
+        if not _EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        row.email = email
+    if body.provider is not None:
+        provider = body.provider.strip().lower()
+        if provider not in _EMAIL_INTEGRATION_PROVIDERS:
+            raise HTTPException(status_code=400, detail="Invalid provider. Use gmail, outlook, yahoo, zoho, or custom.")
+        row.provider = provider
+    if body.smtp_host is not None:
+        host = body.smtp_host.strip()
+        if not host:
+            raise HTTPException(status_code=400, detail="SMTP server is required.")
+        row.smtp_host = host
+    if body.imap_host is not None:
+        host = body.imap_host.strip()
+        if not host:
+            raise HTTPException(status_code=400, detail="IMAP server is required.")
+        row.imap_host = host
+    if body.smtp_port is not None:
+        row.smtp_port = _validate_integration_port(body.smtp_port, "SMTP")
+    if body.imap_port is not None:
+        row.imap_port = _validate_integration_port(body.imap_port, "IMAP")
+    sec = _normalize_integration_security(body.smtp_security, "SMTP")
+    if sec is not None:
+        row.smtp_security = sec
+    sec = _normalize_integration_security(body.imap_security, "IMAP")
+    if sec is not None:
+        row.imap_security = sec
+    if body.app_password is not None:
+        if not body.app_password:
+            raise HTTPException(status_code=400, detail="App password cannot be empty.")
+        from modules.email_crypto import encrypt_app_password, EmailCredentialEncryptionError
+        try:
+            row.encrypted_app_password = encrypt_app_password(body.app_password)
+        except EmailCredentialEncryptionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if creating:
+        missing = []
+        if not row.email:
+            missing.append("email address")
+        if not row.encrypted_app_password:
+            missing.append("app password")
+        if not row.smtp_host:
+            missing.append("SMTP server")
+        if not row.imap_host:
+            missing.append("IMAP server")
+        if missing:
+            session.rollback()
+            raise HTTPException(status_code=400, detail="Missing required fields for a new configuration: " + ", ".join(missing) + ".")
+        row.smtp_status = "not_tested"
+        row.imap_status = "not_tested"
+
+    from database import _utcnow as _db_utcnow
+    row.updated_at = _db_utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return {"integration": _email_integration_safe_dict(row)}
+
+
+class EmailIntegrationTestRequest(BaseModel):
+    scope: Optional[str] = "all"  # smtp | imap | all
+    # Optional UNSAVED overrides (test-before-save). A temporary app_password is
+    # used for the test only and is NEVER persisted.
+    email: Optional[str] = None
+    app_password: Optional[str] = None
+    provider: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_security: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_security: Optional[str] = None
+
+
+@app.post("/users/me/email-integration/test")
+def test_email_integration(body: EmailIntegrationTestRequest, session: Session = Depends(get_session)):
+    """Run a REAL SMTP/IMAP connection test against the saved configuration.
+
+    Optional override fields (including a temporary app_password) test form
+    values BEFORE saving; those credentials are discarded and never stored.
+    Status is persisted only when the saved configuration itself was tested.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    row = _get_user_email_integration(session, user_id)
+
+    scope = (body.scope or "all").lower()
+    if scope not in ("smtp", "imap", "all"):
+        raise HTTPException(status_code=400, detail="Invalid test scope. Use smtp, imap, or all.")
+
+    overrides = {k: v for k, v in body.model_dump().items() if k != "scope" and v is not None}
+    has_overrides = bool(overrides)
+
+    email = overrides.get("email") or (row.email if row else None)
+    password = overrides.get("app_password")
+    password_from_stored = False
+    if password is None and row is not None and row.encrypted_app_password:
+        from modules.email_crypto import decrypt_app_password, EmailCredentialEncryptionError
+        try:
+            password = decrypt_app_password(row.encrypted_app_password)
+            password_from_stored = True
+        except EmailCredentialEncryptionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    smtp_host = overrides.get("smtp_host") or (row.smtp_host if row else None)
+    smtp_port = overrides.get("smtp_port") or (row.smtp_port if row else None)
+    smtp_security = _normalize_integration_security(overrides.get("smtp_security") or (row.smtp_security if row else None), "SMTP")
+    imap_host = overrides.get("imap_host") or (row.imap_host if row else None)
+    imap_port = overrides.get("imap_port") or (row.imap_port if row else None)
+    imap_security = _normalize_integration_security(overrides.get("imap_security") or (row.imap_security if row else None), "IMAP")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email Integration is not configured. Save your email account and app password before testing.")
+
+    from modules.email_integration import test_smtp_connection, test_imap_connection
+
+    result: dict = {"smtp": None, "imap": None, "last_tested_at": None}
+    failures = []
+
+    if scope in ("smtp", "all"):
+        if not smtp_host or not smtp_port:
+            result["smtp"] = {"ok": False, "message": "SMTP server and port are required."}
+        else:
+            ok, message = test_smtp_connection(email, password, smtp_host, int(smtp_port), smtp_security or "starttls")
+            result["smtp"] = {"ok": ok, "message": message}
+            if not ok:
+                failures.append(message)
+
+    if scope in ("imap", "all"):
+        if not imap_host or not imap_port:
+            result["imap"] = {"ok": False, "message": "IMAP server and port are required."}
+        else:
+            ok, message = test_imap_connection(email, password, imap_host, int(imap_port), imap_security or "ssl")
+            result["imap"] = {"ok": ok, "message": message}
+            if not ok:
+                failures.append(message)
+
+    # Persist status ONLY when the saved configuration itself was tested.
+    if row is not None and not has_overrides:
+        from database import _utcnow as _db_utcnow
+        row.last_tested_at = _db_utcnow()
+        if result["smtp"] is not None:
+            row.smtp_status = "connected" if result["smtp"]["ok"] else "failed"
+        if result["imap"] is not None:
+            row.imap_status = "connected" if result["imap"]["ok"] else "failed"
+        session.add(row)
+        session.commit()
+        result["last_tested_at"] = row.last_tested_at.isoformat()
+
+    result["ok"] = not failures
+    return result
+
 @app.get("/users")
 def list_users(role: Optional[str] = None, session: Session = Depends(get_session)):
     query = select(User)
@@ -2860,53 +3596,124 @@ def list_users(role: Optional[str] = None, session: Session = Depends(get_sessio
 
 @app.get("/users/{user_id}/stats")
 def get_user_stats(user_id: int, session: Session = Depends(get_session)):
+    from database import Deal, Invoice, ClientProfile, Lead, Meeting, CallLog, FollowUp, Task
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    # Sales team stats
-    if user.role in ["Admin", "SalesManager", "Employee"]:
-        # Clients handling
-        clients_count = len(session.exec(select(ClientProfile).where(ClientProfile.assignedEmployeeId == user.id)).all())
+    # Sales team / Staff performance stats
+    if user.role in ["Admin", "SuperAdmin", "SalesManager", "Employee", "Sales", "Demo"]:
+        # Deals & financial figures
+        deals = session.exec(select(Deal).where(Deal.assigned_to == user.id)).all()
+        won_deals = [d for d in deals if str(d.stage).strip().lower() in ["closed won", "won"]]
+        lost_deals = [d for d in deals if str(d.stage).strip().lower() in ["closed lost", "lost"]]
+        in_progress_deals = [d for d in deals if str(d.stage).strip().lower() not in ["closed won", "won", "closed lost", "lost"]]
         
-        # Leads converted
-        converted_leads_count = len(session.exec(select(Lead).where(Lead.owner_id == user.id, Lead.is_converted == True)).all())
+        won_revenue = sum((d.final_value or d.value or 0.0) for d in won_deals)
+        
+        # Clients handling
+        clients = session.exec(select(ClientProfile).where(ClientProfile.assignedEmployeeId == user.id)).all()
+        client_ids = [c.id for c in clients]
+        
+        # Invoices / Due amounts
+        invoices = session.exec(select(Invoice).where(Invoice.client_id.in_(client_ids))).all() if client_ids else []
+        due_invoices = [inv for inv in invoices if str(inv.status).strip().lower() not in ["paid", "cancelled"]]
+        invoiced_due = sum((inv.total or 0.0) for inv in due_invoices)
+        pipeline_due = sum((d.final_value or d.value or 0.0) for d in in_progress_deals)
+        revenue_due = invoiced_due if invoiced_due > 0 else pipeline_due
+        
+        # Also check paid invoices to add to revenue made if available
+        paid_invoices = [inv for inv in invoices if str(inv.status).strip().lower() == "paid"]
+        paid_invoices_total = sum((inv.total or 0.0) for inv in paid_invoices)
+        if paid_invoices_total > won_revenue:
+            won_revenue = paid_invoices_total
+
+        # Client Leads
+        leads = session.exec(select(Lead).where(Lead.owner_id == user.id).order_by(Lead.created_at.desc())).all()
+        converted_leads_count = sum(1 for l in leads if l.is_converted or str(l.status).strip().lower() in ["converted", "won"])
+        
+        # Meetings
+        all_meetings = session.exec(select(Meeting).order_by(Meeting.scheduled_at.desc())).all()
+        meetings = [
+            m for m in all_meetings
+            if m.host_id == user.id or (m.attendees and any((user.name and user.name in str(a)) for a in m.attendees))
+        ]
+        
+        # Calls
+        user_name_str = user.name or ""
+        calls = session.exec(select(CallLog).where(or_(CallLog.assigned_to == user_name_str, CallLog.assigned_to == str(user.id))).order_by(CallLog.received_at.desc())).all()
+        
+        # Follow-ups
+        followups = session.exec(select(FollowUp).where(or_(FollowUp.owner_id == user.id, FollowUp.created_by == user.id)).order_by(FollowUp.due_at.desc())).all()
         
         # Current active tasks
         active_tasks = session.exec(select(Task).where(Task.assigned_to == user.id, Task.status.notin_(["approved", "rejected"]))).all()
-        assigned_cases = session.exec(select(Case).where(Case.assigned_to == user.id)).all()
         
         return {
             "type": "sales",
-            "clients_handling": clients_count,
+            "revenue_made": round(won_revenue, 2),
+            "revenue_due": round(revenue_due, 2),
+            "won_deals_count": len(won_deals),
+            "lost_deals_count": len(lost_deals),
+            "in_progress_deals_count": len(in_progress_deals),
+            "total_deals_count": len(deals),
+            "clients_count": len(clients),
+            "clients": [
+                {"id": c.id, "company_name": c.companyName or "Unnamed Account", "status": getattr(c, "status", "Active")}
+                for c in clients[:20]
+            ],
+            "leads_count": len(leads),
             "leads_converted": converted_leads_count,
-            "cases_assigned": len(assigned_cases),
+            "leads": [
+                {
+                    "id": l.id,
+                    "company_name": l.company_name or "Unnamed Lead",
+                    "status": l.status or "New",
+                    "estimated_value": getattr(l, "estimated_value", getattr(l, "value", 0.0)) or 0.0,
+                    "source": l.source or "Direct",
+                    "created_at": l.created_at.isoformat() if getattr(l, "created_at", None) else None
+                }
+                for l in leads[:30]
+            ],
+            "meetings_count": len(meetings),
+            "meetings": [
+                {
+                    "id": m.id,
+                    "title": m.title,
+                    "scheduled_at": m.scheduled_at.isoformat() if m.scheduled_at else None,
+                    "status": m.status or "Scheduled",
+                    "meeting_type": m.meeting_type or "Meeting",
+                    "location": m.location or m.meeting_link or ""
+                }
+                for m in meetings[:20]
+            ],
+            "calls_count": len(calls),
+            "calls": [
+                {
+                    "id": c.id,
+                    "phone_number": c.phone_number,
+                    "duration_seconds": c.duration_seconds or 0,
+                    "summary": c.summary or "",
+                    "received_at": (c.received_at or c.createdAt).isoformat() if (c.received_at or c.createdAt) else None
+                }
+                for c in calls[:20]
+            ],
+            "followups_count": len(followups),
+            "followups": [
+                {
+                    "id": f.id,
+                    "title": f.title,
+                    "channel": f.channel or "Email",
+                    "priority": f.priority or "Medium",
+                    "status": f.status or "Pending",
+                    "due_at": f.due_at.isoformat() if f.due_at else None
+                }
+                for f in followups[:20]
+            ],
             "active_tasks": [
                 {"id": t.id, "title": t.title, "status": t.status, "priority": t.priority} 
-                for t in active_tasks
+                for t in active_tasks[:10]
             ]
-        }
-        
-    # Dev team stats
-    elif user.role in ["ProjectMember", "Intern"]:
-        if not user.name:
-            tickets = []
-        else:
-            tickets = session.exec(select(ProjectTicket).where(ProjectTicket.current_owner.ilike(user.name))).all()
-            
-        total_tickets = len(tickets)
-        in_dev = sum(1 for t in tickets if t.current_state == "In Dev")
-        in_qa = sum(1 for t in tickets if t.current_state == "Given to QA")
-        in_prod = sum(1 for t in tickets if t.current_state == "Prod Release")
-        assigned_cases = session.exec(select(Case).where(Case.assigned_to == user.id)).all()
-        
-        return {
-            "type": "dev",
-            "total_tickets": total_tickets,
-            "in_dev": in_dev,
-            "in_qa": in_qa,
-            "in_prod": in_prod,
-            "cases_assigned": len(assigned_cases)
         }
         
     return {"type": "unknown"}
@@ -3931,20 +4738,20 @@ def patch_client_status(client_id: int, body: Dict[str, Any] = Body(...), sessio
             for d in deals:
                 d.stage = deal_stage_map[status]
                 if status == "Won":
-                    d.won_at = datetime.utcnow()
+                    d.won_at = utc_now()
                     if d.value and not d.final_value:
                         d.final_value = d.value
                 elif status != "Won":
                     d.won_at = None
-                d.updated_at = datetime.utcnow()
+                d.updated_at = utc_now()
                 session.add(d)
         if status in prop_status_map:
             props = session.exec(select(Proposal).where(Proposal.client_id == client_id)).all()
             for pr in props:
                 pr.status = prop_status_map[status]
                 if status == "Won":
-                    pr.signed_at = datetime.utcnow()
-                pr.updated_at = datetime.utcnow()
+                    pr.signed_at = utc_now()
+                pr.updated_at = utc_now()
                 session.add(pr)
 
     if "assignedEmployeeId" in body:
@@ -4262,7 +5069,7 @@ def update_client_note(client_id: int, note_id: int, body: ClientNoteUpdateReque
         note.tags = body.tags
     if body.is_pinned is not None:
         note.is_pinned = body.is_pinned
-    note.updated_at = datetime.utcnow()
+    note.updated_at = utc_now()
     session.add(note)
     session.commit()
     
@@ -4479,7 +5286,7 @@ def trigger_full_analysis(client_id: int, session: Session = Depends(get_session
                 rec.pain_points = _j2.dumps(icps) if icps else None
                 rec.business_goals = _j2.dumps(data.get("gtm_recommendations", {})) if data.get("gtm_recommendations") else None
                 rec.competitors = _j2.dumps(data.get("competitive_landscape", {})) if data.get("competitive_landscape") else None
-                rec.updated_at = __import__('datetime').datetime.utcnow()
+                rec.updated_at = utc_now()
                 sess.add(rec)
                 sess.commit()
             print(f"[FullAnalysis] Done for client {client_id}")
@@ -4541,7 +5348,7 @@ def upsert_client_research(client_id: int, body: ClientResearchUpdateRequest, se
         research = ClientResearch(client_id=client_id)
     for field, val in body.model_dump(exclude_unset=True).items():
         setattr(research, field, val)
-    research.updated_at = datetime.utcnow()
+    research.updated_at = utc_now()
     session.add(research)
     session.commit()
     return {"ok": True}
@@ -4764,7 +5571,8 @@ def generate_outbound_draft(client_id: int, session: Session = Depends(get_sessi
             spanish_body=data.get("spanish_body", ""),
             draft_json=_json.dumps(data),
             manual=True,
-            sent_at=datetime.utcnow()
+            status="Draft",  # generated, never sent — keeps it out of the Inbox's Sent view
+            sent_at=utc_now()
         )
         session.add(draft)
         
@@ -4979,7 +5787,10 @@ def get_ai_insights(client_id: int, session: Session = Depends(get_session)):
 
     days_since_contact = None
     if last_contact:
-        days_since_contact = (datetime.utcnow() - last_contact).days
+        # sqlmodel>=0.0.4x returns tz-aware datetimes; utcnow() is naive and the subtraction raised (500)
+        if last_contact.tzinfo is None:
+            last_contact = last_contact.replace(tzinfo=timezone.utc)
+        days_since_contact = (datetime.now(timezone.utc) - last_contact).days
 
     prompt = f"""You are an AI Sales Copilot analyzing a CRM client record. Provide actionable insights.
 
@@ -5078,7 +5889,10 @@ def get_lead_ai_insights(lead_id: int, session: Session = Depends(get_session)):
 
     days_since_contact = None
     if last_contact:
-        days_since_contact = (datetime.utcnow() - last_contact).days
+        # sqlmodel>=0.0.4x returns tz-aware datetimes; utcnow() is naive and the subtraction raised (500)
+        if last_contact.tzinfo is None:
+            last_contact = last_contact.replace(tzinfo=timezone.utc)
+        days_since_contact = (datetime.now(timezone.utc) - last_contact).days
 
     prompt = f"""You are an AI Sales Copilot analyzing a CRM lead. Provide actionable insights.
 
@@ -5442,7 +6256,7 @@ def reports_summary(
 ):
     if current_tenant_id.get() == -1 or current_tenant_id.get() is None:
         current_tenant_id.set(1)
-    _require_roles(session, ["Admin"])
+    _require_roles(session, ["Admin", "SuperAdmin"])
     today = datetime.utcnow().date()
     start = _report_date(start_date, today - timedelta(days=29))
     end = _report_date(end_date, today)
@@ -5456,23 +6270,47 @@ def reports_summary(
             query = query.where(model.tenant_id == tenant_id)
         return session.exec(query).all()
 
+    from database import FollowUp
+
+    all_scoped_deals = scoped(Deal)
+    
+    def _deal_won_in_range(d):
+        if str(d.stage).strip().lower() not in ("closed won", "won"):
+            return False
+        d_won_date = d.won_at or d.created_at
+        return _in_report_range(d_won_date, start, end)
+
+    def _deal_lost_in_range(d):
+        if str(d.stage).strip().lower() not in ("closed lost", "lost"):
+            return False
+        d_lost_date = d.won_at or d.updated_at or d.created_at
+        return _in_report_range(d_lost_date, start, end)
+
+    deals = [
+        deal for deal in all_scoped_deals
+        if _in_report_range(deal.created_at, start, end) or _deal_won_in_range(deal) or _deal_lost_in_range(deal)
+    ]
     leads = [lead for lead in scoped(Lead) if _in_report_range(lead.created_at, start, end)]
     all_leads = scoped(Lead)
     clients = scoped(ClientProfile)
-    deals = [deal for deal in scoped(Deal) if _in_report_range(deal.created_at, start, end)]
     emails = [email for email in scoped(SentEmail) if _in_report_range(email.sent_at, start, end)]
     activities = [activity for activity in scoped(ActivityLog) if _in_report_range(activity.createdAt, start, end)]
-    calls = [call for call in scoped(CallLog) if _in_report_range(call.createdAt, start, end)]
+    calls = [call for call in scoped(CallLog) if _in_report_range(call.createdAt or call.received_at, start, end)]
     conversations = [conversation for conversation in scoped(ConversationLog) if _in_report_range(conversation.created_at, start, end)]
     tickets = [ticket for ticket in scoped(ProjectTicket) if _in_report_range(ticket.created_at, start, end)]
     cases = [case for case in scoped(Case) if _in_report_range(case.created_at, start, end)]
     meetings = [meeting for meeting in scoped(Meeting) if meeting.scheduled_at and _in_report_range(meeting.scheduled_at, start, end)]
     task_entries = [entry for entry in scoped(TaskSheetEntry) if start <= date.fromisoformat(entry.work_date) <= end]
+    all_followups = scoped(FollowUp)
+    followups = [
+        f for f in all_followups
+        if (_in_report_range(f.due_at, start, end) or _in_report_range(f.created_at, start, end) or _in_report_range(f.completed_at, start, end))
+    ]
     users = {user.id: user for user in scoped(User)}
 
     converted_leads = [lead for lead in all_leads if lead.is_converted]
-    closed_deals = [deal for deal in deals if deal.stage in ("Closed Won", "Closed Lost")]
-    won_deals = [deal for deal in deals if deal.stage == "Closed Won"]
+    closed_deals = [deal for deal in all_scoped_deals if _deal_won_in_range(deal) or _deal_lost_in_range(deal)]
+    won_deals = [deal for deal in all_scoped_deals if _deal_won_in_range(deal)]
     conversion_percentage = round((len(converted_leads) / len(all_leads)) * 100, 2) if all_leads else 0
     win_rate = round((len(won_deals) / len(closed_deals)) * 100, 2) if closed_deals else 0
 
@@ -5486,62 +6324,216 @@ def reports_summary(
     for bucket in source_map.values():
         bucket["conversion_percentage"] = round((bucket["converted"] / bucket["leads"]) * 100, 2) if bucket["leads"] else 0
 
-    staff: dict[int, dict] = {}
-    def staff_bucket(user_id: Optional[int], name: Optional[str] = None):
-        if not user_id:
-            return None
-        user = users.get(user_id)
-        bucket = staff.setdefault(user_id, {"user_id": user_id, "name": name or (user.name if user else "Unknown"), "role": user.role if user else "Unknown", "activities": 0, "calls": 0, "emails": 0, "tickets": 0, "cases": 0, "meetings": 0, "task_entries": 0, "completed_tasks": 0})
-        return bucket
+    # ── STAFF PERFORMANCE INITIALIZATION ──
+    staff_roles = {"Admin", "SuperAdmin", "SalesManager", "Employee", "Sales", "Demo"}
+    staff_users = [u for u in scoped(User) if u.role in staff_roles]
+    if not staff_users:
+        staff_users = [u for u in scoped(User) if (u.role or "").lower() != "client"]
 
-    for item in activities:
-        if item.userId:
-            staff_bucket(item.userId)["activities"] += 1
+    staff: dict[int, dict] = {}
+    for u in staff_users:
+        staff[u.id] = {
+            "user_id": u.id,
+            "name": u.name or u.email,
+            "email": u.email,
+            "role": u.role,
+            "activities": 0,
+            "calls": 0,
+            "meetings": 0,
+            "followups": 0,
+            "followups_breakdown": {
+                "webinar": 0,
+                "normal": 0,
+                "call": 0,
+                "meeting": 0,
+                "walkin": 0,
+                "email": 0,
+                "whatsapp": 0,
+                "other": 0,
+            },
+            "followups_completed": 0,
+            "followups_pending": 0,
+            "leads": 0,
+            "leads_converted": 0,
+            "deals_created": 0,
+            "deals_won": 0,
+            "won_revenue": 0.0,
+            "pipeline_value": 0.0,
+            "task_entries": 0,
+            "completed_tasks": 0,
+            "total_work": 0,
+            "activity_timeline": [],
+        }
+
+    # 1. Calls mapping
     for item in calls:
-        if item.assigned_to:
-            bucket = staff_bucket(next((u.id for u in users.values() if u.name and u.name == item.assigned_to), None), item.assigned_to)
-            if bucket:
-                bucket["calls"] += 1
-    for item in emails:
-        lead = next((lead for lead in all_leads if lead.email == item.to_email), None)
-        bucket = staff_bucket(lead.owner_id if lead else None)
-        if bucket:
-            bucket["emails"] += 1
-    for item in tickets:
-        owner = next((u for u in users.values() if (u.name or "").lower() == (item.current_owner or "").lower() or str(u.id) == (item.current_owner or "")), None)
-        bucket = staff_bucket(owner.id if owner else None)
-        if bucket:
-            bucket["tickets"] += 1
-    for item in cases:
-        bucket = staff_bucket(item.assigned_to)
-        if bucket:
-            bucket["cases"] += 1
-    for item in meetings:
-        bucket = staff_bucket(item.host_id)
-        if bucket:
-            bucket["meetings"] += 1
+        assigned = str(item.assigned_to or "").strip()
+        matched = next((u for u in staff_users if str(u.id) == assigned or (u.name and u.name.lower() == assigned.lower())), None)
+        if matched and matched.id in staff:
+            b = staff[matched.id]
+            b["calls"] += 1
+            dt = item.createdAt or item.received_at
+            dur = round(item.duration_seconds / 60) if getattr(item, 'duration_seconds', 0) else 0
+            b["activity_timeline"].append({
+                "type": "call",
+                "title": f"Call Logged: {item.phone_number or 'Contact'}",
+                "date": dt.isoformat() if dt else None,
+                "details": item.summary or f"Duration: {dur} min",
+                "status": "Logged",
+                "channel": "Call"
+            })
+
+    # 2. Meetings mapping
+    for m in meetings:
+        for u in staff_users:
+            is_host = (m.host_id == u.id)
+            is_att = bool(m.attendees and any(u.name and u.name.lower() in str(a).lower() for a in m.attendees))
+            if (is_host or is_att) and u.id in staff:
+                b = staff[u.id]
+                b["meetings"] += 1
+                b["activity_timeline"].append({
+                    "type": "meeting",
+                    "title": f"Meeting: {m.title or 'Client Meeting'}",
+                    "date": m.scheduled_at.isoformat() if m.scheduled_at else None,
+                    "details": f"{m.meeting_type or 'Meeting'} | Location: {m.location or 'Online'} | Outcome: {m.outcome or 'N/A'}",
+                    "status": m.status or "Scheduled",
+                    "channel": "Meeting"
+                })
+
+    # 3. Follow-ups mapping (webinar, normal, call, meeting, walkin, etc.)
+    for f in followups:
+        for u in staff_users:
+            if (f.owner_id == u.id or f.created_by == u.id) and u.id in staff:
+                b = staff[u.id]
+                b["followups"] += 1
+                if f.status == "Completed":
+                    b["followups_completed"] += 1
+                else:
+                    b["followups_pending"] += 1
+                
+                ch = (f.channel or "other").strip().lower()
+                if "webinar" in ch:
+                    b["followups_breakdown"]["webinar"] += 1
+                elif "walk" in ch:
+                    b["followups_breakdown"]["walkin"] += 1
+                elif "normal" in ch or "standard" in ch:
+                    b["followups_breakdown"]["normal"] += 1
+                elif "call" in ch:
+                    b["followups_breakdown"]["call"] += 1
+                elif "meet" in ch:
+                    b["followups_breakdown"]["meeting"] += 1
+                elif "email" in ch:
+                    b["followups_breakdown"]["email"] += 1
+                elif "whatsapp" in ch:
+                    b["followups_breakdown"]["whatsapp"] += 1
+                else:
+                    b["followups_breakdown"]["other"] += 1
+
+                f_date = f.completed_at or f.due_at or f.created_at
+                b["activity_timeline"].append({
+                    "type": "followup",
+                    "title": f"Follow-up: {f.title or 'Scheduled Action'}",
+                    "date": f_date.isoformat() if f_date else None,
+                    "details": f"Channel: {f.channel or 'Follow-up'} | Contact: {f.contact_name or f.company_name or 'N/A'} | Notes: {f.notes or ''}",
+                    "status": f.status or "Pending",
+                    "channel": f.channel or "Normal Follow-up"
+                })
+
+    # 4. Leads mapping
+    for l in leads:
+        if l.owner_id and l.owner_id in staff:
+            b = staff[l.owner_id]
+            b["leads"] += 1
+            if l.is_converted or str(l.status).strip().lower() in ["converted", "won"]:
+                b["leads_converted"] += 1
+            b["activity_timeline"].append({
+                "type": "lead",
+                "title": f"Lead Assigned: {l.company_name or 'Lead Record'}",
+                "date": l.created_at.isoformat() if l.created_at else None,
+                "details": f"Source: {l.source or 'Direct'} | Status: {l.status or 'New'}",
+                "status": l.status or "New",
+                "channel": "Lead"
+            })
+
+    # 5. Deals mapping
+    for d in all_scoped_deals:
+        if d.assigned_to and d.assigned_to in staff:
+            b = staff[d.assigned_to]
+            val = float(d.final_value if d.final_value is not None else (d.value or 0.0))
+            is_won = _deal_won_in_range(d)
+            is_created = _in_report_range(d.created_at, start, end)
+
+            if is_won:
+                b["deals_won"] += 1
+                b["won_revenue"] += val
+                d_date = d.won_at or d.created_at
+                b["activity_timeline"].append({
+                    "type": "deal",
+                    "title": f"Deal Won: {d.title or 'Won Opportunity'}",
+                    "date": d_date.isoformat() if d_date else None,
+                    "details": f"Revenue: ₹{val:,.2f} | Stage: {d.stage}",
+                    "status": "Won",
+                    "channel": "Deal"
+                })
+
+            if is_created:
+                b["deals_created"] += 1
+                if str(d.stage).strip().lower() not in ("closed won", "won", "closed lost", "lost"):
+                    b["pipeline_value"] += val
+                b["activity_timeline"].append({
+                    "type": "deal",
+                    "title": f"Deal Created: {d.title or 'Opportunity'}",
+                    "date": d.created_at.isoformat() if d.created_at else None,
+                    "details": f"Value: ₹{val:,.2f} | Stage: {d.stage}",
+                    "status": d.stage or "New",
+                    "channel": "Deal"
+                })
+
+    # 6. Tasks and activities
+    for item in activities:
+        if item.userId and item.userId in staff:
+            staff[item.userId]["activities"] += 1
+
     for item in task_entries:
-        bucket = staff_bucket(item.user_id, "Unknown")
-        if bucket:
-            bucket["task_entries"] += 1
-            if item.status.lower() in ("done", "completed"):
-                bucket["completed_tasks"] += 1
-    for bucket in staff.values():
-        bucket["total_work"] = sum(bucket[key] for key in ("activities", "calls", "emails", "tickets", "cases", "meetings", "task_entries"))
+        if item.user_id and item.user_id in staff:
+            b = staff[item.user_id]
+            b["task_entries"] += 1
+            if item.status and item.status.lower() in ("done", "completed"):
+                b["completed_tasks"] += 1
+
+    # Final tally and sorting
+    for b in staff.values():
+        b["won_revenue"] = round(b["won_revenue"], 2)
+        b["pipeline_value"] = round(b["pipeline_value"], 2)
+        b["total_work"] = (
+            b["calls"] + b["meetings"] + b["followups"] +
+            b["leads"] + b["deals_won"] + b["completed_tasks"] + b["activities"]
+        )
+        b["activity_timeline"].sort(key=lambda x: x.get("date") or "", reverse=True)
 
     daily: dict[str, dict] = {}
     for offset in range((end - start).days + 1):
         day = (start + timedelta(days=offset)).isoformat()
-        daily[day] = {"date": day, "leads": 0, "clients_onboarded": 0, "deals_won": 0, "emails": 0, "activities": 0, "calls": 0, "meetings": 0, "task_entries": 0, "tickets": 0, "cases_resolved": 0}
+        daily[day] = {"date": day, "leads": 0, "clients_onboarded": 0, "deals_won": 0, "emails": 0, "activities": 0, "calls": 0, "meetings": 0, "followups": 0, "task_entries": 0, "tickets": 0, "cases_resolved": 0}
     for lead in leads: daily[lead.created_at.date().isoformat()]["leads"] += 1
     for client in clients:
         user = users.get(client.userId) if client.userId else None
         if user and _in_report_range(user.createdAt, start, end): daily[user.createdAt.date().isoformat()]["clients_onboarded"] += 1
-    for deal in won_deals: daily[deal.created_at.date().isoformat()]["deals_won"] += 1
+    for deal in won_deals:
+        d_date = (deal.won_at or deal.created_at)
+        if d_date:
+            daily[d_date.date().isoformat()]["deals_won"] += 1
     for email in emails: daily[email.sent_at.date().isoformat()]["emails"] += 1
     for activity in activities: daily[activity.createdAt.date().isoformat()]["activities"] += 1
-    for call in calls: daily[call.createdAt.date().isoformat()]["calls"] += 1
+    for call in calls:
+        c_date = call.createdAt or call.received_at
+        if c_date:
+            daily[c_date.date().isoformat()]["calls"] += 1
     for meeting in meetings: daily[meeting.scheduled_at.date().isoformat()]["meetings"] += 1
+    for f in followups:
+        f_dt = f.due_at or f.created_at
+        if f_dt and f_dt.date().isoformat() in daily:
+            daily[f_dt.date().isoformat()]["followups"] += 1
     for entry in task_entries: daily[date.fromisoformat(entry.work_date).isoformat()]["task_entries"] += 1
     for ticket in tickets: daily[ticket.created_at.date().isoformat()]["tickets"] += 1
     for case in cases:
@@ -5550,13 +6542,33 @@ def reports_summary(
     onboarded = [client for client in clients if client.userId and users.get(client.userId) and _in_report_range(users[client.userId].createdAt, start, end)]
     return {
         "range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
-        "summary": {"leads": len(leads), "clients_onboarded": len(onboarded), "total_clients": len(clients), "deals_created": len(deals), "deals_won": len(won_deals), "pipeline_value": round(sum(deal.value or 0 for deal in deals if deal.stage not in ("Closed Lost",)), 2), "won_value": round(sum(deal.value or 0 for deal in won_deals), 2), "emails": len(emails), "activities": len(activities), "calls": len(calls), "meetings": len(meetings), "tickets": len(tickets), "task_entries": len(task_entries), "cases_resolved": sum(1 for case in cases if case.status in ("Resolved", "Closed")), "conversion_percentage": conversion_percentage, "deal_win_rate": win_rate},
-        "sales": {"deals": [{"id": deal.id, "title": deal.title, "value": deal.value, "stage": deal.stage, "assigned_to": users.get(deal.assigned_to).name if deal.assigned_to and users.get(deal.assigned_to) else "Unassigned"} for deal in deals], "won_value": round(sum(deal.value or 0 for deal in won_deals), 2)},
+        "summary": {
+            "leads": len(leads),
+            "clients_onboarded": len(onboarded),
+            "total_clients": len(clients),
+            "deals_created": sum(1 for d in all_scoped_deals if _in_report_range(d.created_at, start, end)),
+            "deals_won": len(won_deals),
+            "pipeline_value": round(sum((deal.final_value if deal.final_value is not None else (deal.value or 0)) for deal in all_scoped_deals if str(deal.stage).strip().lower() not in ("closed won", "won", "closed lost", "lost")), 2),
+            "won_value": round(sum((deal.final_value if deal.final_value is not None else (deal.value or 0)) for deal in won_deals), 2),
+            "emails": len(emails),
+            "activities": len(activities),
+            "calls": len(calls),
+            "meetings": len(meetings),
+            "followups": len(followups),
+            "followups_completed": sum(1 for f in followups if f.status == "Completed"),
+            "tickets": len(tickets),
+            "task_entries": len(task_entries),
+            "cases_resolved": sum(1 for case in cases if case.status in ("Resolved", "Closed")),
+            "conversion_percentage": conversion_percentage,
+            "deal_win_rate": win_rate,
+            "total_staff_work": sum(b["total_work"] for b in staff.values()),
+        },
+        "sales": {"deals": [{"id": deal.id, "title": deal.title, "value": deal.final_value if deal.final_value is not None else deal.value, "stage": deal.stage, "assigned_to": users.get(deal.assigned_to).name if deal.assigned_to and users.get(deal.assigned_to) else "Unassigned"} for deal in deals], "won_value": round(sum((deal.final_value if deal.final_value is not None else (deal.value or 0)) for deal in won_deals), 2)},
         "daily": list(daily.values()),
-        "monthly": [{"month": month, "leads": sum(item["leads"] for item in daily.values() if item["date"][:7] == month), "clients_onboarded": sum(item["clients_onboarded"] for item in daily.values() if item["date"][:7] == month), "deals_won": sum(item["deals_won"] for item in daily.values() if item["date"][:7] == month), "emails": sum(item["emails"] for item in daily.values() if item["date"][:7] == month), "calls": sum(item["calls"] for item in daily.values() if item["date"][:7] == month), "meetings": sum(item["meetings"] for item in daily.values() if item["date"][:7] == month)} for month in sorted({item["date"][:7] for item in daily.values()})],
-        "staff_performance": sorted(staff.values(), key=lambda item: item["total_work"], reverse=True),
+        "monthly": [{"month": month, "leads": sum(item["leads"] for item in daily.values() if item["date"][:7] == month), "clients_onboarded": sum(item["clients_onboarded"] for item in daily.values() if item["date"][:7] == month), "deals_won": sum(item["deals_won"] for item in daily.values() if item["date"][:7] == month), "emails": sum(item["emails"] for item in daily.values() if item["date"][:7] == month), "calls": sum(item["calls"] for item in daily.values() if item["date"][:7] == month), "meetings": sum(item["meetings"] for item in daily.values() if item["date"][:7] == month), "followups": sum(item["followups"] for item in daily.values() if item["date"][:7] == month)} for month in sorted({item["date"][:7] for item in daily.values()})],
+        "staff_performance": sorted(staff.values(), key=lambda item: (item["won_revenue"], item["total_work"]), reverse=True),
         "lead_sources": sorted(source_map.values(), key=lambda item: item["leads"], reverse=True),
-        "calls": [{"id": call.id, "date": call.createdAt.isoformat(), "phone_number": call.phone_number, "assigned_to": call.assigned_to or "Unassigned", "duration_seconds": call.duration_seconds, "summary": call.summary, "followup_needed": call.followup_needed, "followup_date": call.followup_date} for call in calls],
+        "calls": [{"id": call.id, "date": (call.createdAt or call.received_at).isoformat() if (call.createdAt or call.received_at) else None, "phone_number": call.phone_number, "assigned_to": call.assigned_to or "Unassigned", "duration_seconds": call.duration_seconds, "summary": call.summary, "followup_needed": call.followup_needed, "followup_date": call.followup_date} for call in calls],
         "meetings": [{"id": meeting.id, "scheduled_at": meeting.scheduled_at.isoformat(), "title": meeting.title, "meeting_type": meeting.meeting_type, "status": meeting.status, "host": users.get(meeting.host_id).name if meeting.host_id and users.get(meeting.host_id) else "Unassigned", "duration_minutes": meeting.duration_minutes, "location": meeting.location, "outcome": meeting.outcome} for meeting in meetings],
         "onboarding": {"total_clients": len(clients), "new_in_range": len(onboarded), "active": sum(1 for client in clients if client.status == "Active"), "pending": sum(1 for client in clients if client.status == "Pending"), "hold": sum(1 for client in clients if client.status == "Hold")},
     }
@@ -5571,7 +6583,7 @@ def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
     for field, val in body.model_dump(exclude_unset=True).items():
         setattr(p, field, val)
-    p.updatedAt = datetime.utcnow()
+    p.updatedAt = utc_now()
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -5757,7 +6769,7 @@ def send_quote(body: QuoteRequest, session: Session = Depends(get_session)):
     sr.team_info = body.team_info
     sr.quote_doc_url = body.quote_doc_url
     sr.status = "Quoted"
-    sr.quote_sent_at = datetime.utcnow()
+    sr.quote_sent_at = utc_now()
     if body.assigned_employee_id:
         sr.assigned_employee_id = body.assigned_employee_id
     session.add(sr)
@@ -5772,7 +6784,7 @@ def accept_quote(request_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="Request not found")
     sr.status = "Accepted"
     sr.client_accepted_quote = True
-    sr.accepted_at = datetime.utcnow()
+    sr.accepted_at = utc_now()
     session.add(sr)
     session.commit()
     return {"ok": True}
@@ -6149,7 +7161,7 @@ def create_scheduled_call(body: ScheduledCallCreateRequest, session: Session = D
     dt = None
     if body.scheduled_at:
         try:
-            dt = datetime.fromisoformat(body.scheduled_at)
+            dt = _to_aware_dt(datetime.fromisoformat(body.scheduled_at))
         except Exception:
             dt = None
 
@@ -6322,6 +7334,8 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
         from database import SentEmail
         import json
         session = next(get_session())
+        profile_sender = _email_agent_sender(session)
+        _sig = profile_sender.get("signature") if profile_sender.get("auto_append") else ""
 
         # --- Static Email Template ---
         OUTREACH_SUBJECT = "Let's grow {company_name} together!"
@@ -6375,48 +7389,17 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             inbound_body_en = inbound_llm.get("english_body") or INBOUND_BODY_EN.format(company_name=company_name, services=services)
             inbound_body_es = inbound_llm.get("spanish_body") or INBOUND_BODY_ES.format(company_name=company_name, services=services)
 
-        sender = body.sender_email or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "crm@serphawk.in")
-        password = os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD", "")
-        smtp_server = os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT", 587)
-        imap_server = os.getenv("IMAP_SERVER")
+        # Auto-send goes out from the sender's mailbox chain (D3): own Email Integration, then the
+        # company mailbox (Settings -> SMTP), then the server mailbox.
+        from modules import company_mailer
+        account = None
+        account_error = None
+        try:
+            account = _email_agent_account(session)
+        except company_mailer.MailAccountError as e:
+            account_error = e
+        sender = account.email if account else (body.sender_email or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "crm@serphawk.in"))
 
-        # Only send the email if manual is False and all required fields are present
-        if not body.manual and all([body.to_email, body.subject, body.body, sender, password]):
-            try:
-                send_email_outlook(
-                    to_email=body.to_email,
-                    subject=body.subject,
-                    body=body.body,
-                    sender_email=sender,
-                    sender_password=password,
-                    smtp_server=smtp_server,
-                    smtp_port=smtp_port,
-                    imap_server=imap_server
-                )
-                
-                # --- Trigger n8n Webhook ---
-                try:
-                    import httpx
-                    webhook_url = "http://localhost:5678/webhook-test/serphawk-followup"
-                    payload = {
-                        "event": "email_sent",
-                        "sender": sender,
-                        "to_email": body.to_email,
-                        "subject": body.subject,
-                        "company": company_name,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    httpx.post(webhook_url, json=payload, timeout=5.0)
-                    print(f"Webhook successfully triggered to {webhook_url}")
-                except Exception as wh_e:
-                    print(f"Webhook trigger failed: {wh_e}")
-                    
-            except Exception as e:
-                print(f"Email send failed: {e}")
-        # If any required field is missing, skip sending and just generate the draft
-
-        # Only save to database if required fields are present
         # Provide default subject and content if missing, so frontend always gets a visible draft
         # Build the draft object for both outreach and inbound
         draft_obj = {
@@ -6465,13 +7448,66 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             "recommended_services": draft_obj.get("services") or "",
             "manual": body.manual,
             "draft_json": json.dumps(draft_obj),
-            "sent_at": draft_obj["sent_at"],
+            "sent_at": _to_aware_dt(datetime.fromisoformat(draft_obj["sent_at"])),  # a datetime, not the ISO string
             "client_id": client_id
         }
         sent_email = SentEmail(**email_db_obj)
         session.add(sent_email)
         session.commit()
         session.refresh(sent_email)
+
+        # Only send the email if manual is False and all required fields are present.
+        # The SentEmail row above already exists, so its id can be embedded as an
+        # open-tracking pixel in the outgoing HTML.
+        if not body.manual and account is None:
+            if account_error is not None and str(account_error) != company_mailer.NOT_CONFIGURED_MESSAGE:
+                raise HTTPException(status_code=500, detail={
+                    "code": "email_integration_decrypt_failed",
+                    "message": "Unable to decrypt stored email credentials. Please re-save your Email Integration settings.",
+                })
+            raise HTTPException(status_code=400, detail={
+                "code": "email_integration_not_configured",
+                "message": company_mailer.NOT_CONFIGURED_MESSAGE,
+            })
+        if not body.manual and all([body.to_email, body.subject, body.body]):
+            try:
+                try:
+                    company_mailer.send_via(
+                        account,
+                        to=body.to_email,
+                        subject=body.subject,
+                        body=_apply_signature(body.body, _sig),
+                        tracking_id=sent_email.id,
+                    )
+                except Exception as send_err:
+                    print(f"Email send failed for user {current_salesperson_id.get()} from {account.email}: {send_err}")
+                    raise HTTPException(status_code=502, detail={
+                        "code": "email_integration_send_failed",
+                        "message": f"Unable to send email: {company_mailer.friendly_smtp_error(send_err)}",
+                    })
+
+                # --- Trigger n8n Webhook ---
+                try:
+                    import httpx
+                    webhook_url = "http://localhost:5678/webhook-test/serphawk-followup"
+                    payload = {
+                        "event": "email_sent",
+                        "sender": sender,
+                        "to_email": body.to_email,
+                        "subject": body.subject,
+                        "company": company_name,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    httpx.post(webhook_url, json=payload, timeout=5.0)
+                    print(f"Webhook successfully triggered to {webhook_url}")
+                except Exception as wh_e:
+                    print(f"Webhook trigger failed: {wh_e}")
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"Email send failed: {e}")
+        # If any required field is missing, skip sending and just generate the draft
 
         # --- Log activity for this client ---
         from database import ActivityLog
@@ -6490,6 +7526,8 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             background_tasks.add_task(generate_llm_draft_task, sent_email.id, body.dict())
 
         return {"ok": True, "email_id": sent_email.id, "draft": draft_obj, "client_id": client_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -7191,8 +8229,8 @@ def monitor_stats(session: Session = Depends(get_session)):
     # Weekly activity counts (last 10 weeks)
     weekly_activity = []
     for i in range(9, -1, -1):
-        start = datetime.utcnow() - timedelta(weeks=i + 1)
-        end = datetime.utcnow() - timedelta(weeks=i)
+        start = utc_now() - timedelta(weeks=i + 1)
+        end = utc_now() - timedelta(weeks=i)
         count = len(session.exec(
             select(ActivityLog).where(ActivityLog.createdAt >= start, ActivityLog.createdAt < end)
         ).all())
@@ -7578,7 +8616,7 @@ def update_task(task_id: int, body: TaskUpdateRequest, session: Session = Depend
         updates["status"] = _normalize_task_status(updates["status"])
     for field, val in updates.items():
         setattr(t, field, val)
-    t.updated_at = datetime.utcnow()
+    t.updated_at = utc_now()
     session.add(t)
     session.commit()
     session.refresh(t)
@@ -7667,7 +8705,7 @@ def update_task_sheet_entry(entry_id: int, body: TaskSheetEntryRequest, session:
         raise HTTPException(status_code=404, detail="Task-sheet entry not found")
     for field, value in body.model_dump().items():
         setattr(entry, field, value)
-    entry.updated_at = datetime.utcnow()
+    entry.updated_at = utc_now()
     session.add(entry)
     session.commit()
     session.refresh(entry)
@@ -8096,8 +9134,8 @@ def update_invoice(
     if "amount" in updates or "tax" in updates:
         inv.total = round((inv.amount or 0) + (inv.tax or 0), 2)
     if updates.get("status") == "Paid":
-        inv.paid_at = datetime.utcnow()
-    inv.updated_at = datetime.utcnow()
+        inv.paid_at = utc_now()
+    inv.updated_at = utc_now()
     session.add(inv)
     session.commit()
     session.refresh(inv)
@@ -8533,7 +9571,7 @@ def respond_nps(survey_id: int, body: NPSRespondRequest, session: Session = Depe
         raise HTTPException(status_code=404, detail="Survey not found")
     s.score = body.score
     s.feedback = body.feedback
-    s.responded_at = datetime.utcnow()
+    s.responded_at = utc_now()
     session.add(s)
     session.commit()
     return {"ok": True}
@@ -9511,7 +10549,7 @@ async def ws_chat(websocket: WebSocket, thread_id: int):
                             m = session.get(ChatMessage, mid)
                             if m and not m.is_read and m.sender_id != data.get("user_id"):
                                 m.is_read = True
-                                m.read_at = datetime.utcnow()
+                                m.read_at = utc_now()
                                 session.add(m)
                         session.commit()
                     await ws_manager.broadcast(
@@ -9544,7 +10582,7 @@ def change_password(body: PasswordChangeRequest, session: Session = Depends(get_
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
     user.password = _hash_password(body.new_password)
-    user.updatedAt = datetime.utcnow()
+    user.updatedAt = utc_now()
     session.add(user)
     session.commit()
     return {"ok": True, "message": "Password updated successfully"}
@@ -9730,7 +10768,7 @@ Return ONLY valid JSON, no markdown."""
         existing.keyword_gap_data = analysis.get("keyword_gap", {})
         existing.backlink_comparison = analysis.get("backlink_estimate", {})
         existing.content_benchmarks = analysis.get("content_analysis", {})
-        existing.last_updated = datetime.utcnow()
+        existing.last_updated = utc_now()
         session.add(existing)
     else:
         ca = CompetitorAnalysis(
@@ -9873,7 +10911,7 @@ def create_deal(body: DealCreateRequest, session: Session = Depends(get_session)
         stage=body.stage,
         expected_close_date=body.expected_close_date,
         currency=body.currency or "INR",
-        won_at=datetime.utcnow() if body.stage == "Closed Won" else None,
+        won_at=utc_now() if body.stage == "Closed Won" else None,
     )
     session.add(deal)
     session.commit()
@@ -9893,7 +10931,7 @@ def update_deal(deal_id: int, body: DealUpdateRequest, session: Session = Depend
     if body.stage is not None:
         # SCM2-58: stamp the moment a deal is won so revenue lands in the right month
         if body.stage == "Closed Won" and deal.stage != "Closed Won":
-            deal.won_at = datetime.utcnow()
+            deal.won_at = utc_now()
             if deal.value and not deal.final_value:
                 deal.final_value = deal.value
         elif body.stage != "Closed Won":
@@ -9925,14 +10963,14 @@ def update_deal(deal_id: int, body: DealUpdateRequest, session: Session = Depend
                 for pr in props:
                     pr.status = prop_status_map[body.stage]
                     if body.stage == "Closed Won":
-                        pr.signed_at = datetime.utcnow()
-                    pr.updated_at = datetime.utcnow()
+                        pr.signed_at = utc_now()
+                    pr.updated_at = utc_now()
                     session.add(pr)
 
     if body.expected_close_date is not None: deal.expected_close_date = body.expected_close_date
     if body.final_value is not None: deal.final_value = body.final_value
     if body.currency is not None: deal.currency = body.currency
-    deal.updated_at = datetime.utcnow()
+    deal.updated_at = utc_now()
     session.add(deal)
     session.commit()
     return {"ok": True}
@@ -10502,7 +11540,7 @@ def update_marketplace_service(
         raise HTTPException(status_code=404, detail="Service not found")
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(svc, field, value)
-    svc.updated_at = datetime.utcnow()
+    svc.updated_at = utc_now()
     session.add(svc)
     session.commit()
     session.refresh(svc)
@@ -10519,7 +11557,7 @@ def delete_marketplace_service(
     if not svc:
         raise HTTPException(status_code=404, detail="Service not found")
     svc.is_active = False
-    svc.updated_at = datetime.utcnow()
+    svc.updated_at = utc_now()
     session.add(svc)
     session.commit()
     return {"success": True}
@@ -10581,7 +11619,7 @@ Respond with ONLY valid JSON (no markdown):
         if data.get("estimated_cost_usd") is not None:
             svc.estimated_cost = float(data["estimated_cost_usd"])
             svc.cost_is_estimated = data.get("cost_is_estimated", True)
-        svc.updated_at = datetime.utcnow()
+        svc.updated_at = utc_now()
         session.add(svc)
         session.commit()
         session.refresh(svc)
@@ -11252,13 +12290,32 @@ def auto_assign_lead_to_salesperson(session: Session, lead: Lead, tenant_id: Opt
     """
     Auto-assign lead to active salesperson using round-robin distribution,
     breaking ties based on sales reps' historical conversion rate and performance.
+    Admins (e.g. System Admin) are strictly excluded from automated lead assignment.
     """
     if not tenant_id or tenant_id == -1:
         tenant_id = 1
-    q_reps = select(User).where(User.role.in_(["SalesManager", "Employee", "Admin"]), User.is_active == True)
+
+    # First priority: actual sales team members (SalesManager, Sales)
+    q_reps = select(User).where(
+        User.role.in_(["SalesManager", "Sales"]),
+        User.is_active == True,
+        User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+    )
     if tenant_id and tenant_id != 1:
         q_reps = q_reps.where(User.tenant_id == tenant_id)
     reps = session.exec(q_reps).all()
+
+    # Fallback to employees if no designated sales reps exist, but never assign to Admin
+    if not reps:
+        q_fallback = select(User).where(
+            User.role.in_(["Employee"]),
+            User.is_active == True,
+            User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+        )
+        if tenant_id and tenant_id != 1:
+            q_fallback = q_fallback.where(User.tenant_id == tenant_id)
+        reps = session.exec(q_fallback).all()
+
     if not reps:
         return None
 
@@ -11885,10 +12942,23 @@ def auto_assign_unassigned_leads(session: Session = Depends(get_session)):
             raise HTTPException(status_code=403, detail="Only Admins can trigger auto-assigning leads.")
 
     tenant_id = current_tenant_id.get()
-    q_reps = select(User).where(User.role.in_(["SalesManager", "Employee", "Admin"]), User.is_active == True)
+    q_reps = select(User).where(
+        User.role.in_(["SalesManager", "Sales"]),
+        User.is_active == True,
+        User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+    )
     if tenant_id and tenant_id != 1:
         q_reps = q_reps.where(User.tenant_id == tenant_id)
     reps = session.exec(q_reps).all()
+    if not reps:
+        q_fallback = select(User).where(
+            User.role.in_(["Employee"]),
+            User.is_active == True,
+            User.email.not_in(["admin@example.com", "superadmin@serphawk.in", "admin@serphawk.com"])
+        )
+        if tenant_id and tenant_id != 1:
+            q_fallback = q_fallback.where(User.tenant_id == tenant_id)
+        reps = session.exec(q_fallback).all()
     if not reps:
         raise HTTPException(status_code=400, detail="No active salespeople found to assign leads.")
 
@@ -12062,7 +13132,8 @@ def generate_lead_outbound_draft(lead_id: int, session: Session = Depends(get_se
             spanish_body=data.get("spanish_body", ""),
             draft_json=_json.dumps(data),
             manual=True,
-            sent_at=datetime.utcnow()
+            status="Draft",  # generated, never sent — keeps it out of the Inbox's Sent view
+            sent_at=utc_now()
         )
         session.add(draft)
         
@@ -12713,7 +13784,7 @@ def add_lead_followup(lead_id: int, body: ClientFollowUpRequest, session: Sessio
         lead_id=lead_id,
         action="Added Follow-up Note",
         details=body.content,
-        timestamp=datetime.utcnow()
+        timestamp=utc_now()
     )
     session.add(activity)
 
@@ -12779,7 +13850,7 @@ def add_lead_note(lead_id: int, body: LeadNoteRequest, session: Session = Depend
         raise HTTPException(status_code=400, detail="Note cannot be empty")
 
     from datetime import datetime
-    now = datetime.utcnow()
+    now = utc_now()
     author_id = current_salesperson_id.get()
 
     note = LeadNote(
@@ -12856,7 +13927,7 @@ class MeetingUpdateRequest(BaseModel):
 
 
 def _meeting_to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[datetime]:
-    """SCM2-74: parse a datetime string and normalise to naive UTC.
+    """SCM2-74: parse a datetime string and normalise to UTC (aware, so sqlmodel 0.0.47 accepts it).
 
     - Strings with an explicit offset/Z are converted directly.
     - Naive strings are interpreted in `tz_name` (organiser's timezone).
@@ -12874,10 +13945,8 @@ def _meeting_to_utc(value: Optional[str], tz_name: Optional[str]) -> Optional[da
         try:
             dt = dt.replace(tzinfo=ZoneInfo(tz_name))
         except Exception:
-            return dt
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(_utc_mod.utc).replace(tzinfo=None)
-    return dt
+            return _to_aware_dt(dt)
+    return _to_aware_dt(dt)
 
 
 def _meeting_local(m: Meeting) -> Optional[datetime]:
@@ -13153,7 +14222,7 @@ def update_meeting(meeting_id: int, body: MeetingUpdateRequest, session: Session
         updates["scheduled_at"] = _meeting_to_utc(updates["scheduled_at"], updates.get("timezone", m.timezone))
     for k, v in updates.items():
         setattr(m, k, v)
-    m.updated_at = datetime.utcnow()
+    m.updated_at = utc_now()
     session.add(m)
     session.commit()
     session.refresh(m)
@@ -13283,7 +14352,7 @@ def update_product(product_id: int, body: ProductUpdateRequest, session: Session
         raise HTTPException(status_code=404, detail="Product not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(p, k, v)
-    p.updated_at = datetime.utcnow()
+    p.updated_at = utc_now()
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -13526,7 +14595,7 @@ def _notify_admins_and_salesperson(
                 type=notif_type,
                 link=link,
                 is_read=False,
-                created_at=datetime.utcnow()
+                created_at=utc_now()
             )
             session.add(n)
         except Exception as e:
@@ -13647,7 +14716,7 @@ def add_proposal_comment(uuid: str, body: ProposalCommentCreateRequest, session:
         deal = session.get(Deal, q.deal_id) if q.deal_id else None
         if deal:
             deal.stage = "Negotiation"
-            deal.updated_at = datetime.utcnow()
+            deal.updated_at = utc_now()
             session.add(deal)
 
         # Notify admin and assigned salesperson
@@ -13685,7 +14754,7 @@ def add_proposal_comment(uuid: str, body: ProposalCommentCreateRequest, session:
         deal = session.get(Deal, prop.deal_id) if prop.deal_id else None
         if deal:
             deal.stage = "Negotiation"
-            deal.updated_at = datetime.utcnow()
+            deal.updated_at = utc_now()
             session.add(deal)
 
         # Notify admin and assigned salesperson
@@ -13798,7 +14867,7 @@ def reject_public_proposal(uuid: str, body: Optional[Dict[str, Any]] = Body(None
             deal = session.get(Deal, q.deal_id)
             if deal:
                 deal.stage = "Closed Lost"
-                deal.updated_at = datetime.utcnow()
+                deal.updated_at = utc_now()
                 session.add(deal)
 
         _notify_admins_and_salesperson(
@@ -13827,7 +14896,7 @@ def reject_public_proposal(uuid: str, body: Optional[Dict[str, Any]] = Body(None
             deal = session.get(Deal, prop.deal_id)
             if deal:
                 deal.stage = "Closed Lost"
-                deal.updated_at = datetime.utcnow()
+                deal.updated_at = utc_now()
                 session.add(deal)
 
         _notify_admins_and_salesperson(
@@ -13975,14 +15044,23 @@ def _quote_email_content(q: CRMQuote, session: Session, recipient_name=None):
 
 
 def _quote_smtp_sender(session: Session):
-    """Resolve the sender mailbox used for quote emails (per-tenant settings first,
-    then env vars). Returns (sender_email, password, smtp_server, smtp_port)."""
+    """Resolve the sender mailbox used for quote / order / PO emails: the user's own Email Integration,
+    then per-tenant settings, then env vars. Returns (sender_email, password, smtp_server, smtp_port)."""
     import os
 
     sender = None
     password = None
     smtp_server = None
     smtp_port = None
+
+    # The logged-in user's own Email Integration (Email Agent → Settings) comes first.
+    integ = _get_user_email_integration(session, current_salesperson_id.get())
+    if integ is not None and integ.is_active and integ.email and integ.encrypted_app_password and integ.smtp_host:
+        try:
+            from modules.email_crypto import decrypt_app_password
+            return integ.email, decrypt_app_password(integ.encrypted_app_password), integ.smtp_host, int(integ.smtp_port or 587)
+        except Exception as e:
+            print(f"[mail] could not use the user's Email Integration, falling back: {type(e).__name__}")
 
     tenant_id = current_tenant_id.get()
     if tenant_id:
@@ -14127,7 +15205,7 @@ def update_quote(quote_id: int, body: QuoteCreateRequest, session: Session = Dep
         raise HTTPException(status_code=404, detail="Quote not found")
     for k, v in body.model_dump(exclude_unset=True, exclude={"items", "send_email"}).items():
         setattr(q, k, v)
-    q.updated_at = datetime.utcnow()
+    q.updated_at = utc_now()
     # Automatically sync deal and salesperson
     _sync_proposal_or_quote_to_deal(q, session, is_status_update=True)
     session.add(q)
@@ -14285,7 +15363,7 @@ def update_sales_order(order_id: int, body: SalesOrderCreateRequest, session: Se
         raise HTTPException(status_code=404, detail="Sales order not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(o, k, v)
-    o.updated_at = datetime.utcnow()
+    o.updated_at = utc_now()
     session.add(o)
     session.commit()
     session.refresh(o)
@@ -14366,7 +15444,7 @@ def update_purchase_order(order_id: int, body: PurchaseOrderCreateRequest, sessi
         raise HTTPException(status_code=404, detail="Purchase order not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(o, k, v)
-    o.updated_at = datetime.utcnow()
+    o.updated_at = utc_now()
     session.add(o)
     session.commit()
     session.refresh(o)
@@ -15001,10 +16079,10 @@ def update_case(case_id: int, body: CaseUpdateRequest, session: Session = Depend
     updates = body.model_dump(exclude_unset=True)
     old_status = c.status
     if updates.get("status") in ("Resolved", "Closed") and not c.resolved_at:
-        c.resolved_at = datetime.utcnow()
+        c.resolved_at = utc_now()
     for k, v in updates.items():
         setattr(c, k, v)
-    c.updated_at = datetime.utcnow()
+    c.updated_at = utc_now()
     session.add(c)
     session.commit()
     session.refresh(c)
@@ -15100,7 +16178,7 @@ def update_solution(solution_id: int, body: SolutionUpdateRequest, session: Sess
         raise HTTPException(status_code=404, detail="Solution not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(s, k, v)
-    s.updated_at = datetime.utcnow()
+    s.updated_at = utc_now()
     session.add(s)
     session.commit()
     session.refresh(s)
@@ -15294,8 +16372,8 @@ def get_work_queue(
         else:
             target_date = today_date
             
-        start_dt = datetime.combine(target_date, datetime.min.time())
-        end_dt = datetime.combine(target_date, datetime.max.time())
+        start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
+        end_dt = datetime.combine(target_date, datetime.max.time(), tzinfo=timezone.utc)
         
         # Work Queue is personal by design. Admins can inspect the same personal
         # queue by selecting their own account; do not leak the whole workspace.
@@ -15318,7 +16396,7 @@ def get_work_queue(
         user_owner_names = {str(user_id).lower()}
         if current_user:
             user_owner_names.update({(current_user.name or "").strip().lower(), (current_user.email or "").strip().lower()})
-        calls = [call for call in calls_q.all() if call.scheduled_at and start_dt <= call.scheduled_at <= end_dt and (call.assigned_to or "").strip().lower() in user_owner_names]
+        calls = [call for call in calls_q.all() if call.scheduled_at and _to_naive_dt(start_dt) <= _to_naive_dt(call.scheduled_at) <= _to_naive_dt(end_dt) and (call.assigned_to or "").strip().lower() in user_owner_names]
         
         # 4. Leads (using created_at as proxy for activity if followup doesn't exist, wait Lead has no followup_date)
         # We'll just show leads created on that day
@@ -15556,7 +16634,7 @@ def sync_email_integration(integration_id: int, session: Session = Depends(get_s
         session.add(new_email)
         extracted.append(new_email)
         
-    integration.last_synced_at = datetime.utcnow()
+    integration.last_synced_at = utc_now()
     session.commit()
     
     # Refresh objects so they have DB IDs
@@ -15713,7 +16791,7 @@ async def whatsapp_webhook(
                 from datetime import datetime as _dt
                 ws_session.pending_action = None
                 ws_session.action_data = None
-                ws_session.created_at = _dt.utcnow()
+                ws_session.created_at = utc_now()
                 session.add(ws_session)
                 try:
                     session.commit()
@@ -17058,7 +18136,7 @@ def update_inventory_item(item_id: int, data: InventoryItemCreate, session: Sess
         raise HTTPException(status_code=404, detail="Item not found")
     for k, v in data.dict(exclude_unset=True).items():
         setattr(item, k, v)
-    item.updated_at = datetime.utcnow()
+    item.updated_at = utc_now()
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -17351,7 +18429,7 @@ def supplier_update_stock(supplier_record_id: int, current_stock: float, session
     item = session.get(InventoryItem, s.item_id)
     if item:
         item.current_stock = current_stock
-        item.updated_at = datetime.utcnow()
+        item.updated_at = utc_now()
         session.add(item)
         session.commit()
     return {"ok": True}
@@ -18075,7 +19153,7 @@ def save_email_settings(body: EmailSettingsRequest, otp_verified: bool = False, 
     else:
         for k, v in body.dict().items():
             setattr(settings, k, v)
-        settings.updated_at = datetime.utcnow()
+        settings.updated_at = utc_now()
         session.add(settings)
     
     session.commit()
@@ -18127,7 +19205,7 @@ def send_email_otp(body: SendEmailOTPRequest, session: Session = Depends(get_ses
         email=body.email,
         otp_code=otp_code,
         purpose=body.purpose,
-        expires_at=datetime.utcnow() + timedelta(minutes=10),
+        expires_at=utc_now() + timedelta(minutes=10),
     ))
     session.commit()
 
@@ -18165,7 +19243,7 @@ def verify_email_otp(body: VerifyEmailOTPRequest, session: Session = Depends(get
         )
     ).first()
 
-    if not rec or rec.verified or rec.expires_at < _dt.utcnow():
+    if not rec or rec.verified or _to_naive_dt(rec.expires_at) < _dt.utcnow():
         raise HTTPException(status_code=400, detail="Invalid or expired OTP code.")
 
     rec.verified = True
@@ -18195,7 +19273,25 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
         .where(SentEmail.lead_id == lead_id)
         .order_by(SentEmail.sent_at.desc())
     ).all()
-    return {"emails": [e.dict() for e in emails]}
+    email_ids = [e.id for e in emails]
+    replies_by_email: dict[int, list] = {}
+    if email_ids:
+        all_replies = session.exec(
+            select(EmailReply)
+            .where(EmailReply.sent_email_id.in_(email_ids))
+            .order_by(EmailReply.received_at.asc())
+        ).all()
+        for r in all_replies:
+            replies_by_email.setdefault(r.sent_email_id, []).append({
+                "id": r.id,
+                "from_address": r.from_address,
+                "subject": r.subject,
+                "body_text": r.body_text,
+                "body_text_full": r.body_text_full,
+                "body_html": r.body_html,
+                "received_at": r.received_at.isoformat() if r.received_at else None,
+            })
+    return {"emails": [{**e.dict(), "replies": replies_by_email.get(e.id, [])} for e in emails]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -18463,151 +19559,8 @@ def get_salesperson_history(client_id: int, session: Session = Depends(get_sessi
     return {"history": result}
 
 
-# ── 5. Excel/CSV Campaign Upload ───────────────────────────────────────────────
-@app.post("/email-campaigns/excel-upload")
-async def excel_campaign_upload(
-    background_tasks: BackgroundTasks,
-    campaign_name: str = "Unnamed Campaign",
-    template_subject: str = "Hello from {{company}}",
-    template_body: str = "Hi {{name}},\n\nWe'd love to connect.\n\nBest Regards",
-    file: "UploadFile" = None,  # type: ignore
-    session: Session = Depends(get_session),
-):
-    """
-    Accept an Excel/CSV file with columns: name, email, company.
-    Creates a campaign record and sends personalised emails in the background.
-    """
-    from database import ExcelCampaign, ExcelCampaignRecord
-    from fastapi import UploadFile
-    import io
-
-    uid = current_salesperson_id.get()
-    tenant_id = current_tenant_id.get() or 1
-
-    if file is None:
-        raise HTTPException(status_code=400, detail="No file uploaded")
-
-    contents = await file.read()
-    records_data = []
-
-    filename_lower = (file.filename or "").lower()
-    if filename_lower.endswith(".csv"):
-        import csv
-        reader = csv.DictReader(io.StringIO(contents.decode("utf-8-sig", errors="replace")))
-        for row in reader:
-            records_data.append({"name": row.get("name",""), "email": row.get("email",""), "company": row.get("company","")})
-    else:
-        try:
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(contents))
-            ws = wb.active
-            headers = [str(c.value or "").lower().strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                rowdict = dict(zip(headers, row))
-                records_data.append({"name": str(rowdict.get("name","") or ""), "email": str(rowdict.get("email","") or ""), "company": str(rowdict.get("company","") or "")})
-        except ImportError:
-            raise HTTPException(status_code=400, detail="openpyxl not installed. Use CSV format or install openpyxl.")
-
-    records_data = [r for r in records_data if r.get("email","").strip()]
-
-    campaign = ExcelCampaign(
-        tenant_id=tenant_id,
-        campaign_name=campaign_name,
-        template_subject=template_subject,
-        template_body=template_body,
-        total_records=len(records_data),
-        status="Queued",
-        created_by=uid,
-    )
-    session.add(campaign)
-    session.commit()
-    session.refresh(campaign)
-
-    for rd in records_data:
-        rec = ExcelCampaignRecord(
-            campaign_id=campaign.id,
-            email=rd["email"],
-            name=rd["name"],
-            company=rd["company"],
-            status="Pending",
-        )
-        session.add(rec)
-    session.commit()
-
-    def _send_campaign(campaign_id: int, records: list, subj_tpl: str, body_tpl: str):
-        from modules.email_sender import send_email
-        import re
-        sent = 0
-        failed = 0
-        with Session(engine) as s:
-            cam = s.get(ExcelCampaign, campaign_id)
-            if not cam:
-                return
-            cam.status = "Sending"
-            s.add(cam)
-            s.commit()
-            for rec in records:
-                db_rec = s.exec(select(ExcelCampaignRecord).where(
-                    ExcelCampaignRecord.campaign_id == campaign_id,
-                    ExcelCampaignRecord.email == rec["email"],
-                    ExcelCampaignRecord.status == "Pending",
-                )).first()
-                if not db_rec:
-                    continue
-                try:
-                    def _fill(tpl: str, r: dict) -> str:
-                        for k, v in r.items():
-                            tpl = tpl.replace(f"{{{{{k}}}}}", v or "")
-                        return tpl
-                    subj = _fill(subj_tpl, rec)
-                    body = _fill(body_tpl, rec)
-                    ok = send_email(rec["email"], subj, f"<pre>{body}</pre>")
-                    db_rec.status = "Sent" if ok else "Failed"
-                    db_rec.sent_at = datetime.utcnow()
-                    if not ok:
-                        db_rec.error_message = "Email delivery failed"
-                        failed += 1
-                    else:
-                        sent += 1
-                except Exception as ex:
-                    db_rec.status = "Failed"
-                    db_rec.error_message = str(ex)
-                    failed += 1
-                s.add(db_rec)
-                s.commit()
-            cam.sent_count = sent
-            cam.failed_count = failed
-            cam.status = "Completed"
-            cam.completed_at = datetime.utcnow()
-            s.add(cam)
-            s.commit()
-
-    background_tasks.add_task(_send_campaign, campaign.id, records_data, template_subject, template_body)
-    return {"campaign_id": campaign.id, "total_records": len(records_data), "status": "Queued", "message": "Campaign started in background"}
-
-
-@app.get("/email-campaigns")
-def list_email_campaigns(session: Session = Depends(get_session)):
-    from database import ExcelCampaign
-    rows = session.exec(select(ExcelCampaign).order_by(ExcelCampaign.created_at.desc())).all()
-    result = []
-    for r in rows:
-        d = r.model_dump() if hasattr(r, "model_dump") else {}
-        d["created_at"] = r.created_at.isoformat() if r.created_at else None
-        d["completed_at"] = r.completed_at.isoformat() if r.completed_at else None
-        result.append(d)
-    return {"campaigns": result}
-
-
-@app.get("/email-campaigns/{campaign_id}/records")
-def get_campaign_records(campaign_id: int, session: Session = Depends(get_session)):
-    from database import ExcelCampaignRecord
-    rows = session.exec(
-        select(ExcelCampaignRecord)
-        .where(ExcelCampaignRecord.campaign_id == campaign_id)
-        .order_by(ExcelCampaignRecord.created_at.asc())
-    ).all()
-    return {"records": [r.model_dump() for r in rows]}
+# ── 5. Excel/CSV Campaign Upload: replaced by routers/email_campaigns.py (Email Agent → Bulk Excel
+# Upload). The old excel_campaigns / excel_campaign_records tables and their rows are kept.
 
 
 # ── 6. Management Dashboard ────────────────────────────────────────────────────

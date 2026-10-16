@@ -108,11 +108,20 @@ export default function AddFollowUpModal({ open, onClose, target, onSuccess }: A
         notify_email: sendNotification ? notifyEmail.trim() : null,
       };
 
-      const res = await fetch(`${API_BASE_URL}/follow-ups`, {
+      let res = await fetch(`${API_BASE_URL}/follow-ups`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      // The notification email needs confirmation (lib/emailConfirm); if it was cancelled, still save the follow-up.
+      const first = await res.clone().json().catch(() => ({}));
+      if (res.ok && first?.cancelled) {
+        res = await fetch(`${API_BASE_URL}/follow-ups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, send_notification: false, notify_email: null }),
+        });
+      }
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));

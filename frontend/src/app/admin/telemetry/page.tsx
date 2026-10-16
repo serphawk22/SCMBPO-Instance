@@ -97,7 +97,7 @@ function DemoDetail({ account, onBack }: { account: DemoAccount; onBack: () => v
   const [detail, setDetail] = useState<DemoDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
-  const [tab, setTab] = useState<"overview" | "clients" | "leads" | "contacts" | "radar" | "emails" | "meetings" | "calls" | "projects" | "team">("overview");
+  const [tab, setTab] = useState<"overview" | "clients" | "leads" | "contacts" | "radar" | "emails" | "meetings" | "calls" | "projects" | "team" | "ai">("overview");
 
   const loadDetail = async () => {
     setLoading(true);

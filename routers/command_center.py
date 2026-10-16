@@ -272,8 +272,8 @@ class Data:
             rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since)).all())
         except Exception:
             try:
-                since_naive = datetime.utcnow() - timedelta(days=14)
-                rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since_naive)).all())
+                since = datetime.now(timezone.utc) - timedelta(days=14)
+                rows = list(self.s.exec(select(ActivityLog).where(ActivityLog.createdAt >= since)).all())
             except Exception:
                 rows = self._all(ActivityLog)
         uid = self.sc.uid
@@ -1319,9 +1319,9 @@ def build_executive_dossier(d: Data, start_str: Optional[str] = None, end_str: O
         rep_clients_active = [c for c in rep_clients_all if (c.status or "").lower() == "active"]
 
         rep_deals_all = [x for x in deals if x.assigned_to == uid]
-        rep_deals_period = [x for x in rep_deals_all if in_range(x.created_at or x.won_at)]
-        rep_won_period = [x for x in rep_deals_period if x.stage == "Closed Won"]
-        rep_lost_period = [x for x in rep_deals_period if x.stage == "Closed Lost"]
+        rep_won_period = [x for x in rep_deals_all if x.stage == "Closed Won" and in_range(x.won_at or x.updated_at or x.created_at)]
+        rep_lost_period = [x for x in rep_deals_all if x.stage == "Closed Lost" and in_range(x.won_at or x.updated_at or x.created_at)]
+        rep_deals_period = [x for x in rep_deals_all if in_range(x.created_at) or in_range(x.won_at or x.updated_at)]
         rep_open_deals = [x for x in rep_deals_all if x.stage not in ("Closed Won", "Closed Lost")]
         rep_pipeline_val = sum(float(x.value or 0) for x in rep_open_deals)
         rep_won_rev = sum(_deal_amount(x) for x in rep_won_period)
@@ -1354,8 +1354,13 @@ def build_executive_dossier(d: Data, start_str: Optional[str] = None, end_str: O
             for x in rep_open_deals if x.stage == "Negotiation"
         ]
 
-        calls_cnt = sum(1 for c in calls if str(c.assigned_to) == str(uid) or c.assigned_to == uname)
-        emails_cnt = sum(1 for e in emails if e.lead_id in {l.id for l in rep_leads_all})
+        rep_calls_period = [c for c in calls if (str(c.assigned_to) == str(uid) or c.assigned_to == uname) and in_range(c.createdAt or c.received_at)]
+        calls_cnt = len(rep_calls_period)
+        rep_meetings_period = [m for m in meetings if (m.host_id == uid or any(uname in str(a) for a in (m.attendees or []))) and in_range(m.scheduled_at)]
+        meetings_cnt = len(rep_meetings_period)
+        rep_fus_period = [f for f in followups if (f.owner_id == uid or f.created_by == uid) and in_range(f.due_at or f.created_at or f.completed_at)]
+        fus_cnt = len(rep_fus_period)
+        emails_cnt = sum(1 for e in emails if e.lead_id in {l.id for l in rep_leads_all} and in_range(e.sent_at))
 
         closed_cnt = len(rep_won_period) + len(rep_lost_period)
         win_rate = _pct(len(rep_won_period), closed_cnt) if closed_cnt else 0.0
@@ -1395,6 +1400,8 @@ def build_executive_dossier(d: Data, start_str: Optional[str] = None, end_str: O
             "avg_deal_size": _r(rep_won_rev / len(rep_won_period)) if rep_won_period else 0.0,
             "activities_count": len(rep_acts),
             "calls_count": calls_cnt,
+            "meetings_count": meetings_cnt,
+            "followups_count": fus_cnt,
             "emails_count": emails_cnt,
             "live": {
                 "active_leads_count": len(rep_leads_active),
@@ -1419,6 +1426,9 @@ def build_executive_dossier(d: Data, start_str: Optional[str] = None, end_str: O
                 "lead_conversion_rate": conv_rate,
                 "won_deals_count": len(rep_won_period),
                 "deals_closed_total": closed_cnt,
+                "calls_count": calls_cnt,
+                "meetings_count": meetings_cnt,
+                "followups_count": fus_cnt,
                 "total_leads_handled": len(rep_leads_all),
                 "total_clients_handled": len(rep_clients_all),
                 "total_deals_handled": len(rep_deals_all),

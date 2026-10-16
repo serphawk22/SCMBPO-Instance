@@ -16,7 +16,10 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.0
 
 # Database
-sqlmodel>=0.0.22
+# Pinned. 0.0.47+ maps datetime to a tz-aware type: write aware UTC (database.utc_now) and compare through
+# _to_naive_dt / as_utc. The code and tests also pass on 0.0.34 and 0.0.48. Keep in step with production
+# (Railway build log: "Successfully installed ... sqlmodel-X").
+sqlmodel==0.0.47
 psycopg2-binary>=2.9.9
 psycopg[binary]>=3.1.0
 sqlalchemy>=2.0.36
@@ -38,3 +41,10 @@ tzdata>=2024.1
 # Duplicates removed
 pandas>=2.0.0
 openpyxl>=3.1.0
+
+# HTML sanitization (inbound email reply rendering)
+bleach==6.4.0
+tinycss2==1.5.1
+
+# Email Integration — at-rest encryption for per-user app passwords (Fernet)
+cryptography==50.0.2

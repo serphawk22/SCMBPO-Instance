@@ -4,7 +4,11 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, MessageSquare, StickyNote, Building2, ChevronDown, Target, HeartPulse, LayoutDashboard, Users, TrendingUp, TrendingDown, Lightbulb, ShieldAlert, IndianRupee, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, UserX } from "lucide-react";
+import {
+  Activity, MessageSquare, StickyNote, Building2, ChevronDown,
+  Target, HeartPulse, LayoutDashboard, Users,
+  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, IndianRupee, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, UserX, CalendarClock
+} from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ResultCard } from '@/components/email-agent/ResultCard';
@@ -22,11 +26,15 @@ import ConversationsTab from './components/tabs/ConversationsTab';
 import NotesTab from './components/tabs/NotesTab';
 import HealthTab from './components/tabs/HealthTab';
 import AiDataTab from './components/tabs/AiDataTab';
+import RecordEmailTab from '@/components/email/RecordEmailTab';
+import RecordFollowUpsTab from '@/components/followups/RecordFollowUpsTab';
 
 // ─── Tab definitions ───────────────────────────────────────────────────────────
 const TABS = [
   { key: 'overview',       label: 'Overview',       icon: LayoutDashboard },
   { key: 'ai_data',        label: 'AI DATA',         icon: Brain           },
+  { key: 'email',          label: 'EMAIL',           icon: Mail            },
+  { key: 'followups',      label: 'Follow-ups',      icon: CalendarClock   },
   { key: 'timeline',       label: 'Timeline',        icon: Activity        },
   { key: 'health',         label: 'Health',          icon: HeartPulse      },
   { key: 'conversations',  label: 'Conversations',   icon: MessageSquare   },
@@ -1133,6 +1141,12 @@ export default function AdminClientDetailPage() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Deep links such as /admin/clients/7?tab=email (used by the Inbox).
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab && TABS.some(t => t.key === tab)) setActiveTab(tab);
+  }, []);
+
   useEffect(() => {
     const handleRefresh = () => fetchAll();
     window.addEventListener('refresh-client-data', handleRefresh);
@@ -1260,7 +1274,7 @@ export default function AdminClientDetailPage() {
         onAddNote={() => switchTab('notes')}
         onAddConversation={() => switchTab('conversations')}
         onScheduleMeeting={() => router.push('/meetings')}
-        onSendEmail={() => client?.email ? window.location.href = `mailto:${client.email}` : alert(language === 'es' ? 'No hay correo' : 'No email found for this client')}
+        onSendEmail={() => switchTab('email')}
         onCreateOpportunity={() => {}}
         onDropClient={() => { setDropModalMode('drop'); setIsDropModalOpen(true); }}
         onViewDropDetails={() => { setDropModalMode('view'); setIsDropModalOpen(true); }}
@@ -1339,6 +1353,8 @@ export default function AdminClientDetailPage() {
                     onClientRefresh={fetchClient}
                   />
                 )}
+                {activeTab === 'email' && <RecordEmailTab kind="clients" recordId={id} />}
+                {activeTab === 'followups' && <RecordFollowUpsTab kind="client" recordId={id} />}
                 {activeTab === 'timeline' && (
                   <TimelineTab
                     timeline={timeline}
@@ -1381,7 +1397,7 @@ export default function AdminClientDetailPage() {
             <AiCopilotPanel clientId={id} client={client} />
 
             {/* Assign Salesperson Card */}
-            {(role === 'Admin' || role === 'SuperAdmin') ? (
+            {role === 'Admin' ? (
               <div className="rounded-2xl border border-slate-200 dark:border-zinc-700  bg-white dark:bg-zinc-900  p-4 shadow-sm">
                 <p className="text-xs font-black uppercase tracking-wider text-slate-400  mb-3">{language === 'es' ? 'Asignar Vendedor' : 'Assign Salesperson'}</p>
                 <select

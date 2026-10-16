@@ -99,7 +99,7 @@ export default function ProfilePage() {
 
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-900 overflow-hidden font-inter transition-colors duration-300">
-      <Sidebar currentPath="/profile" role={role} />
+      <Sidebar role={role} />
       
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
         <AdminTopbar />

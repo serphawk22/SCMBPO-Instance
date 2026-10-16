@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Loader2, KeyRound, Lock, CheckCircle2, ArrowLeft, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { Loader2, KeyRound, Lock, CheckCircle2, ArrowLeft, ArrowRight, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
 import { motion, AnimatePresence } from "framer-motion";

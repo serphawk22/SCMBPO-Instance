@@ -32,7 +32,6 @@ export function BottomNav() {
 
   const mainItems = [
     { name: t('bottom_nav.dashboard'), icon: LayoutDashboard, href: '/', roles: ['Admin', 'Employee', 'Client', 'Intern'] },
-    { name: t('bottom_nav.projects'), icon: StickyNote, href: '/projects', roles: ['Admin', 'Employee', 'Intern'] },
     { name: t('bottom_nav.clients'), icon: Users, href: '/clients', roles: ['Admin', 'Employee', 'SalesManager'] },
     { name: t('bottom_nav.sales_manager'), icon: UserCheck, href: '/sales-manager', roles: ['Admin', 'Employee', 'SalesManager'] },
     { name: t('bottom_nav.email_agent'), icon: Bot, href: '/email-agent', roles: ['Admin', 'Employee', 'SalesManager'] },
@@ -46,7 +45,6 @@ export function BottomNav() {
     { name: 'Business Costs', href: '/business-costs', roles: ['Admin'] },
     { name: 'Lead Source Analytics', href: '/lead-source-analytics', roles: ['Admin', 'SalesManager', 'Demo'] },
     { name: 'Lead Sources', href: '/lead-sources', roles: ['Admin'] },
-    { name: 'Ownership Report', href: '/ownership', roles: ['Admin', 'SalesManager'] },
     { name: t('bottom_nav.services_overview'), href: '/admin/services-overview', roles: ['Admin', 'Employee'] },
     { name: t('bottom_nav.request_board'), href: '/admin/requests', roles: ['Admin', 'Employee'] },
     { name: t('bottom_nav.interns'), href: '/interns', roles: ['Admin', 'Employee'] },

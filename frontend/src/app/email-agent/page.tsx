@@ -2,13 +2,18 @@
 
 import React, { useState, useEffect, useRef, Fragment } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Send, Sparkles, Mail, Clock, User, Globe, ChevronDown, ChevronUp, CheckCircle, Building2, Briefcase, Target, AtSign, FileText, Copy, Check, TrendingUp, Zap, Package, UserPlus, Phone, Store, IndianRupee, MessageCircle, Trash2, Youtube } from "lucide-react";
+import {
+  Bot, Send, Sparkles, Mail, Clock, User, Globe, ChevronDown, ChevronUp,
+  CheckCircle, Building2, Briefcase, Target, AtSign, FileText, Copy, Check,
+  TrendingUp, Zap, Package, UserPlus, Phone, Store, IndianRupee, MessageCircle, Trash2, Youtube,
+  Save, X, Loader2, AlertTriangle, Settings, Search
+} from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
 import PageGuide from "@/components/PageGuide";
 import { ResultCard, ResearchResultData, SendEmailResult, CopyButton } from "@/components/email-agent/ResultCard";
-import GmailAgentLoop from "./GmailAgentLoop";
-import ExcelCampaignManager from "./ExcelCampaignManager";
+import EmailIntegrationSettings from "@/components/email-agent/EmailIntegrationSettings";
+import ExcelCampaign from "@/components/email-agent/ExcelCampaign";
 import { useRole } from "@/context/RoleContext";
 
 
@@ -20,6 +25,102 @@ interface ResearchResult {
   resultData: ResearchResultData;
   companyName: string;
   companyUrl: string;
+}
+
+interface EmailReplyData {
+  id: number;
+  from_address?: string | null;
+  subject?: string | null;
+  body_text?: string | null;
+  body_text_full?: string | null;
+  body_html?: string | null;
+  received_at?: string | null;
+}
+
+interface ChatMessage {
+  id: string;
+  role: "ai" | "user";
+  type: "text" | "loading";
+  content?: string;
+}
+
+// One row of GET /sent-emails.
+interface SentEmail {
+  id: number;
+  to_email: string;
+  subject: string;
+  company_name?: string | null;
+  english_body?: string | null;
+  spanish_body?: string | null;
+  status?: string | null;
+  manual?: boolean | null;
+  sent_at?: string | null;
+  replied_at?: string | null;
+  reply_from?: string | null;
+  reply_subject?: string | null;
+  reply_body?: string | null;
+  replies?: EmailReplyData[];
+}
+
+// Renders one inbound reply: a "Clean" view (quote history stripped) by
+// default, with a per-reply toggle to see the original formatted HTML
+// (rendered in a sandboxed iframe — sandbox="" blocks script execution and
+// form/top-navigation, since this is untrusted content from a prospect's
+// mailbox) or the raw plain text including the quoted thread history.
+function ReplyThreadItem({ reply, t }: { reply: EmailReplyData; t: (key: string) => string }) {
+  const [view, setView] = useState<"clean" | "full" | "html">("clean");
+  const displayText = view === "full" ? (reply.body_text_full || reply.body_text) : reply.body_text;
+
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap justify-between items-center gap-2 mb-1">
+        <p className="text-[9px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest flex items-center gap-1">
+          <MessageCircle className="w-3 h-3" />
+          {t('email_agent.reply_received')}
+          {reply.from_address ? ` — ${reply.from_address}` : ''}
+          {reply.received_at ? ` · ${new Date(reply.received_at).toLocaleString()}` : ''}
+        </p>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setView("clean")}
+            className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${view === "clean" ? "bg-green-600 text-white" : "bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400"}`}
+          >
+            {t('email_agent.view_clean')}
+          </button>
+          <button
+            onClick={() => setView("full")}
+            className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${view === "full" ? "bg-green-600 text-white" : "bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400"}`}
+          >
+            {t('email_agent.view_full_thread')}
+          </button>
+          {reply.body_html && (
+            <button
+              onClick={() => setView("html")}
+              className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${view === "html" ? "bg-green-600 text-white" : "bg-slate-100 dark:bg-zinc-800 text-slate-500 dark:text-zinc-400"}`}
+            >
+              {t('email_agent.view_formatted')}
+            </button>
+          )}
+          <CopyButton text={displayText || ""} />
+        </div>
+      </div>
+      {reply.subject && (
+        <p className="text-[11px] font-bold text-slate-500 dark:text-zinc-400 mb-1">{reply.subject}</p>
+      )}
+      {view === "html" && reply.body_html ? (
+        <iframe
+          sandbox=""
+          srcDoc={reply.body_html}
+          className="w-full h-72 bg-white rounded-xl border border-green-100 dark:border-green-500/20"
+          title={`reply-${reply.id}`}
+        />
+      ) : (
+        <div className="bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-xl p-4 text-[13px] text-slate-600 dark:text-zinc-300 whitespace-pre-wrap max-h-72 overflow-y-auto custom-scrollbar font-sans leading-relaxed">
+          {displayText}
+        </div>
+      )}
+    </div>
+  );
 }
 
 
@@ -47,10 +148,118 @@ function BottomUpFillMail() {
 }
 
 
+interface CountryDialCode {
+  name: string;
+  nativeName?: string;
+  code: string;
+  dialCode: string;
+  flag: string;
+}
+
+const COUNTRY_DIAL_CODES: CountryDialCode[] = [
+  { name: "Spain", nativeName: "España", code: "ES", dialCode: "+34", flag: "🇪🇸" },
+  { name: "India", nativeName: "Bharat", code: "IN", dialCode: "+91", flag: "🇮🇳" },
+  { name: "United States", nativeName: "USA", code: "US", dialCode: "+1", flag: "🇺🇸" },
+  { name: "United Kingdom", nativeName: "UK", code: "GB", dialCode: "+44", flag: "🇬🇧" },
+  { name: "Canada", nativeName: "Canada", code: "CA", dialCode: "+1", flag: "🇨🇦" },
+  { name: "Mexico", nativeName: "México", code: "MX", dialCode: "+52", flag: "🇲🇽" },
+  { name: "Australia", nativeName: "Australia", code: "AU", dialCode: "+61", flag: "🇦🇺" },
+  { name: "Germany", nativeName: "Deutschland", code: "DE", dialCode: "+49", flag: "🇩🇪" },
+  { name: "France", nativeName: "France", code: "FR", dialCode: "+33", flag: "🇫🇷" },
+  { name: "Italy", nativeName: "Italia", code: "IT", dialCode: "+39", flag: "🇮🇹" },
+  { name: "Portugal", nativeName: "Portugal", code: "PT", dialCode: "+351", flag: "🇵🇹" },
+  { name: "United Arab Emirates", nativeName: "UAE", code: "AE", dialCode: "+971", flag: "🇦🇪" },
+  { name: "Saudi Arabia", nativeName: "KSA", code: "SA", dialCode: "+966", flag: "🇸🇦" },
+  { name: "Singapore", nativeName: "Singapore", code: "SG", dialCode: "+65", flag: "🇸🇬" },
+  { name: "Japan", nativeName: "Nihon", code: "JP", dialCode: "+81", flag: "🇯🇵" },
+  { name: "China", nativeName: "China", code: "CN", dialCode: "+86", flag: "🇨🇳" },
+  { name: "Brazil", nativeName: "Brasil", code: "BR", dialCode: "+55", flag: "🇧🇷" },
+  { name: "Argentina", nativeName: "Argentina", code: "AR", dialCode: "+54", flag: "🇦🇷" },
+  { name: "Colombia", nativeName: "Colombia", code: "CO", dialCode: "+57", flag: "🇨🇴" },
+  { name: "Chile", nativeName: "Chile", code: "CL", dialCode: "+56", flag: "🇨🇱" },
+  { name: "Peru", nativeName: "Perú", code: "PE", dialCode: "+51", flag: "🇵🇪" },
+  { name: "Ecuador", nativeName: "Ecuador", code: "EC", dialCode: "+593", flag: "🇪🇨" },
+  { name: "Netherlands", nativeName: "Nederland", code: "NL", dialCode: "+31", flag: "🇳🇱" },
+  { name: "Switzerland", nativeName: "Schweiz", code: "CH", dialCode: "+41", flag: "🇨🇭" },
+  { name: "Sweden", nativeName: "Sverige", code: "SE", dialCode: "+46", flag: "🇸🇪" },
+  { name: "Norway", nativeName: "Norge", code: "NO", dialCode: "+47", flag: "🇳🇴" },
+  { name: "Denmark", nativeName: "Danmark", code: "DK", dialCode: "+45", flag: "🇩🇰" },
+  { name: "Finland", nativeName: "Suomi", code: "FI", dialCode: "+358", flag: "🇫🇮" },
+  { name: "Ireland", nativeName: "Éire", code: "IE", dialCode: "+353", flag: "🇮🇪" },
+  { name: "Belgium", nativeName: "België", code: "BE", dialCode: "+32", flag: "🇧🇪" },
+  { name: "Austria", nativeName: "Österreich", code: "AT", dialCode: "+43", flag: "🇦🇹" },
+  { name: "Poland", nativeName: "Polska", code: "PL", dialCode: "+48", flag: "🇵🇱" },
+  { name: "Greece", nativeName: "Hellas", code: "GR", dialCode: "+30", flag: "🇬🇷" },
+  { name: "Turkey", nativeName: "Türkiye", code: "TR", dialCode: "+90", flag: "🇹🇷" },
+  { name: "South Africa", nativeName: "South Africa", code: "ZA", dialCode: "+27", flag: "🇿🇦" },
+  { name: "Egypt", nativeName: "Misr", code: "EG", dialCode: "+20", flag: "🇪🇬" },
+  { name: "Nigeria", nativeName: "Nigeria", code: "NG", dialCode: "+234", flag: "🇳🇬" },
+  { name: "Kenya", nativeName: "Kenya", code: "KE", dialCode: "+254", flag: "🇰🇪" },
+  { name: "Morocco", nativeName: "Maroc", code: "MA", dialCode: "+212", flag: "🇲🇦" },
+  { name: "New Zealand", nativeName: "Aotearoa", code: "NZ", dialCode: "+64", flag: "🇳🇿" },
+  { name: "South Korea", nativeName: "Hanguk", code: "KR", dialCode: "+82", flag: "🇰🇷" },
+  { name: "Philippines", nativeName: "Pilipinas", code: "PH", dialCode: "+63", flag: "🇵🇭" },
+  { name: "Malaysia", nativeName: "Malaysia", code: "MY", dialCode: "+60", flag: "🇲🇾" },
+  { name: "Indonesia", nativeName: "Indonesia", code: "ID", dialCode: "+62", flag: "🇮🇩" },
+  { name: "Thailand", nativeName: "Mueang Thai", code: "TH", dialCode: "+66", flag: "🇹🇭" },
+  { name: "Vietnam", nativeName: "Việt Nam", code: "VN", dialCode: "+84", flag: "🇻🇳" },
+  { name: "Pakistan", nativeName: "Pakistan", code: "PK", dialCode: "+92", flag: "🇵🇰" },
+  { name: "Bangladesh", nativeName: "Bangladesh", code: "BD", dialCode: "+880", flag: "🇧🇩" },
+  { name: "Sri Lanka", nativeName: "Sri Lanka", code: "LK", dialCode: "+94", flag: "🇱🇰" },
+  { name: "Nepal", nativeName: "Nepal", code: "NP", dialCode: "+977", flag: "🇳🇵" },
+  { name: "Qatar", nativeName: "Qatar", code: "QA", dialCode: "+974", flag: "🇶🇦" },
+  { name: "Kuwait", nativeName: "Kuwait", code: "KW", dialCode: "+965", flag: "🇰🇼" },
+  { name: "Oman", nativeName: "Oman", code: "OM", dialCode: "+968", flag: "🇴🇲" },
+  { name: "Bahrain", nativeName: "Bahrain", code: "BH", dialCode: "+973", flag: "🇧🇭" },
+  { name: "Israel", nativeName: "Yisra'el", code: "IL", dialCode: "+972", flag: "🇮🇱" },
+  { name: "Jordan", nativeName: "Al-Urdun", code: "JO", dialCode: "+962", flag: "🇯🇴" },
+  { name: "Lebanon", nativeName: "Lubnan", code: "LB", dialCode: "+961", flag: "🇱🇧" },
+  { name: "Hong Kong", nativeName: "Hong Kong", code: "HK", dialCode: "+852", flag: "🇭🇰" },
+  { name: "Taiwan", nativeName: "Taiwan", code: "TW", dialCode: "+886", flag: "🇹🇼" },
+  { name: "Czech Republic", nativeName: "Česko", code: "CZ", dialCode: "+420", flag: "🇨🇿" },
+  { name: "Romania", nativeName: "România", code: "RO", dialCode: "+40", flag: "🇷🇴" },
+  { name: "Hungary", nativeName: "Magyarország", code: "HU", dialCode: "+36", flag: "🇭🇺" },
+  { name: "Uruguay", nativeName: "Uruguay", code: "UY", dialCode: "+598", flag: "🇺🇾" },
+  { name: "Costa Rica", nativeName: "Costa Rica", code: "CR", dialCode: "+506", flag: "🇨🇷" },
+  { name: "Panama", nativeName: "Panamá", code: "PA", dialCode: "+507", flag: "🇵🇦" },
+  { name: "Dominican Republic", nativeName: "República Dominicana", code: "DO", dialCode: "+1", flag: "🇩🇴" },
+  { name: "Puerto Rico", nativeName: "Puerto Rico", code: "PR", dialCode: "+1", flag: "🇵🇷" },
+  { name: "Croatia", nativeName: "Hrvatska", code: "HR", dialCode: "+385", flag: "🇭🇷" },
+  { name: "Bulgaria", nativeName: "Bulgaria", code: "BG", dialCode: "+359", flag: "🇧🇬" },
+  { name: "Ukraine", nativeName: "Ukraina", code: "UA", dialCode: "+380", flag: "🇺🇦" },
+  { name: "Russia", nativeName: "Rossiya", code: "RU", dialCode: "+7", flag: "🇷🇺" },
+];
+
+function parsePhoneNumber(fullNumber: string, defaultCode = "+91"): { dialCode: string; nationalNumber: string } {
+  if (!fullNumber || !fullNumber.trim()) {
+    return { dialCode: defaultCode, nationalNumber: "" };
+  }
+  const clean = fullNumber.trim();
+  const sorted = [...COUNTRY_DIAL_CODES].sort((a, b) => b.dialCode.length - a.dialCode.length);
+  if (clean.startsWith("+")) {
+    for (const c of sorted) {
+      if (clean.startsWith(c.dialCode)) {
+        const rest = clean.slice(c.dialCode.length).trim();
+        return { dialCode: c.dialCode, nationalNumber: rest };
+      }
+    }
+  } else {
+    for (const c of sorted) {
+      const rawDigits = c.dialCode.replace("+", "");
+      if (clean.startsWith(rawDigits) && clean.length > rawDigits.length + 5) {
+        const rest = clean.slice(rawDigits.length).trim();
+        return { dialCode: c.dialCode, nationalNumber: rest };
+      }
+    }
+  }
+  return { dialCode: defaultCode, nationalNumber: clean.replace(/^\+/, "") };
+}
+
+
 export default function EmailAgentPage() {
   const { role } = useRole();
   const { t } = useLanguage();
-  const [mode, setMode] = useState<"single" | "bulk" | "excel">("single");
+  const [mode, setMode] = useState<"single" | "excel">("single");
   const [companyName, setCompanyName] = useState("");
   const [inputValue, setInputValue] = useState("");
   
@@ -69,9 +278,198 @@ export default function EmailAgentPage() {
   const [expandedCompanies, setExpandedCompanies] = useState<string[]>([]);
   const [selectedEmails, setSelectedEmails] = useState<number[]>([]);
 
+  const [profile, setProfile] = useState<{ name: string; email: string; phone: string; signature: string } | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [profileForm, setProfileForm] = useState({ name: "", email: "", phone: "" });
+  const [selectedCountryCode, setSelectedCountryCode] = useState("+91");
+  const [nationalPhone, setNationalPhone] = useState("");
+  const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
+  const [countrySearch, setCountrySearch] = useState("");
+  const countryDropdownRef = useRef<HTMLDivElement>(null);
+  const [signatureText, setSignatureText] = useState("");
+  const [autoAppend, setAutoAppend] = useState(true);
+  const [autoAppendSaving, setAutoAppendSaving] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingSignature, setSavingSignature] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [signatureError, setSignatureError] = useState("");
+  const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (countryDropdownRef.current && !countryDropdownRef.current.contains(e.target as Node)) {
+        setCountryDropdownOpen(false);
+      }
+    };
+    if (countryDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [countryDropdownOpen]);
+
+  const selectedCountry = COUNTRY_DIAL_CODES.find(c => c.dialCode === selectedCountryCode) || COUNTRY_DIAL_CODES[0];
+
+  const filteredCountries = COUNTRY_DIAL_CODES.filter(c =>
+    c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
+    (c.nativeName && c.nativeName.toLowerCase().includes(countrySearch.toLowerCase())) ||
+    c.dialCode.includes(countrySearch) ||
+    c.code.toLowerCase().includes(countrySearch.toLowerCase())
+  );
+
+  const showToast = (msg: string, type: "ok" | "err" = "ok") => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ msg, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  const refreshProfile = async () => {
+    setProfileError("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/users/me/agent-profile`);
+      if (!res.ok) throw new Error("Failed to fetch profile");
+      const data = await res.json();
+      const a = data.agent_profile || {};
+      const rawPhone = a.agent_phone || "";
+      const parsed = parsePhoneNumber(rawPhone, "+91");
+      setSelectedCountryCode(parsed.dialCode);
+      setNationalPhone(parsed.nationalNumber);
+      setProfile({
+        name: a.agent_name || "",
+        email: a.agent_email || "",
+        phone: rawPhone,
+        signature: a.signature || "",
+      });
+      setProfileForm({ name: a.agent_name || "", email: a.agent_email || "", phone: rawPhone });
+      setSignatureText(a.signature || "");
+      setAutoAppend(a.auto_append_signature !== false);
+    } catch {
+      setProfileError("Failed to load profile data.");
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshProfile();
+  }, []);
+
+  useEffect(() => {
+    if (showProfile) refreshProfile();
+  }, [showProfile]);
+
+  // Deep link: /email-agent?settings=email opens Email Integration settings
+  // (used by the "Configure Email Integration" send-error action).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("settings") === "email") setShowSettings(true);
+    if (params.get("campaign") || params.get("mode") === "excel") setMode("excel");
+  }, []);
+
+  const handleSaveProfile = async () => {
+    if (savingProfile) return;
+    setProfileError("");
+
+    if (!profileForm.name.trim()) {
+      setProfileError("Full name is required.");
+      return;
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(profileForm.email.trim())) {
+      setProfileError("Please enter a valid email address.");
+      return;
+    }
+    const combinedPhone = nationalPhone.trim() ? `${selectedCountryCode} ${nationalPhone.trim()}` : "";
+    if (combinedPhone && !/^\+?[0-9\s\-()]{7,20}$/.test(combinedPhone)) {
+      setProfileError("Please enter a valid phone number.");
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/users/me/agent-profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_name: profileForm.name.trim(),
+          agent_email: profileForm.email.trim(),
+          agent_phone: combinedPhone,
+          auto_append_signature: autoAppend,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to update profile");
+      const data = await res.json();
+      const a = data.agent_profile || {};
+      const parsed = parsePhoneNumber(a.agent_phone || "", selectedCountryCode);
+      setSelectedCountryCode(parsed.dialCode);
+      setNationalPhone(parsed.nationalNumber);
+      setProfile({
+        name: a.agent_name || "",
+        email: a.agent_email || "",
+        phone: a.agent_phone || "",
+        signature: a.signature || "",
+      });
+      setProfileForm({ name: a.agent_name || "", email: a.agent_email || "", phone: a.agent_phone || "" });
+      setSignatureText(a.signature || "");
+      setAutoAppend(a.auto_append_signature !== false);
+      showToast("Profile updated successfully. Email signature updated.");
+    } catch {
+      showToast("Unable to update profile. Please try again.", "err");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleSaveSignature = async () => {
+    if (savingSignature) return;
+    setSignatureError("");
+    setSavingSignature(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/users/me/agent-profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signature: signatureText }),
+      });
+      if (!res.ok) throw new Error("Failed to update signature");
+      const data = await res.json();
+      const a = data.agent_profile || {};
+      setProfile(prev => (prev ? { ...prev, signature: a.signature ?? signatureText } : prev));
+      showToast("Email signature updated successfully.");
+    } catch {
+      setSignatureError("Unable to update email signature.");
+      showToast("Unable to update email signature.", "err");
+    } finally {
+      setSavingSignature(false);
+    }
+  };
+
+  const handleToggleAutoAppend = async () => {
+    if (autoAppendSaving) return;
+    const next = !autoAppend;
+    setAutoAppend(next);
+    setAutoAppendSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/users/me/agent-profile`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_append_signature: next }),
+      });
+      if (!res.ok) throw new Error("Failed to update setting");
+      const data = await res.json();
+      const a = data.agent_profile || {};
+      setAutoAppend(a.auto_append_signature !== false);
+      showToast(next ? "Auto append signature enabled." : "Auto append signature disabled.");
+    } catch {
+      setAutoAppend(!next);
+      showToast("Unable to update auto append setting.", "err");
+    } finally {
+      setAutoAppendSaving(false);
+    }
+  };
 
   // Added for Gmail Agent Migration: Allows user to dismiss a specific research result and refocuses on the input field seamlessly
   const handleRemoveResult = async (id: string) => {
@@ -317,7 +715,20 @@ export default function EmailAgentPage() {
       });
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(text || "Failed to send email");
+        let message = text || "Failed to send email";
+        let code: string | undefined;
+        try {
+          const parsed = JSON.parse(text);
+          if (typeof parsed?.detail === "string") {
+            message = parsed.detail;
+          } else if (parsed?.detail?.message) {
+            message = parsed.detail.message;
+            code = parsed.detail.code;
+          }
+        } catch {}
+        const err = new Error(message) as Error & { code?: string };
+        if (code) err.code = code;
+        throw err;
       }
 
       const data = await res.json();
@@ -416,16 +827,10 @@ export default function EmailAgentPage() {
                 {t('email_agent.mode_single')}
               </button>
               <button
-                onClick={() => setMode("bulk")}
-                className={`flex-1 sm:flex-none px-3 py-1.5 rounded-md text-xs font-bold transition-all ${mode === "bulk" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
-              >
-                {t('email_agent.mode_bulk')}
-              </button>
-              <button
                 onClick={() => setMode("excel")}
                 className={`flex-1 sm:flex-none px-3 py-1.5 rounded-md text-xs font-bold transition-all ${mode === "excel" ? "bg-white dark:bg-zinc-900 text-slate-800 dark:text-zinc-100 shadow-sm" : "text-slate-500 dark:text-zinc-400 hover:text-slate-700"}`}
               >
-                Excel Campaign
+                {t('email_agent.mode_excel')}
               </button>
             </div>
           </div>
@@ -450,15 +855,31 @@ export default function EmailAgentPage() {
         <section className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5 dark:border-emerald-900/60 dark:bg-emerald-950/20">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div><p className="text-[10px] font-black uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Outreach profile</p><h2 className="text-lg font-black text-slate-900 dark:text-white">SCM BPO</h2></div>
-            <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-sm dark:bg-zinc-900 dark:text-emerald-300">Logistics BPO</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowProfile(v => !v)}
+                className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 dark:bg-zinc-900 dark:text-emerald-300 dark:hover:bg-zinc-800"
+              >
+                <User className="w-3 h-3" />
+                Profile
+              </button>
+              <button
+                onClick={() => setShowSettings(v => !v)}
+                className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 dark:bg-zinc-900 dark:text-emerald-300 dark:hover:bg-zinc-800"
+              >
+                <Settings className="w-3 h-3" />
+                Settings
+              </button>
+              <span className="rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-700 shadow-sm dark:bg-zinc-900 dark:text-emerald-300">Logistics BPO</span>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-x-8 gap-y-3 text-xs text-slate-600 dark:text-zinc-300 sm:grid-cols-2 lg:grid-cols-3">
             <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Legal company</strong>SCM SHIPPING SERVICES PVT LTD</p>
             <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Industry</strong>Outsourcing</p>
             <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Website</strong>www.scmbpo.com</p>
-            <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Primary contact</strong>Noushad C I, Founder</p>
-            <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Contact</strong>+91-9947950099</p>
-            <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Email</strong>contact@scmbpo.com</p>
+            <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Primary contact</strong>{profileLoading ? "…" : (profile?.name || "Noushad C I, Founder")}</p>
+            <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Contact</strong>{profileLoading ? "…" : (profile?.phone || "+91-9947950099")}</p>
+            <p><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Email</strong>{profileLoading ? "…" : (profile?.email || "contact@scmbpo.com")}</p>
             <p className="sm:col-span-2 lg:col-span-3"><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Address</strong>Koyenco Techpark, Kepip, Infopark P.O., Kakkanad, Cochin</p>
             <p className="sm:col-span-2 lg:col-span-3"><strong className="block text-[10px] uppercase tracking-widest text-slate-400">Services</strong>Logistics back-office support services (BPO)</p>
           </div>
@@ -550,13 +971,9 @@ export default function EmailAgentPage() {
           </div>
         )}
           </>
-        ) : mode === "bulk" ? (
-          <div className="w-full max-w-4xl mx-auto">
-            <GmailAgentLoop />
-          </div>
         ) : (
-          <div className="w-full max-w-5xl mx-auto">
-            <ExcelCampaignManager />
+          <div className="w-full">
+            <ExcelCampaign onOpenSettings={() => setShowSettings(true)} />
           </div>
         )}
 
@@ -682,6 +1099,8 @@ export default function EmailAgentPage() {
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${
                                   email.status === "Opened" ? "bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400" :
                                   email.status === "Replied" ? "bg-green-100 text-green-600 dark:bg-green-500/20 dark:text-green-400" :
+                                  email.status === "Delivered" ? "bg-blue-100 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400" :
+                                  email.status === "Draft" ? "bg-slate-200 text-slate-600 dark:bg-zinc-700 dark:text-zinc-300" :
                                   "bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400"
                                 }`}>
                                   {email.status || "Sent"}
@@ -691,6 +1110,12 @@ export default function EmailAgentPage() {
                                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{t('email_agent.subject')}</p>
                                 <span className="text-sm font-bold text-slate-600 dark:text-zinc-300">{email.subject || t('email_agent.no_subject')}</span>
                               </div>
+                              {email.sent_at && (
+                                <div className="flex flex-col justify-center">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">{t('email_agent.sent_at')}</p>
+                                  <span className="text-sm font-bold text-slate-600 dark:text-zinc-300">{new Date(email.sent_at).toLocaleString()}</span>
+                                </div>
+                              )}
                             </div>
 
                             {(email.english_body || email.spanish_body) && (
@@ -719,6 +1144,31 @@ export default function EmailAgentPage() {
                                 )}
                               </div>
                             )}
+
+                            {Array.isArray(email.replies) && email.replies.length > 0 ? (
+                              email.replies.map((reply: EmailReplyData) => (
+                                <ReplyThreadItem key={reply.id} reply={reply} t={t} />
+                              ))
+                            ) : email.reply_body && (
+                              // Legacy fallback: replies recorded before the replies[] array existed.
+                              <div className="mt-4">
+                                <div className="flex justify-between items-center mb-1">
+                                  <p className="text-[9px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest flex items-center gap-1">
+                                    <MessageCircle className="w-3 h-3" />
+                                    {t('email_agent.reply_received')}
+                                    {email.reply_from ? ` — ${email.reply_from}` : ''}
+                                    {email.replied_at ? ` · ${new Date(email.replied_at).toLocaleString()}` : ''}
+                                  </p>
+                                  <CopyButton text={email.reply_body} />
+                                </div>
+                                {email.reply_subject && (
+                                  <p className="text-[11px] font-bold text-slate-500 dark:text-zinc-400 mb-1">{email.reply_subject}</p>
+                                )}
+                                <div className="bg-green-50 dark:bg-green-500/10 border border-green-100 dark:border-green-500/20 rounded-xl p-4 text-[13px] text-slate-600 dark:text-zinc-300 whitespace-pre-wrap max-h-48 overflow-y-auto custom-scrollbar font-sans leading-relaxed">
+                                  {email.reply_body}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -729,6 +1179,318 @@ export default function EmailAgentPage() {
             </div>
           )}
         </div>
+        {/* Profile Settings Modal — in-page panel, stays on the Email Agent route */}
+        <AnimatePresence>
+          {showProfile && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-[200] p-4"
+              onClick={() => setShowProfile(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.92, y: 24, opacity: 0 }}
+                animate={{ scale: 1, y: 0, opacity: 1 }}
+                exit={{ scale: 0.92, y: 24, opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                className="bg-white dark:bg-zinc-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-zinc-700 w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="px-6 py-5 border-b border-slate-100 dark:border-zinc-800 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900 dark:text-white">Profile Settings</h2>
+                    <p className="text-sm text-slate-500 dark:text-zinc-400 mt-0.5">Manage your sender information and email signature.</p>
+                  </div>
+                  <button
+                    onClick={() => setShowProfile(false)}
+                    className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                  {profileError && (
+                    <div className="flex items-center gap-2 p-3 text-sm text-red-600 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200 dark:border-red-500/20">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      {profileError}
+                    </div>
+                  )}
+                  {signatureError && (
+                    <div className="flex items-center gap-2 p-3 text-sm text-red-600 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200 dark:border-red-500/20">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      {signatureError}
+                    </div>
+                  )}
+
+                  {/* Personal Information */}
+                  <div className="rounded-2xl border p-6 space-y-4" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Personal Information</p>
+
+                    <div>
+                      <label className="flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-zinc-200 mb-1.5">
+                        <User className="w-3.5 h-3.5 text-slate-400" /> Full Name
+                      </label>
+                      <input
+                        type="text"
+                        value={profileForm.name}
+                        onChange={(e) => setProfileForm(f => ({ ...f, name: e.target.value }))}
+                        placeholder="Name"
+                        className="w-full px-3 py-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--background)" }}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-zinc-200 mb-1.5">
+                        <Mail className="w-3.5 h-3.5 text-slate-400" /> Email Address
+                      </label>
+                      <input
+                        type="email"
+                        value={profileForm.email}
+                        onChange={(e) => setProfileForm(f => ({ ...f, email: e.target.value }))}
+                        placeholder="user@example.com"
+                        className="w-full px-3 py-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--background)" }}
+                      />
+                      <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Sender address for outgoing emails — this does not change your login email.</p>
+                    </div>
+
+                    <div className="relative" ref={countryDropdownRef}>
+                      <label className="flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-zinc-200 mb-1.5">
+                        <Phone className="w-3.5 h-3.5 text-slate-400" /> Phone Number
+                      </label>
+                      <div
+                        className="flex items-center rounded-xl border transition-all focus-within:ring-2 focus-within:ring-blue-500 overflow-visible"
+                        style={{ borderColor: "var(--border)", background: "var(--background)" }}
+                      >
+                        {/* Country Code Trigger Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCountryDropdownOpen(!countryDropdownOpen);
+                            setCountrySearch("");
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-r transition-colors hover:bg-slate-100 dark:hover:bg-zinc-800/60 rounded-l-xl shrink-0"
+                          style={{ borderColor: "var(--border)", color: "var(--text-primary)" }}
+                          title={`${selectedCountry.name} (${selectedCountry.dialCode})`}
+                        >
+                          <span className="text-base leading-none">{selectedCountry.flag}</span>
+                          <span className="text-xs font-semibold">{selectedCountry.dialCode}</span>
+                          <ChevronDown className="w-3 h-3 text-slate-400" />
+                        </button>
+
+                        {/* National Phone Number Input */}
+                        <input
+                          type="tel"
+                          value={nationalPhone}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setNationalPhone(val);
+                            setProfileForm(f => ({
+                              ...f,
+                              phone: val.trim() ? `${selectedCountryCode} ${val.trim()}` : ""
+                            }));
+                          }}
+                          placeholder={selectedCountry.code === "ES" ? "612 34 56 78" : selectedCountry.code === "IN" ? "98765 43210" : "555-0199"}
+                          className="w-full px-3 py-2 bg-transparent text-sm outline-none rounded-r-xl"
+                          style={{ color: "var(--text-primary)" }}
+                        />
+                      </div>
+
+                      {/* Searchable Country Code Dropdown */}
+                      {countryDropdownOpen && (
+                        <div
+                          className="absolute left-0 top-full mt-1.5 w-72 max-w-[90vw] rounded-2xl border shadow-2xl z-50 p-2 overflow-hidden bg-white dark:bg-zinc-900"
+                          style={{ borderColor: "var(--border)" }}
+                        >
+                          {/* Search Input */}
+                          <div
+                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-xl border mb-2 text-xs"
+                            style={{ borderColor: "var(--border)", background: "var(--background)" }}
+                          >
+                            <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <input
+                              type="text"
+                              value={countrySearch}
+                              onChange={(e) => setCountrySearch(e.target.value)}
+                              placeholder="Search country or code..."
+                              className="w-full bg-transparent outline-none text-xs"
+                              style={{ color: "var(--text-primary)" }}
+                              autoFocus
+                            />
+                            {countrySearch && (
+                              <button type="button" onClick={() => setCountrySearch("")} className="text-slate-400 hover:text-slate-600">
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Country List */}
+                          <div className="max-h-48 overflow-y-auto space-y-0.5 custom-scrollbar">
+                            {filteredCountries.length > 0 ? (
+                              filteredCountries.map((c) => (
+                                <button
+                                  key={`${c.code}-${c.dialCode}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedCountryCode(c.dialCode);
+                                    setCountryDropdownOpen(false);
+                                    setCountrySearch("");
+                                    setProfileForm(f => ({
+                                      ...f,
+                                      phone: nationalPhone.trim() ? `${c.dialCode} ${nationalPhone.trim()}` : ""
+                                    }));
+                                  }}
+                                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors text-left ${
+                                    selectedCountryCode === c.dialCode
+                                      ? "bg-blue-600 text-white font-semibold"
+                                      : "hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-700 dark:text-zinc-200"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 truncate">
+                                    <span className="text-sm leading-none">{c.flag}</span>
+                                    <span className="truncate">{c.name}</span>
+                                  </div>
+                                  <span className={`text-[11px] font-mono shrink-0 ml-2 ${selectedCountryCode === c.dialCode ? "text-blue-100" : "text-slate-400"}`}>
+                                    {c.dialCode}
+                                  </span>
+                                </button>
+                              ))
+                            ) : (
+                              <p className="text-xs text-slate-400 p-3 text-center">No country found</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleSaveProfile}
+                        disabled={savingProfile}
+                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                      >
+                        {savingProfile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Save Changes
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Email Signature */}
+                  <div className="rounded-2xl border p-6 space-y-4" style={{ background: "var(--surface)", borderColor: "var(--border)" }}>
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email Signature</p>
+                      <p className="text-xs text-slate-500 dark:text-zinc-400 mt-1">Customize the signature that will be automatically used in your outgoing emails.</p>
+                    </div>
+                    <textarea
+                      value={signatureText}
+                      onChange={(e) => setSignatureText(e.target.value)}
+                      rows={5}
+                      placeholder={"Best Regards,\nName\nSCM BPO\n+91 XXXXX XXXXX"}
+                      className="w-full px-3 py-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                      style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--background)" }}
+                    />
+
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Preview</p>
+                      <div
+                        className="rounded-xl border p-4 text-sm whitespace-pre-wrap min-h-[3rem]"
+                        style={{ borderColor: "var(--border)", color: "var(--text-primary)", background: "var(--background)" }}
+                      >
+                        {signatureText.trim() ? signatureText : <span className="text-slate-400 dark:text-zinc-500">No signature configured.</span>}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4 pt-4 border-t" style={{ borderColor: "var(--border)" }}>
+                      <div>
+                        <p className="text-sm font-bold text-slate-700 dark:text-zinc-200">Automatically append signature to emails</p>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">When enabled, your saved email signature will be automatically added to outgoing emails.</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${autoAppend ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400 dark:text-zinc-500"}`}>
+                          {autoAppend ? "ON" : "OFF"}
+                        </span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={autoAppend}
+                          aria-label="Automatically append signature to emails"
+                          onClick={handleToggleAutoAppend}
+                          disabled={autoAppendSaving}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-60 ${autoAppend ? "bg-emerald-500" : "bg-slate-300 dark:bg-zinc-700"}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${autoAppend ? "translate-x-6" : "translate-x-1"}`} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleSaveSignature}
+                        disabled={savingSignature}
+                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                      >
+                        {savingSignature ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Save Signature
+                      </button>
+                    </div>
+                  </div>
+
+                  {profileLoading && (
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading profile…
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Email Integration Settings — same component previously hosted in /admin/settings */}
+        <AnimatePresence>
+          {showSettings && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center z-[200] p-4"
+              onClick={() => setShowSettings(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.92, y: 24, opacity: 0 }}
+                animate={{ scale: 1, y: 0, opacity: 1 }}
+                exit={{ scale: 0.92, y: 24, opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                className="bg-white dark:bg-zinc-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-zinc-700 w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="px-6 py-4 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between gap-3 shrink-0">
+                  <h2 className="text-lg font-black text-slate-900 dark:text-white">Settings</h2>
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-700 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                  <EmailIntegrationSettings />
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Toast */}
+        {toast && (
+          <div className={`fixed top-4 right-4 z-[300] flex items-center gap-2 px-4 py-3 rounded-xl shadow-xl text-sm font-semibold ${toast.type === "ok" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
+            {toast.type === "ok" ? <CheckCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+            {toast.msg}
+          </div>
+        )}
       </div>
     </div>
   );

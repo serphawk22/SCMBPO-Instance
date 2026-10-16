@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
+import type { Variants } from "framer-motion";
 import { 
   Users, Send, Briefcase, Target, Activity, ShieldAlert,
   ArrowUpRight, FolderKanban, Shield, Lock, Eye, AlertTriangle, UserPlus, LockKeyhole, Mail, CheckCircle2
@@ -12,12 +13,12 @@ import PageGuide from "@/components/PageGuide";
 import { useRole } from "@/context/RoleContext";
 import { API_BASE_URL } from "@/config";
 
-const itemVariants = {
+const itemVariants: Variants = {
   hidden: { opacity: 0, y: 20 },
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100 } }
 };
 
-const containerVariants = {
+const containerVariants: Variants = {
   hidden: { opacity: 0 },
   show: { opacity: 1, transition: { staggerChildren: 0.07, delayChildren: 0.1 } },
 };
