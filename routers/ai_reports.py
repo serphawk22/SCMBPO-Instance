@@ -360,7 +360,7 @@ def _generate_deterministic_report(prompt: str, snapshot: Dict[str, Any], target
 
     # Comparison Table Headers and Rows
     table_headers = [
-        "Sales Representative", "Role", "Leads Assigned", "Conv. %", 
+        "Sales Representative", "Role", "Leads Assigned", "Conv. %",
         "Won Deals", "Lost Deals", "Win Rate %", "Won Revenue", "% Rev Share", "Open Pipeline", "Avg Deal Size"
     ]
     table_rows = []
