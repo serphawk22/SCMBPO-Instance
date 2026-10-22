@@ -935,6 +935,10 @@ def ownership_report(session: Session = Depends(get_session)):
 @router.get("/meetings/history")
 def meeting_history(entity_type: str, entity_id: int, session: Session = Depends(get_session)):
     from sqlalchemy import or_
+    import main
+    me = main._current_user(session)
+    if not me:
+        raise HTTPException(status_code=401, detail="Unauthorized")
     conds = []
     if entity_type == "lead":
         conds.append(Meeting.lead_id == entity_id)
@@ -956,8 +960,11 @@ def meeting_history(entity_type: str, entity_id: int, session: Session = Depends
     if contact_ids:
         conds.append(Meeting.contact_id.in_(contact_ids))
 
-    rows = session.exec(select(Meeting).where(or_(*conds)).order_by(Meeting.scheduled_at.desc())).all()
-    import main
+    stmt = select(Meeting).where(or_(*conds))
+    if not main._sees_all_meetings(me):
+        # Salespeople only see the meetings they host (are assigned to) or created, even on a shared record.
+        stmt = stmt.where(or_(Meeting.host_id == me.id, Meeting.created_by == me.id))
+    rows = session.exec(stmt.order_by(Meeting.scheduled_at.desc())).all()
     items = [main._meeting_dict(m, session) for m in rows]
     now = datetime.utcnow()
 

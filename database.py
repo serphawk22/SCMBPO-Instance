@@ -1506,6 +1506,8 @@ class Meeting(SQLModel, table=True):
     meeting_link: Optional[str] = Field(default=None, max_length=1000)  # SCM2-72: video call URL
     timezone: Optional[str] = Field(default=None, max_length=64)        # SCM2-74: organiser's IANA tz; scheduled_at stored in UTC
     host_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    # Who created the meeting. A non-admin only sees meetings they host (assigned) or created.
+    created_by: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
     lead_id: Optional[int] = Field(default=None, foreign_key="leads.id")
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
     contact_id: Optional[int] = Field(default=None, foreign_key="contacts.id")

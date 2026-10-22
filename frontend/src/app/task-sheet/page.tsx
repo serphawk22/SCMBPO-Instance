@@ -81,6 +81,26 @@ const PERIODS = [
 export default function TaskSheetPage() {
   const { role, user } = useRole();
   const isAdmin = role === "Admin" || role === "SuperAdmin";
+  // Everyone who isn't an admin only gets the submission form, shown inline.
+  const inlineForm = !isAdmin;
+  const [submitted, setSubmitted] = useState(false);
+
+  const blankForm = () => ({
+    work_date: todayStr(),
+    area: role === "SalesManager" || role === "Employee" ? "Sales" : "Development",
+    summary: "",
+    status: "Completed",
+    outreaches_count: "0",
+    positives_count: "0",
+    negatives_count: "0",
+    followups_scheduled: "0",
+    meetings_scheduled: "0",
+    key_focus: "",
+    time_spent_minutes: "480",
+    blocker: "",
+    follow_up_date: "",
+    completion_date: todayStr(),
+  });
   
   const [entries, setEntries] = useState<Entry[]>([]);
   const [employees, setEmployees] = useState<{ id: number; name: string }[]>([]);
@@ -153,10 +173,16 @@ export default function TaskSheetPage() {
   };
 
   useEffect(() => {
-    loadEmployees();
-  }, []);
+    // Entries and the staff list are admin-only on the API; non-admins never request them.
+    if (isAdmin) loadEmployees();
+  }, [isAdmin]);
 
   useEffect(() => {
+    if (!isAdmin) {
+      setEntries([]);
+      setLoading(false);
+      return;
+    }
     loadEntries();
   }, [period, selectedDate, selectedEmployee, isAdmin, user?.id]);
 
@@ -255,12 +281,20 @@ export default function TaskSheetPage() {
 
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
+      setSubmitted(false);
       setMessage(data.detail || "Unable to save task-sheet entry");
       return;
     }
 
-    setShowForm(false);
     setMessage("");
+    if (inlineForm) {
+      // Salespeople can't see entries, so confirm and give them a fresh form.
+      setSubmitted(true);
+      setForm(blankForm());
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    setShowForm(false);
     loadEntries();
   };
 
@@ -295,6 +329,27 @@ export default function TaskSheetPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-12">
+      {/* Non-admins only get the form: entries, KPIs and summaries are admin-only. */}
+      {inlineForm && (
+        <div className="max-w-3xl mx-auto bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-6 rounded-2xl shadow-sm">
+          <span className="px-2.5 py-1 rounded-md text-[11px] font-extrabold uppercase tracking-wider bg-violet-500/10 text-violet-600 dark:text-violet-400">
+            Daily Operations &amp; Sales Tracking
+          </span>
+          <h1 className="text-3xl font-black text-slate-900 dark:text-white mt-1">Daily Task Sheet</h1>
+          <p className="text-sm text-slate-500 dark:text-zinc-400 mt-1">
+            Fill in today&apos;s outreach numbers and work summary. Your submission goes to your admin.
+          </p>
+          {submitted && (
+            <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 flex items-center gap-2">
+              <CheckCircle size={16} /> Task sheet submitted. Thank you!
+            </p>
+          )}
+          {message && <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{message}</p>}
+        </div>
+      )}
+
+      {isAdmin && (
+      <>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-6 rounded-2xl shadow-sm">
         <div>
@@ -681,12 +736,14 @@ export default function TaskSheetPage() {
           </motion.div>
         )}
       </AnimatePresence>
+      </>
+      )}
 
-      {/* SUBMISSION / EDIT MODAL */}
+      {/* SUBMISSION / EDIT MODAL (admins) - and the whole page for everyone else */}
       <AnimatePresence>
-        {showForm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-            <form onSubmit={save} className="w-full max-w-2xl space-y-5 rounded-3xl bg-white p-6 sm:p-8 shadow-2xl dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800">
+        {(showForm || inlineForm) && (
+          <div className={inlineForm ? "w-full" : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto"}>
+            <form onSubmit={save} className={`w-full ${inlineForm ? "max-w-3xl mx-auto" : "max-w-2xl"} space-y-5 rounded-3xl bg-white p-6 sm:p-8 shadow-2xl dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800`}>
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-zinc-800 pb-4">
                 <div>
                   <h2 className="text-xl font-black text-slate-900 dark:text-white">
@@ -696,9 +753,11 @@ export default function TaskSheetPage() {
                     Record your outreach numbers, positives, scheduled meetings, and priority account notes.
                   </p>
                 </div>
-                <button type="button" onClick={() => setShowForm(false)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-400">
-                  <X size={18} />
-                </button>
+                {!inlineForm && (
+                  <button type="button" onClick={() => setShowForm(false)} className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-zinc-800 text-slate-400">
+                    <X size={18} />
+                  </button>
+                )}
               </div>
 
               {/* Date & Area */}

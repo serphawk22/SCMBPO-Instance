@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Briefcase, Users, UserPlus, PhoneCall, Calendar, ArrowRight, TrendingUp, Target, IndianRupee, Percent } from "lucide-react";
 import Link from 'next/link';
 import FollowUpsWidget from '@/components/followups/FollowUpsWidget';
+import { SalesManagerAnalytics, SalesAnalytics } from '@/components/SalesManagerAnalytics';
 
 interface Activity {
   type: string;
@@ -24,6 +25,7 @@ interface SalesManagerStats {
     deal_win_rate?: number;
   };
   recent_activity: Activity[];
+  analytics?: SalesAnalytics | null;
 }
 
 export function SalesManagerDashboard({ stats, name }: { stats: SalesManagerStats; name: string }) {
@@ -125,6 +127,8 @@ export function SalesManagerDashboard({ stats, name }: { stats: SalesManagerStat
         <div className="rounded-2xl border bg-white dark:bg-zinc-900 p-5"><p className="text-xs font-bold text-slate-400 uppercase">Lead Conversion</p><p className="text-2xl font-black dark:text-white">{stats.metrics?.conversion_percentage || 0}%</p></div>
         <div className="rounded-2xl border bg-white dark:bg-zinc-900 p-5"><p className="text-xs font-bold text-slate-400 uppercase">Deal Win Rate</p><p className="text-2xl font-black dark:text-white">{stats.metrics?.deal_win_rate || 0}%</p></div>
       </motion.div>
+
+      <SalesManagerAnalytics analytics={stats.analytics} />
 
       <FollowUpsWidget />
 
