@@ -1078,7 +1078,7 @@ def draft_inbox_reply(key: str, body: ReplyDraftBody, v: Viewer = Depends(get_vi
         rec_kind = "clients" if msg.client_id else "leads"
         rec = session.get(ClientProfile if msg.client_id else Lead, msg.client_id or msg.lead_id)
         if rec:
-            ctx = _gather_context(session, rec_kind, rec)
+            ctx = _gather_context(session, rec_kind, rec, v)
             context_text = _context_text(session, rec_kind, rec, ctx, ComposerInclude(emails=False))
     _charge_trial(session, v, "emails")
     return _ai(
@@ -1259,7 +1259,7 @@ def _record_messages(session: Session, v: Viewer, kind: str, rec, limit: int) ->
     return _serialize(session, pairs[:limit])
 
 
-def _gather_context(session: Session, kind: str, rec) -> dict:
+def _gather_context(session: Session, kind: str, rec, v: Optional["Viewer"] = None) -> dict:
     is_lead = kind == "leads"
     by_record = (lambda model, attr="lead_id": getattr(model, attr) == rec.id) if is_lead else \
                 (lambda model, attr="client_id": getattr(model, attr) == rec.id)
@@ -1331,10 +1331,13 @@ def _gather_context(session: Session, kind: str, rec) -> dict:
                   for i in session.exec(select(Invoice).where(Invoice.client_id == rec.id).order_by(Invoice.updated_at.desc()).limit(3)).all()]
     deals.sort(key=lambda d: d["date"] or "", reverse=True)
 
+    meetings_stmt = select(Meeting).where(by_record(Meeting))
+    if v is not None and not v.full_access:
+        meetings_stmt = meetings_stmt.where(or_(Meeting.host_id == v.user.id, Meeting.created_by == v.user.id))
     meetings = [{
         "key": f"meeting-{m.id}", "title": m.title, "type": m.meeting_type, "status": m.status,
         "date": _iso(m.scheduled_at or m.created_at), "outcome": _clip(m.outcome or m.notes, 300),
-    } for m in session.exec(select(Meeting).where(by_record(Meeting)).order_by(Meeting.created_at.desc()).limit(5)).all()]
+    } for m in session.exec(meetings_stmt.order_by(Meeting.created_at.desc()).limit(5)).all()]
 
     research = _research(session, kind, rec)
     research_info = None
@@ -1439,7 +1442,7 @@ def _context_text(session: Session, kind: str, rec, ctx: dict, include: Composer
 @router.get("/{kind}/{record_id}/email-composer/context")
 def composer_context(kind: RecordKind, record_id: int, v: Viewer = Depends(get_viewer), session: Session = Depends(get_session)):
     rec = _record(session, v, kind, record_id)
-    ctx = _gather_context(session, kind, rec)
+    ctx = _gather_context(session, kind, rec, v)
     emails = _record_messages(session, v, kind, rec, limit=6)
     owner_id = rec.owner_id if kind == "leads" else rec.assignedEmployeeId
     owner = session.get(User, owner_id) if owner_id else None
@@ -1481,7 +1484,7 @@ def composer_draft(kind: RecordKind, record_id: int, body: ComposerDraftBody,
             reply_to = {"from": f"{msg.from_name or ''} <{msg.from_address}>", "subject": msg.subject,
                         "body": msg.body_text or msg.body_text_full or msg.snippet}
 
-    ctx = _gather_context(session, kind, rec)
+    ctx = _gather_context(session, kind, rec, v)
     emails = _record_messages(session, v, kind, rec, limit=6) if body.include.emails else []
     context_text = _context_text(session, kind, rec, ctx, body.include, emails, body.focus_key)
     recipient = next((r for r in _recipients(session, kind, rec) if body.to and r["email"].lower() == body.to.strip().lower()), None)

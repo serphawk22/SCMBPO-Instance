@@ -482,6 +482,37 @@ def _current_user(session: Session) -> Optional[User]:
         return None
     return session.get(User, uid) if session else None
 
+
+def _is_admin_user(user: Optional[User]) -> bool:
+    """Admin / SuperAdmin, plus the legacy admin@serphawk.com superuser."""
+    if not user:
+        return False
+    return (user.role or "").strip().lower() in {"admin", "superadmin"} or (user.email or "").lower() == "admin@serphawk.com"
+
+
+def _require_admin_user(session: Session, detail: str = "Admins only") -> User:
+    """401 when not signed in, 403 when signed in but not an admin."""
+    user = _current_user(session)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not _is_admin_user(user):
+        raise HTTPException(status_code=403, detail=detail)
+    return user
+
+
+def _sees_all_meetings(user: Optional[User]) -> bool:
+    """Admins (and the Demo role, as in the Inbox) see every meeting in the tenant; everyone else is scoped."""
+    return _is_admin_user(user) or bool(user and (user.role or "").strip().lower() == "demo")
+
+
+def _meeting_visible_to(meeting, user: Optional[User]) -> bool:
+    """A meeting is visible to admins, to the person it is assigned to (host) and to whoever created it."""
+    if not user:
+        return False
+    if _sees_all_meetings(user):
+        return True
+    return user.id is not None and user.id in (meeting.host_id, meeting.created_by)
+
 from modules.api_tracker import current_client_id, current_salesperson_id, current_endpoint, patch_openai
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -790,6 +821,7 @@ def _run_startup_migrations():
             conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS blocker TEXT;'))
             conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS follow_up_date VARCHAR(20);'))
             conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS completion_date VARCHAR(20);'))
+            conn.execute(text('ALTER TABLE meetings ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id);'))
             
             # Radar & Competitor Relationship Leads Migration
             try:
@@ -7562,6 +7594,132 @@ def generate_llm_draft_task(sent_email_id, body_dict):
 # ─────────────────────────────────────────────────────────────────────────────
 # Dashboard Stats
 # ─────────────────────────────────────────────────────────────────────────────
+def _sales_manager_analytics(session: Session, user: User) -> dict:
+    """A salesperson's own progress: pipeline, lead funnel, 6-month trend, meetings, calls and the
+    task-sheet numbers they submitted. Everything is filtered to `user`; nothing team-wide is returned."""
+
+    def _naive(dt):
+        if dt is None:
+            return None
+        if getattr(dt, "tzinfo", None):
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
+    now = datetime.utcnow()
+    today = now.date()
+
+    # Last six calendar months, oldest first.
+    months = []
+    yy, mm = today.year, today.month
+    for _ in range(6):
+        months.append((yy, mm))
+        mm -= 1
+        if mm == 0:
+            yy, mm = yy - 1, 12
+    months.reverse()
+    month_idx = {ym: i for i, ym in enumerate(months)}
+    monthly = [
+        {"month": datetime(y_, m_, 1).strftime("%b %Y"), "leads_added": 0, "deals_won": 0, "revenue_won": 0.0}
+        for (y_, m_) in months
+    ]
+
+    # ── Leads ────────────────────────────────────────────────────────────────
+    status_counts: Dict[str, int] = {}
+    for lead in session.exec(select(Lead).where(Lead.owner_id == user.id)).all():
+        label = lead.status or "New"
+        status_counts[label] = status_counts.get(label, 0) + 1
+        created = _naive(lead.created_at)
+        if created and (created.year, created.month) in month_idx:
+            monthly[month_idx[(created.year, created.month)]]["leads_added"] += 1
+
+    # ── Deals / pipeline ─────────────────────────────────────────────────────
+    stage_order = ["Lead", "Discovery", "Demo", "Negotiation", "Closed Won", "Closed Lost"]
+    stages: Dict[str, dict] = {s: {"stage": s, "count": 0, "value": 0.0} for s in stage_order}
+    open_deals = 0
+    open_value = 0.0
+    for deal in session.exec(select(Deal).where(Deal.assigned_to == user.id)).all():
+        stage = deal.stage or "Lead"
+        value = float(deal.value or 0)
+        row = stages.setdefault(stage, {"stage": stage, "count": 0, "value": 0.0})
+        row["count"] += 1
+        row["value"] += value
+        if stage not in ("Closed Won", "Closed Lost"):
+            open_deals += 1
+            open_value += value
+        elif stage == "Closed Won":
+            won = _naive(deal.won_at) or _naive(deal.updated_at) or _naive(deal.created_at)
+            if won and (won.year, won.month) in month_idx:
+                bucket = monthly[month_idx[(won.year, won.month)]]
+                bucket["deals_won"] += 1
+                bucket["revenue_won"] += value
+    pipeline = [{**r, "value": round(r["value"], 2)} for r in stages.values() if r["count"] or r["stage"] in stage_order[:4]]
+    for bucket in monthly:
+        bucket["revenue_won"] = round(bucket["revenue_won"], 2)
+
+    # ── Meetings (only ones this person hosts or created) ────────────────────
+    meeting_stats = {"total": 0, "upcoming": 0, "completed": 0, "cancelled": 0, "no_show": 0, "this_month": 0}
+    for mtg in session.exec(
+        select(Meeting).where(or_(Meeting.host_id == user.id, Meeting.created_by == user.id))
+    ).all():
+        meeting_stats["total"] += 1
+        sched = _naive(mtg.scheduled_at)
+        if mtg.status == "Completed":
+            meeting_stats["completed"] += 1
+        elif mtg.status == "Cancelled":
+            meeting_stats["cancelled"] += 1
+        elif mtg.status == "No-show":
+            meeting_stats["no_show"] += 1
+        elif mtg.status == "Scheduled" and sched and sched >= now:
+            meeting_stats["upcoming"] += 1
+        if sched and (sched.year, sched.month) == (today.year, today.month):
+            meeting_stats["this_month"] += 1
+
+    # ── Calls ────────────────────────────────────────────────────────────────
+    call_times = session.exec(
+        select(CallLog.createdAt).where(or_(CallLog.assigned_to == user.name, CallLog.assigned_to == str(user.id)))
+    ).all()
+    cutoff = now - timedelta(days=30)
+    calls = {
+        "total": len(call_times),
+        "last_30_days": sum(1 for t in call_times if (_naive(t) or datetime.min) >= cutoff),
+    }
+
+    # ── Task sheet (their own submissions, last 7 days) ──────────────────────
+    days = [(today - timedelta(days=i)).isoformat() for i in range(6, -1, -1)]
+    daily = {d: {"date": d, "outreaches": 0, "positives": 0, "negatives": 0, "followups": 0, "meetings": 0} for d in days}
+    entries = session.exec(
+        select(TaskSheetEntry).where(TaskSheetEntry.user_id == user.id, TaskSheetEntry.work_date >= days[0])
+    ).all()
+    for e in entries:
+        d = daily.get(e.work_date)
+        if not d:
+            continue
+        d["outreaches"] += e.outreaches_count or 0
+        d["positives"] += e.positives_count or 0
+        d["negatives"] += e.negatives_count or 0
+        d["followups"] += e.followups_scheduled or 0
+        d["meetings"] += e.meetings_scheduled or 0
+    totals = {k: sum(d[k] for d in daily.values()) for k in ("outreaches", "positives", "negatives", "followups", "meetings")}
+    task_sheet = {
+        "submitted_today": any(e.work_date == today.isoformat() for e in entries),
+        "days_submitted_7d": len({e.work_date for e in entries}),
+        "totals_7d": totals,
+        "positive_rate_7d": round(totals["positives"] / totals["outreaches"] * 100, 1) if totals["outreaches"] else 0,
+        "daily": list(daily.values()),
+    }
+
+    return {
+        "pipeline": pipeline,
+        "open_deals": open_deals,
+        "open_pipeline_value": round(open_value, 2),
+        "leads_by_status": [{"status": k, "count": v} for k, v in sorted(status_counts.items(), key=lambda kv: -kv[1])],
+        "monthly": monthly,
+        "meetings": meeting_stats,
+        "calls": calls,
+        "task_sheet": task_sheet,
+    }
+
+
 @app.get("/dashboard-stats")
 def dashboard_stats(
     role: str = Query("Client"),
@@ -7616,7 +7774,13 @@ def dashboard_stats(
         won_deals = session.exec(select(Deal).where(Deal.assigned_to == user.id, Deal.stage == "Closed Won")).all()
         closed_deals = session.exec(select(Deal).where(Deal.assigned_to == user.id, Deal.stage.in_(["Closed Won", "Closed Lost"]))).all()
         converted_leads = session.exec(select(Lead).where(Lead.owner_id == user.id, Lead.is_converted == True)).all()
-        
+
+        try:
+            analytics = _sales_manager_analytics(session, user)
+        except Exception as exc:  # never let analytics take the whole dashboard down
+            print(f"Sales manager analytics failed for user {user.id}: {exc}")
+            analytics = None
+
         return {
             "isSalesManager": True,
             "metrics": {
@@ -7628,6 +7792,7 @@ def dashboard_stats(
                 "conversion_percentage": round((len(converted_leads) / assigned_leads_count) * 100, 2) if assigned_leads_count else 0,
                 "deal_win_rate": round((len(won_deals) / len(closed_deals)) * 100, 2) if closed_deals else 0,
             },
+            "analytics": analytics,
             "recent_activity": activities[:5]
         }
 
@@ -8667,6 +8832,8 @@ def list_task_sheet_entries(
     period: Optional[str] = None,
     session: Session = Depends(get_session),
 ):
+    # Task-sheet entries are visible to admins only. Everyone else just gets the submission form.
+    _require_admin_user(session, "Only admins can view task-sheet entries")
     q = select(TaskSheetEntry).order_by(TaskSheetEntry.work_date.desc(), TaskSheetEntry.updated_at.desc())
     if user_id:
         q = q.where(TaskSheetEntry.user_id == user_id)
@@ -8691,7 +8858,14 @@ def list_task_sheet_entries(
 
 @app.post("/task-sheet")
 def create_task_sheet_entry(body: TaskSheetEntryRequest, session: Session = Depends(get_session)):
-    entry = TaskSheetEntry(**body.model_dump(), tenant_id=current_tenant_id.get())
+    me = _current_user(session)
+    if not me:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    data = body.model_dump()
+    # Non-admins can only ever submit their own sheet; the user_id sent by the client is ignored.
+    if not _is_admin_user(me):
+        data["user_id"] = me.id
+    entry = TaskSheetEntry(**data, tenant_id=current_tenant_id.get())
     session.add(entry)
     session.commit()
     session.refresh(entry)
@@ -8700,6 +8874,7 @@ def create_task_sheet_entry(body: TaskSheetEntryRequest, session: Session = Depe
 
 @app.put("/task-sheet/{entry_id}")
 def update_task_sheet_entry(entry_id: int, body: TaskSheetEntryRequest, session: Session = Depends(get_session)):
+    _require_admin_user(session, "Only admins can edit task-sheet entries")
     entry = session.get(TaskSheetEntry, entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Task-sheet entry not found")
@@ -8717,6 +8892,7 @@ def generate_task_sheet_ai_summary(
     body: Dict[str, Any] = Body(...),
     session: Session = Depends(get_session)
 ):
+    _require_admin_user(session, "Only admins can view task-sheet summaries")
     period = body.get("period", "today")
     user_id = body.get("user_id")
 
@@ -13974,6 +14150,7 @@ def _meeting_time_label(m: Meeting, fmt: str = "%Y-%m-%d %H:%M") -> str:
 
 def _meeting_dict(m: Meeting, session: Session) -> dict:
     host = session.get(User, m.host_id) if m.host_id else None
+    creator = session.get(User, m.created_by) if m.created_by else None
     lead = session.get(Lead, m.lead_id) if m.lead_id else None
     client = session.get(ClientProfile, m.client_id) if m.client_id else None
     contact = session.get(Contact, m.contact_id) if m.contact_id else None
@@ -13994,6 +14171,7 @@ def _meeting_dict(m: Meeting, session: Session) -> dict:
         "meeting_link": m.meeting_link,
         "duration_minutes": m.duration_minutes,
         "host_id": m.host_id, "host_name": host.name if host else None,
+        "created_by": m.created_by, "created_by_name": creator.name if creator else None,
         "lead_id": m.lead_id, "lead_name": lead.company_name if lead else None,
         "client_id": m.client_id, "client_name": client.companyName if client else None,
         "contact_id": m.contact_id,
@@ -14004,6 +14182,20 @@ def _meeting_dict(m: Meeting, session: Session) -> dict:
         "updated_at": m.updated_at.isoformat(),
     }
 
+def _get_visible_meeting(session: Session, meeting_id: int) -> Meeting:
+    """Load a meeting the caller is allowed to touch: admins any, everyone else only meetings they host
+    (are assigned to) or created."""
+    me = _current_user(session)
+    if not me:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    m = session.get(Meeting, meeting_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    if not _meeting_visible_to(m, me):
+        raise HTTPException(status_code=403, detail="You can only access meetings you are assigned to or created")
+    return m
+
+
 @app.get("/meetings")
 def list_meetings(
     status: Optional[str] = None,
@@ -14011,11 +14203,17 @@ def list_meetings(
     client_id: Optional[int] = None,
     session: Session = Depends(get_session)
 ):
+    me = _current_user(session)
+    if not me:
+        raise HTTPException(status_code=401, detail="Unauthorized")
     q = select(Meeting).order_by(Meeting.scheduled_at.desc())
     tenant_id = current_tenant_id.get()
     if tenant_id:
         q = q.where(Meeting.tenant_id == tenant_id)
-        
+    # Salespeople see only the meetings assigned to them or created by them - never the whole tenant.
+    if not _sees_all_meetings(me):
+        q = q.where(or_(Meeting.host_id == me.id, Meeting.created_by == me.id))
+
     if status:
         q = q.where(Meeting.status == status)
     if lead_id:
@@ -14043,6 +14241,7 @@ def create_meeting(body: MeetingCreateRequest, session: Session = Depends(get_se
         data["host_id"] = current_salesperson_id.get()
     m = Meeting(**data)
     m.tenant_id = current_tenant_id.get()
+    m.created_by = current_salesperson_id.get()
     session.add(m)
     session.commit()
     session.refresh(m)
@@ -14199,18 +14398,14 @@ def create_meeting(body: MeetingCreateRequest, session: Session = Depends(get_se
 
 @app.get("/meetings/{meeting_id}")
 def get_meeting(meeting_id: int, session: Session = Depends(get_session)):
-    m = session.get(Meeting, meeting_id)
-    if not m:
-        raise HTTPException(status_code=404, detail="Meeting not found")
+    m = _get_visible_meeting(session, meeting_id)
     return {"meeting": _meeting_dict(m, session)}
 
 @app.put("/meetings/{meeting_id}")
 @app.patch("/meetings/{meeting_id}")
 @app.patch("/meetings/{meeting_id}/status")
 def update_meeting(meeting_id: int, body: MeetingUpdateRequest, session: Session = Depends(get_session)):
-    m = session.get(Meeting, meeting_id)
-    if not m:
-        raise HTTPException(status_code=404, detail="Meeting not found")
+    m = _get_visible_meeting(session, meeting_id)
     updates = body.model_dump(exclude_unset=True)
     if updates.get("timezone"):
         try:
@@ -14239,9 +14434,7 @@ def update_meeting(meeting_id: int, body: MeetingUpdateRequest, session: Session
 
 @app.delete("/meetings/{meeting_id}")
 def delete_meeting(meeting_id: int, session: Session = Depends(get_session)):
-    m = session.get(Meeting, meeting_id)
-    if not m:
-        raise HTTPException(status_code=404, detail="Meeting not found")
+    m = _get_visible_meeting(session, meeting_id)
     session.delete(m)
     session.commit()
     return {"ok": True}
@@ -14256,6 +14449,7 @@ async def import_meetings(file: UploadFile = File(...), session: Session = Depen
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
     imported = 0
+    importer_id = current_salesperson_id.get()
     for _, row in df.iterrows():
         try:
             m = Meeting(
@@ -14264,6 +14458,9 @@ async def import_meetings(file: UploadFile = File(...), session: Session = Depen
                 notes=str(row.get("notes") or row.get("Notes") or "") or None,
                 status=str(row.get("status") or row.get("Status") or "Scheduled"),
                 meeting_type=str(row.get("meeting_type") or row.get("Type") or "Meeting"),
+                # Imported rows belong to whoever imported them, otherwise nobody but an admin could see them.
+                host_id=importer_id,
+                created_by=importer_id,
             )
             session.add(m)
             imported += 1
