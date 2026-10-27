@@ -119,6 +119,7 @@ const defaultSidebarSections = [
     id: "section-support",
     heading: "SUPPORT",
     items: [
+      { id: "item-support-sh", name: "Support@SH", icon: "HeadphonesIcon", href: "https://projecthub.serphawk.in/client/login", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-cases", name: "Cases", icon: "HeadphonesIcon", href: "/support/cases", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-solutions", name: "Solutions", icon: "BookOpen", href: "/support/solutions", roles: ["Admin", "SalesManager", "Demo"] },
     ],
@@ -140,6 +141,7 @@ const ITEM_KEY_OVERRIDES: Record<string, string> = {
   "item-teams": "team_directory",
   "item-products": "catalog",
   "item-import": "import_data",
+  "item-support-sh": "support_sh",
 };
 function sidebarItemKey(id: string): string {
   return ITEM_KEY_OVERRIDES[id] || String(id).replace("item-", "").replace(/-/g, "_");
@@ -250,6 +252,8 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
                   <Link
                     key={item.href}
                     href={item.href}
+                    target={item.href?.startsWith("http") ? "_blank" : undefined}
+                    rel={item.href?.startsWith("http") ? "noopener noreferrer" : undefined}
                     className={cn(
                       "relative group flex items-center gap-2 rounded-[8px] transition-all duration-150 select-none shrink-0",
                       collapsed ? "w-9 h-9 justify-center mx-auto" : "py-[4px] px-2 h-[42px] lg:h-[28px]",
@@ -735,6 +739,8 @@ export function Sidebar({ role }: SidebarProps) {
                     <Link
                       key={`fav-${item.id}-${item.href}`}
                       href={item.href}
+                      target={item.href?.startsWith("http") ? "_blank" : undefined}
+                      rel={item.href?.startsWith("http") ? "noopener noreferrer" : undefined}
                       className={cn(
                         "relative group flex items-center gap-2 rounded-[8px] transition-all duration-150 select-none shrink-0",
                         collapsed ? "w-9 h-9 justify-center mx-auto" : "py-[4px] px-2 h-[42px] lg:h-[28px]",
