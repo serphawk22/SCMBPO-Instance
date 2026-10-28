@@ -1646,7 +1646,7 @@ class Case(SQLModel, table=True):
     status: str = Field(default="Open", max_length=50)  # Open, In Progress, Resolved, Closed
     priority: str = Field(default="Medium", max_length=50)  # Low, Medium, High, Urgent
     category: Optional[str] = Field(default=None, max_length=200)
-    case_type: Optional[str] = Field(default="Bug", max_length=100)  # Bug, Feature Request
+    case_type: Optional[str] = Field(default="Issue", max_length=100)  # Issue
     url: Optional[str] = Field(default=None, max_length=1000)  # Related URL
     lead_id: Optional[int] = Field(default=None, foreign_key="leads.id")
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
