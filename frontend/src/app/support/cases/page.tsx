@@ -10,6 +10,19 @@ interface Case { id: number; case_number?: string; subject: string; description?
 const STATUSES = ["Open", "In Progress", "Resolved", "Closed"];
 const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
 const CASE_TYPES = ["Issue"];
+const RELATED_ISSUE_OPTIONS = [
+  "Issues with Leads",
+  "Issues with Clients",
+  "Issues with Reports",
+  "Issues with Dropped Clients",
+  "Issues with Deals / Pipeline",
+  "Issues with Task Sheet",
+  "Issues with Meetings",
+  "Issues with Calls",
+  "Issues with Invoices & Billing",
+  "Issues with Team Directory",
+  "Other",
+];
 const STATUS_COLORS: Record<string, string> = { Open: "bg-blue-500/10 text-blue-600", "In Progress": "bg-amber-500/10 text-amber-600", Resolved: "bg-emerald-500/10 text-emerald-600", Closed: "bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400" };
 const PRIORITY_COLORS: Record<string, string> = { Low: "text-slate-500", Medium: "text-amber-600", High: "text-orange-600", Urgent: "text-red-600" };
 const PRIORITY_DOT: Record<string, string> = { Low: "bg-slate-400", Medium: "bg-amber-500", High: "bg-orange-500", Urgent: "bg-red-500" };
@@ -27,6 +40,8 @@ export default function CasesPage() {
   const [editCase, setEditCase] = useState<Case | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ subject: "", description: "", status: "Open", priority: "Medium", category: "", case_type: "Issue", url: "", assigned_to: "" as number | string });
+  const [areaOption, setAreaOption] = useState("");
+  const [customUrl, setCustomUrl] = useState("");
   const [users, setUsers] = useState<any[]>([]);
 
   const load = () => {
@@ -45,8 +60,53 @@ export default function CasesPage() {
       && (priorityFilter === "All" || c.priority === priorityFilter);
   }), [cases, search, statusFilter, priorityFilter]);
 
-  const openCreate = () => { setEditCase(null); setForm({ subject: "", description: "", status: "Open", priority: "Medium", category: "", case_type: "Issue", url: "", assigned_to: "" }); setShowModal(true); };
-  const openEdit = (c: Case) => { setEditCase(c); setForm({ subject: c.subject, description: c.description || "", status: c.status, priority: c.priority, category: c.category || "", case_type: (c.case_type === "Bug" ? "Issue" : c.case_type) || "Issue", url: c.url || "", assigned_to: c.assigned_to || "" } as any); setShowModal(true); };
+  const openCreate = () => {
+    setEditCase(null);
+    setAreaOption("");
+    setCustomUrl("");
+    setForm({ subject: "", description: "", status: "Open", priority: "Medium", category: "", case_type: "Issue", url: "", assigned_to: "" });
+    setShowModal(true);
+  };
+
+  const openEdit = (c: Case) => {
+    setEditCase(c);
+    const isPreset = RELATED_ISSUE_OPTIONS.filter(o => o !== "Other").includes(c.url || "");
+    if (isPreset) {
+      setAreaOption(c.url || "");
+      setCustomUrl("");
+    } else if (c.url) {
+      setAreaOption("Other");
+      setCustomUrl(c.url);
+    } else {
+      setAreaOption("");
+      setCustomUrl("");
+    }
+    setForm({
+      subject: c.subject,
+      description: c.description || "",
+      status: c.status,
+      priority: c.priority,
+      category: c.category || "",
+      case_type: (c.case_type === "Bug" ? "Issue" : c.case_type) || "Issue",
+      url: c.url || "",
+      assigned_to: c.assigned_to || ""
+    } as any);
+    setShowModal(true);
+  };
+
+  const handleAreaChange = (val: string) => {
+    setAreaOption(val);
+    if (val === "Other") {
+      setForm(f => ({ ...f, url: customUrl }));
+    } else {
+      setForm(f => ({ ...f, url: val }));
+    }
+  };
+
+  const handleCustomUrlChange = (val: string) => {
+    setCustomUrl(val);
+    setForm(f => ({ ...f, url: val }));
+  };
 
   const handleSave = async () => {
     if (!form.subject.trim()) return;
@@ -143,7 +203,21 @@ export default function CasesPage() {
                 <p className="text-sm font-bold text-slate-800 dark:text-zinc-100 mb-1">{c.subject}</p>
                 {c.description && <p className="text-xs text-slate-500 line-clamp-2">{c.description}</p>}
                 <div className="flex items-center gap-4 mt-2 text-xs text-slate-400 flex-wrap">
-                  {c.url && <a href={c.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-500 hover:underline"><Globe className="w-3 h-3" />{c.url}</a>}
+                  {c.url && (
+                    c.url.startsWith("http://") || c.url.startsWith("https://") ? (
+                      <a href={c.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-500 hover:underline">
+                        <Globe className="w-3 h-3" />{c.url}
+                      </a>
+                    ) : c.url.startsWith("/") ? (
+                      <a href={c.url} className="flex items-center gap-1 text-blue-500 hover:underline">
+                        <Globe className="w-3 h-3" />{c.url}
+                      </a>
+                    ) : (
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300 font-medium">
+                        <Globe className="w-3 h-3 text-slate-400" />{c.url}
+                      </span>
+                    )
+                  )}
                   {c.client_name && <span>{t("support_cases.label_client")} {c.client_name}</span>}
                   {c.assignee_name && <span>{t("support_cases.label_assigned")} {c.assignee_name}</span>}
                   {!c.assignee_name && <span className="text-amber-600 font-bold">Unassigned</span>}
@@ -186,12 +260,28 @@ export default function CasesPage() {
                   </div>
                 </div>
 
-                {/* URL */}
+                {/* Related Area / URL */}
                 <div>
-                  <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1 block flex items-center gap-1.5"><Globe className="w-3.5 h-3.5" /> Related URL</label>
-                  <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                    placeholder="https://example.com/page-with-issue"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-500" />
+                  <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1 block flex items-center gap-1.5"><Globe className="w-3.5 h-3.5" /> Related Area / URL</label>
+                  <select
+                    value={areaOption}
+                    onChange={e => handleAreaChange(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  >
+                    <option value="">Select related area...</option>
+                    {RELATED_ISSUE_OPTIONS.map(opt => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+
+                  {areaOption === "Other" && (
+                    <input
+                      value={customUrl}
+                      onChange={e => handleCustomUrlChange(e.target.value)}
+                      placeholder="Enter URL or specify other issue area (e.g. https://...)"
+                      className="w-full mt-2 px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                    />
+                  )}
                 </div>
 
                 {/* Subject */}
