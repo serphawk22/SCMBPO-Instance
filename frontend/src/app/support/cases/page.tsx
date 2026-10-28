@@ -9,11 +9,11 @@ import { useRole } from "@/context/RoleContext";
 interface Case { id: number; case_number?: string; subject: string; description?: string; status: string; priority: string; category?: string; case_type?: string; url?: string; client_name?: string; lead_name?: string; assignee_name?: string; assigned_to?: number | null; created_at: string; resolved_at?: string; }
 const STATUSES = ["Open", "In Progress", "Resolved", "Closed"];
 const PRIORITIES = ["Low", "Medium", "High", "Urgent"];
-const CASE_TYPES = ["Bug", "Feature Request"];
+const CASE_TYPES = ["Issue"];
 const STATUS_COLORS: Record<string, string> = { Open: "bg-blue-500/10 text-blue-600", "In Progress": "bg-amber-500/10 text-amber-600", Resolved: "bg-emerald-500/10 text-emerald-600", Closed: "bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400" };
 const PRIORITY_COLORS: Record<string, string> = { Low: "text-slate-500", Medium: "text-amber-600", High: "text-orange-600", Urgent: "text-red-600" };
 const PRIORITY_DOT: Record<string, string> = { Low: "bg-slate-400", Medium: "bg-amber-500", High: "bg-orange-500", Urgent: "bg-red-500" };
-const TYPE_COLORS: Record<string, string> = { Bug: "bg-red-500/10 text-red-600", "Feature Request": "bg-violet-500/10 text-violet-600" };
+const TYPE_COLORS: Record<string, string> = { Issue: "bg-red-500/10 text-red-600", Bug: "bg-red-500/10 text-red-600" };
 
 export default function CasesPage() {
   const { t } = useLanguage();
@@ -26,7 +26,7 @@ export default function CasesPage() {
   const [showModal, setShowModal] = useState(false);
   const [editCase, setEditCase] = useState<Case | null>(null);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ subject: "", description: "", status: "Open", priority: "Medium", category: "", case_type: "Bug", url: "", assigned_to: "" as number | string });
+  const [form, setForm] = useState({ subject: "", description: "", status: "Open", priority: "Medium", category: "", case_type: "Issue", url: "", assigned_to: "" as number | string });
   const [users, setUsers] = useState<any[]>([]);
 
   const load = () => {
@@ -45,8 +45,8 @@ export default function CasesPage() {
       && (priorityFilter === "All" || c.priority === priorityFilter);
   }), [cases, search, statusFilter, priorityFilter]);
 
-  const openCreate = () => { setEditCase(null); setForm({ subject: "", description: "", status: "Open", priority: "Medium", category: "", case_type: "Bug", url: "", assigned_to: "" }); setShowModal(true); };
-  const openEdit = (c: Case) => { setEditCase(c); setForm({ subject: c.subject, description: c.description || "", status: c.status, priority: c.priority, category: c.category || "", case_type: c.case_type || "Bug", url: c.url || "", assigned_to: c.assigned_to || "" } as any); setShowModal(true); };
+  const openCreate = () => { setEditCase(null); setForm({ subject: "", description: "", status: "Open", priority: "Medium", category: "", case_type: "Issue", url: "", assigned_to: "" }); setShowModal(true); };
+  const openEdit = (c: Case) => { setEditCase(c); setForm({ subject: c.subject, description: c.description || "", status: c.status, priority: c.priority, category: c.category || "", case_type: (c.case_type === "Bug" ? "Issue" : c.case_type) || "Issue", url: c.url || "", assigned_to: c.assigned_to || "" } as any); setShowModal(true); };
 
   const handleSave = async () => {
     if (!form.subject.trim()) return;
@@ -60,7 +60,7 @@ export default function CasesPage() {
 
   const openCount = cases.filter(c => c.status === "Open").length;
   const resolvedCount = cases.filter(c => c.status === "Resolved" || c.status === "Closed").length;
-  const bugCount = cases.filter(c => c.case_type === "Bug").length;
+  const issueCount = cases.filter(c => (c.case_type === "Issue" || c.case_type === "Bug" || !c.case_type) && c.status === "Open").length;
 
   const FILTER_LABELS: Record<string, string> = {
     All: t("support_cases.title"),
@@ -97,7 +97,7 @@ export default function CasesPage() {
           { label: "Total Cases", value: cases.length, icon: HeadphonesIcon, c: "text-rose-500", bg: "bg-rose-500/10" },
           { label: "Open", value: openCount, icon: AlertCircle, c: "text-blue-500", bg: "bg-blue-500/10" },
           { label: "Resolved", value: resolvedCount, icon: CheckCircle2, c: "text-emerald-500", bg: "bg-emerald-500/10" },
-          { label: "Bugs Open", value: bugCount, icon: Bug, c: "text-red-500", bg: "bg-red-500/10" },
+          { label: "Issues Open", value: issueCount, icon: AlertCircle, c: "text-red-500", bg: "bg-red-500/10" },
         ].map(s => (
           <div key={s.label} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl p-4 shadow-sm">
             <div className={`w-8 h-8 rounded-xl ${s.bg} flex items-center justify-center mb-2`}><s.icon className={`w-4 h-4 ${s.c}`} /></div>
@@ -134,9 +134,9 @@ export default function CasesPage() {
                     <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_DOT[c.priority]}`} />{c.priority}
                   </span>
                   {c.case_type && (
-                    <span className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded-lg ${TYPE_COLORS[c.case_type] || "bg-slate-100 text-slate-500"}`}>
-                      {c.case_type === "Bug" ? <Bug className="w-2.5 h-2.5" /> : <Lightbulb className="w-2.5 h-2.5" />}
-                      {c.case_type}
+                    <span className={`flex items-center gap-1 text-[10px] font-black uppercase px-2 py-0.5 rounded-lg ${TYPE_COLORS[c.case_type] || "bg-red-500/10 text-red-600"}`}>
+                      <AlertCircle className="w-2.5 h-2.5" />
+                      {c.case_type === "Bug" ? "Issue" : c.case_type}
                     </span>
                   )}
                 </div>
@@ -172,14 +172,14 @@ export default function CasesPage() {
                 {/* Case Type */}
                 <div>
                   <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">Case Type *</label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="flex gap-3">
                     {CASE_TYPES.map(type => (
                       <button key={type} type="button"
                         onClick={() => setForm(f => ({ ...f, case_type: type }))}
                         className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border-2 font-bold text-sm transition-all ${form.case_type === type
-                          ? type === "Bug" ? "border-red-500 bg-red-50 dark:bg-red-500/10 text-red-600" : "border-violet-500 bg-violet-50 dark:bg-violet-500/10 text-violet-600"
+                          ? "border-red-500 bg-red-50 dark:bg-red-500/10 text-red-600"
                           : "border-slate-200 dark:border-zinc-700 text-slate-500 hover:border-slate-300"}`}>
-                        {type === "Bug" ? <Bug className="w-4 h-4" /> : <Lightbulb className="w-4 h-4" />}
+                        <AlertCircle className="w-4 h-4" />
                         {type}
                       </button>
                     ))}
@@ -206,7 +206,7 @@ export default function CasesPage() {
                 <div>
                   <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1 block">Describe the Problem *</label>
                   <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={4}
-                    placeholder={form.case_type === "Bug" ? "Steps to reproduce, expected vs actual behavior..." : "Describe the feature you'd like to see and why it matters..."}
+                    placeholder="Steps to reproduce, expected vs actual behavior..."
                     className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 text-sm text-slate-800 dark:text-zinc-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-rose-500 resize-none" />
                 </div>
 

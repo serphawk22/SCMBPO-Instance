@@ -16107,7 +16107,7 @@ class CaseCreateRequest(BaseModel):
     status: str = "Open"
     priority: str = "Medium"
     category: Optional[str] = None
-    case_type: Optional[str] = "Bug"
+    case_type: Optional[str] = "Issue"
     url: Optional[str] = None
     lead_id: Optional[int] = None
     client_id: Optional[int] = None
@@ -16248,7 +16248,7 @@ def create_case(body: CaseCreateRequest, session: Session = Depends(get_session)
         _notify_admins(
             session, tenant_id,
             title=f"🎫 New Case Raised: {c.case_number}",
-            message=f"{c.subject} — Priority: {c.priority} | Type: {c.case_type or 'Bug'}",
+            message=f"{c.subject} — Priority: {c.priority} | Type: {c.case_type or 'Issue'}",
             notif_type="warning",
             link=f"/support/cases"
         )
