@@ -507,16 +507,24 @@ def sync_mailbox(cfg: MailboxConfig, engine=None, days_back: int = 3, max_new: i
 
 
 # ── Keeping older data visible ───────────────────────────────────────────────
+_max_imported_reply_id = 0
+
 def import_legacy_replies(engine=None, limit: int = 500) -> int:
     """Copy EmailReply rows (recorded by the reply checker, including ones from
     before this sync existed) into inbox_messages, so historical replies show
     up in the Inbox too. Idempotent; the unique (mailbox, message_id) key
     dedupes against the same message arriving through the IMAP sync."""
+    global _max_imported_reply_id
     engine = engine or default_engine
     mailbox = env_mailbox_address() or "crm-mailbox"
     created = 0
     with Session(engine) as session:
         session._is_auditing = True
+        if _max_imported_reply_id > 0:
+            latest_id = session.exec(select(func.max(EmailReply.id)).execution_options(skip_tenant=True)).one() or 0
+            if latest_id <= _max_imported_reply_id:
+                return 0
+
         pairs = session.exec(
             select(EmailReply, SentEmail)
             .join(SentEmail, SentEmail.id == EmailReply.sent_email_id)
@@ -524,6 +532,8 @@ def import_legacy_replies(engine=None, limit: int = 500) -> int:
             .limit(limit)
             .execution_options(skip_tenant=True)
         ).all()
+        if pairs:
+            _max_imported_reply_id = max(reply.id for reply, _ in pairs if reply.id) or _max_imported_reply_id
         if not pairs:
             return 0
         keys = {reply.id: (reply.message_id or f"email-reply-{reply.id}")[:998] for reply, _ in pairs}
