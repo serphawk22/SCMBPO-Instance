@@ -554,9 +554,11 @@ def scan_notes(engine=None, *, lead_id: Optional[int] = None, client_id: Optiona
 # ── Scheduler thread ─────────────────────────────────────────────────────────
 _thread_started = False
 _thread_lock = threading.Lock()
+_last_scan_time = 0.0
 
 
 def run_cycle(engine=None) -> dict:
+    global _last_scan_time
     out = {}
     for name, step in (("reminders", process_due_reminders), ("auto_sent", process_auto_sends)):
         try:
@@ -564,10 +566,14 @@ def run_cycle(engine=None) -> dict:
         except Exception as e:
             print(f"[Follow-ups] {name} step failed: {e}")
     if os.getenv("FOLLOWUP_AI_SCAN", "1") != "0":
-        try:
-            out["scan"] = scan_notes(engine)
-        except Exception as e:
-            print(f"[Follow-ups] AI scan step failed: {e}")
+        scan_interval = int(os.getenv("FOLLOWUP_AI_SCAN_INTERVAL_SECONDS", "300"))
+        now_ts = time.time()
+        if now_ts - _last_scan_time >= scan_interval:
+            try:
+                out["scan"] = scan_notes(engine)
+                _last_scan_time = now_ts
+            except Exception as e:
+                print(f"[Follow-ups] AI scan step failed: {e}")
     try:
         from modules.email_campaign_worker import resume_campaigns
         out["campaigns_resumed"] = resume_campaigns(engine)

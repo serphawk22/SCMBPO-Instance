@@ -356,7 +356,8 @@ def lead_source_analytics(
         d = dt.strftime("%Y-%m-%d")
         return (not start or d >= start) and (not end or d <= end)
 
-    leads = [l for l in session.exec(select(Lead)).all() if in_range(l.created_at)]
+    all_leads = session.exec(select(Lead)).all()
+    leads = [l for l in all_leads if in_range(l.created_at)]
     clients = session.exec(select(ClientProfile)).all()
     client_by_id = {c.id: c for c in clients}
     deals = session.exec(select(Deal)).all()
@@ -381,9 +382,9 @@ def lead_source_analytics(
         if s.is_active:
             bucket(s)
 
-    # client -> source (direct, or via the lead it was converted from)
+    # client -> source (direct, or via the lead it was converted from) - reused all_leads
     client_source: Dict[int, Optional[LeadSource]] = {}
-    for l in session.exec(select(Lead)).all():
+    for l in all_leads:
         if l.converted_client_id:
             client_source[l.converted_client_id] = match(l.lead_source_id, l.source)
     for c in clients:
@@ -561,11 +562,10 @@ def revenue_summary(months: int = Query(12, ge=1, le=36), session: Session = Dep
     month_keys = _month_range(months)
     monthly = {k: {"month": k, "won_revenue": 0.0, "won_deals": 0, "invoiced_paid": 0.0, "costs": 0.0, "salary_costs": 0.0} for k in month_keys}
 
-    deals = session.exec(select(Deal)).all()
     users = {u.id: u for u in session.exec(select(User)).all()}
     clients = {c.id: c for c in session.exec(select(ClientProfile)).all()}
 
-    won = [d for d in deals if d.stage == "Closed Won"]
+    won = session.exec(select(Deal).where(Deal.stage == "Closed Won")).all()
     by_sp: Dict[Any, Dict[str, Any]] = {}
     for d in won:
         mk = _deal_won_month(d)
@@ -578,8 +578,8 @@ def revenue_summary(months: int = Query(12, ge=1, le=36), session: Session = Dep
             sp["won_deals"] += 1
             sp["won_revenue"] += amt
 
-    for inv in session.exec(select(Invoice)).all():
-        if (inv.status or "").lower() == "paid":
+    for inv in session.exec(select(Invoice).where(or_(Invoice.status == "Paid", Invoice.status == "paid"))).all():
+        if True:
             mk = _month_key(inv.paid_at or inv.updated_at)
             if mk in monthly:
                 monthly[mk]["invoiced_paid"] += float(inv.total or 0)

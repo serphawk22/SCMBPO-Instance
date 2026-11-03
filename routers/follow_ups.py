@@ -895,14 +895,26 @@ def process_due_reminders() -> int:
     sent = 0
     now = datetime.now(_tz.utc)
     with Session(engine) as session:
+        # Only query pending follow-ups that still need an overdue or upcoming reminder
         open_rows = session.exec(
-            select(FollowUp).where(FollowUp.status == "Pending", FollowUp.due_at.is_not(None))
+            select(FollowUp).where(
+                FollowUp.status == "Pending",
+                FollowUp.due_at.is_not(None),
+                or_(FollowUp.overdue_notified_at.is_(None), FollowUp.reminder_sent_at.is_(None)),
+            )
         ).all()
         for f in open_rows:
             try:
                 due_at = _to_aware_utc(f.due_at)
                 if not due_at:
                     continue
+                lead_time = timedelta(minutes=f.reminder_minutes or 0)
+                is_overdue = bool(due_at < now and not f.overdue_notified_at)
+                is_reminder = bool(f.reminder_minutes and not f.reminder_sent_at and due_at - lead_time <= now < due_at)
+                # Defer expensive foreign queries until after checking if action is needed
+                if not (is_overdue or is_reminder):
+                    continue
+
                 owner = session.get(User, f.owner_id) if f.owner_id else None
                 entity = ""
                 if f.client_id:
@@ -916,7 +928,7 @@ def process_due_reminders() -> int:
                         ("Priority", f.priority), ("Notes", (f.notes or "")[:300])]
 
                 # 1) overdue notice
-                if due_at < now and not f.overdue_notified_at:
+                if is_overdue:
                     if _claim(session, f.id, "overdue_notified_at", now):
                         _notify(session, f.owner_id, f.tenant_id, f"⚠️ Overdue follow-up: {f.title}",
                                 f"Was due {label}" + (f" · {entity}" if entity else ""), "warning")
@@ -928,8 +940,7 @@ def process_due_reminders() -> int:
                     continue
 
                 # 2) upcoming reminder
-                lead_time = timedelta(minutes=f.reminder_minutes or 0)
-                if f.reminder_minutes and not f.reminder_sent_at and due_at - lead_time <= now < due_at:
+                if is_reminder:
                     if _claim(session, f.id, "reminder_sent_at", now):
                         mins = max(1, int((due_at - now).total_seconds() // 60))
                         when = f"in {mins} min" if mins < 120 else f"in {mins // 60} h"

@@ -770,6 +770,35 @@ def _email_stack_startup():
         except Exception as e:
             print(f"Migration sent_emails tracking: {e}")
 
+    # Performance indexes to eliminate sequential scans in background pollers and dashboard queries
+    perf_index_migrations = [
+        "CREATE INDEX IF NOT EXISTS ix_notifications_user_created ON notifications (user_id, created_at DESC);",
+        "CREATE INDEX IF NOT EXISTS ix_notifications_user_unread ON notifications (user_id, is_read);",
+        "CREATE INDEX IF NOT EXISTS ix_call_logs_tenant_received ON call_logs (tenant_id, received_at DESC);",
+        "CREATE INDEX IF NOT EXISTS ix_call_logs_client_id ON call_logs (client_id);",
+        "CREATE INDEX IF NOT EXISTS ix_activity_logs_client_created ON activity_logs (clientId, createdAt DESC);",
+        "CREATE INDEX IF NOT EXISTS ix_activity_logs_lead_created ON activity_logs (lead_id, createdAt DESC);",
+        "CREATE INDEX IF NOT EXISTS ix_sent_emails_client_id ON sent_emails (client_id);",
+        "CREATE INDEX IF NOT EXISTS ix_sent_emails_lead_id ON sent_emails (lead_id);",
+        "CREATE INDEX IF NOT EXISTS ix_sent_emails_to_email ON sent_emails (to_email);",
+        "CREATE INDEX IF NOT EXISTS ix_sent_emails_sent_at ON sent_emails (sent_at DESC);",
+        "CREATE INDEX IF NOT EXISTS ix_project_tickets_project_id ON project_tickets (project_id);",
+        "CREATE INDEX IF NOT EXISTS ix_invoices_client_id ON invoices (client_id);",
+        "CREATE INDEX IF NOT EXISTS ix_invoices_status ON invoices (status);",
+        "CREATE INDEX IF NOT EXISTS ix_follow_ups_status_due ON follow_ups (status, due_at);",
+        "CREATE INDEX IF NOT EXISTS ix_follow_ups_reminders ON follow_ups (status, reminder_sent_at, due_at);",
+        "CREATE INDEX IF NOT EXISTS ix_inbox_messages_unread_badge ON inbox_messages (tenant_id, is_archived, is_read);",
+        "CREATE INDEX IF NOT EXISTS ix_email_campaign_recipients_status_claimed ON email_campaign_recipients (status, claimed_at);",
+        "CREATE INDEX IF NOT EXISTS ix_email_campaigns_status ON email_campaigns (status);",
+    ]
+    for sql in perf_index_migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+        except Exception:
+            pass
+
     # Say which database this process is bound to (never the credentials), so two environments that
     # accidentally share one database are easy to spot in the logs.
     try:
@@ -1023,25 +1052,32 @@ def on_startup():
     except Exception as e:
         print("Admin user init error:", e)
 
-    # Keep the Neon serverless DB awake + pool warm. Without this, the first
-    # requests after ~5min of idle trigger a slow cold-start (~5-7s each).
+    # Keep the Neon serverless DB awake + pool warm.
+    # To allow serverless auto-suspend and minimize compute usage, this is opt-in via ENABLE_DB_KEEPALIVE=1
+    # and disabled if BACKGROUND_JOBS=0.
     try:
-        import threading as _threading
-        from database import engine as _keepalive_engine
+        from modules.background import jobs_enabled
+        _keepalive_enabled = jobs_enabled() and os.getenv("ENABLE_DB_KEEPALIVE", "0").strip().lower() in ("1", "true", "yes", "on")
+        if _keepalive_enabled:
+            import threading as _threading
+            from database import engine as _keepalive_engine
 
-        def _db_keepalive_loop():
-            import time as _time
-            from sqlalchemy import text as _text
-            while True:
-                _time.sleep(60)
-                try:
-                    with _keepalive_engine.connect() as _conn:
-                        _conn.execute(_text("SELECT 1"))
-                except Exception as _e:
-                    print("Keepalive ping failed:", _e)
+            def _db_keepalive_loop(interval: int):
+                import time as _time
+                from sqlalchemy import text as _text
+                while True:
+                    _time.sleep(interval)
+                    try:
+                        with _keepalive_engine.connect() as _conn:
+                            _conn.execute(_text("SELECT 1"))
+                    except Exception as _e:
+                        print("Keepalive ping failed:", _e)
 
-        _threading.Thread(target=_db_keepalive_loop, daemon=True, name="db-keepalive").start()
-        print("DB keepalive started (pings every 60s).")
+            _ka_interval = int(os.getenv("DB_KEEPALIVE_INTERVAL_SECONDS", "240"))
+            _threading.Thread(target=_db_keepalive_loop, args=(_ka_interval,), daemon=True, name="db-keepalive").start()
+            print(f"DB keepalive started (pings every {_ka_interval}s).")
+        else:
+            print("[startup] DB keepalive disabled (ENABLE_DB_KEEPALIVE=0 or BACKGROUND_JOBS=0) to allow scale-to-zero compute savings.")
     except Exception as e:
         print("Could not start DB keepalive:", e)
 
@@ -6985,19 +7021,22 @@ def _get_sender_name_from_map(sender_id: int, users_map: dict) -> str:
 # Calls
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/calls")
-def list_calls(unsummarized: Optional[bool] = None, session: Session = Depends(get_session)):
+def list_calls(unsummarized: Optional[bool] = None, limit: int = Query(50, ge=1, le=200), session: Session = Depends(get_session)):
     q = select(CallLog).order_by(CallLog.received_at.desc())
     tenant_id = current_tenant_id.get()
     if tenant_id:
         q = q.where(CallLog.tenant_id == tenant_id)
+    if unsummarized is True:
+        q = q.where(or_(CallLog.summary.is_(None), CallLog.summary == ""))
+    q = q.limit(limit)
         
     calls = session.exec(q).all()
-    result = []
-    for c in calls:
-        d = _call_dict(c, session)
-        if unsummarized is True and d.get("summary"):
-            continue
-        result.append(d)
+    client_ids = {c.client_id for c in calls if c.client_id}
+    client_map = {}
+    if client_ids:
+        from database import ClientProfile
+        client_map = {cp.id: cp for cp in session.exec(select(ClientProfile).where(ClientProfile.id.in_(client_ids))).all()}
+    result = [_call_dict(c, session, client_map) for c in calls]
     return {"calls": result}
 
 
@@ -7084,11 +7123,11 @@ def add_call_summary(
     return {"ok": True}
 
 
-def _call_dict(c: CallLog, session: Session = None) -> dict:
+def _call_dict(c: CallLog, session: Session = None, client_map: dict = None) -> dict:
     d = {
         "id": c.id,
         "phone_number": c.phone_number,
-        "received_at": c.received_at.isoformat(),
+        "received_at": c.received_at.isoformat() if c.received_at else None,
         "duration_seconds": c.duration_seconds,
         "summary": getattr(c, "summary", None),
         "description": getattr(c, "description", None),
@@ -7099,11 +7138,16 @@ def _call_dict(c: CallLog, session: Session = None) -> dict:
         "client_id": getattr(c, "client_id", None),
     }
     
-    if session and c.client_id:
-        from database import ClientProfile
-        cp = session.get(ClientProfile, c.client_id)
-        if cp:
-            d["entity_name"] = cp.companyName or cp.projectName
+    if c.client_id:
+        if client_map and c.client_id in client_map:
+            cp = client_map[c.client_id]
+            if cp:
+                d["entity_name"] = cp.companyName or cp.projectName
+        elif session:
+            from database import ClientProfile
+            cp = session.get(ClientProfile, c.client_id)
+            if cp:
+                d["entity_name"] = cp.companyName or cp.projectName
             
     if not d.get("entity_name") and c.summary:
         if c.summary.startswith("AI Pitch Simulation for "):
@@ -8001,25 +8045,24 @@ def dashboard_stats(
             ],
         }
 
-    # Admin / Employee stats
-    total_clients = len(session.exec(select(ClientProfile)).all())
-    active_clients = len(
-        session.exec(select(ClientProfile).where(ClientProfile.status == "Active")).all()
-    )
-    pending_clients = len(
-        session.exec(select(ClientProfile).where(ClientProfile.status == "Pending")).all()
-    )
-    hold_clients = len(
-        session.exec(select(ClientProfile).where(ClientProfile.status == "Hold")).all()
-    )
+    # Admin / Employee stats - optimized with SQL COUNT() and batch-loaded tickets
+    total_clients = session.exec(select(func.count(ClientProfile.id))).first() or 0
+    active_clients = session.exec(select(func.count(ClientProfile.id)).where(ClientProfile.status == "Active")).first() or 0
+    pending_clients = session.exec(select(func.count(ClientProfile.id)).where(ClientProfile.status == "Pending")).first() or 0
+    hold_clients = session.exec(select(func.count(ClientProfile.id)).where(ClientProfile.status == "Hold")).first() or 0
     all_projects_list = session.exec(select(Project)).all()
     total_projects = len(all_projects_list)
-    # Build project progress list with real ticket-based progress
+    project_ids = [proj.id for proj in all_projects_list if proj.id]
+    tickets_by_proj = {}
+    if project_ids:
+        all_tickets = session.exec(select(ProjectTicket).where(ProjectTicket.project_id.in_(project_ids))).all()
+        for t in all_tickets:
+            tickets_by_proj.setdefault(t.project_id, []).append(t)
+
+    # Build project progress list without per-project N+1 queries
     projects_with_progress = []
     for proj in all_projects_list:
-        proj_tickets = session.exec(
-            select(ProjectTicket).where(ProjectTicket.project_id == proj.id)
-        ).all()
+        proj_tickets = tickets_by_proj.get(proj.id, [])
         t_total = len(proj_tickets)
         t_done = sum(1 for t in proj_tickets if t.date_release_prod or t.current_state == "Prod Release")
         t_in_progress = sum(1 for t in proj_tickets if t.current_state in ("In Dev", "Given to QA"))
@@ -8033,45 +8076,48 @@ def dashboard_stats(
             "ticket_done": t_done,
             "ticket_in_progress": t_in_progress,
         })
-    total_employees = len(
-        session.exec(select(User).where(User.role == "Employee").where(User.tenant_id == current_tenant_id.get())).all()
-    )
-    total_interns = len(
-        session.exec(select(User).where(User.role == "Intern").where(User.tenant_id == current_tenant_id.get())).all()
-    )
-    total_activities = len(session.exec(select(ActivityLog)).all())
-    total_calls = len(session.exec(select(CallLog)).all())
+    total_employees = session.exec(
+        select(func.count(User.id)).where(User.role == "Employee").where(User.tenant_id == current_tenant_id.get())
+    ).first() or 0
+    total_interns = session.exec(
+        select(func.count(User.id)).where(User.role == "Intern").where(User.tenant_id == current_tenant_id.get())
+    ).first() or 0
+    total_activities = session.exec(select(func.count(ActivityLog.id))).first() or 0
+    total_calls = session.exec(select(func.count(CallLog.id))).first() or 0
 
     try:
         from database import MarketplaceService
-        total_marketplace = len(session.exec(select(MarketplaceService)).all())
+        total_marketplace = session.exec(select(func.count(MarketplaceService.id))).first() or 0
     except:
         total_marketplace = 0
 
-    # Build real 7-day chart data from database
+    # Build real 7-day chart data from database (date-bounded)
     labels = []
     activity_chart = []
     email_chart = []
     call_chart = []
-    all_activities = session.exec(select(ActivityLog)).all()
-    all_emails = session.exec(select(SentEmail)).all()
-    all_calls_list = session.exec(select(CallLog)).all()
-    total_emails_sent = len(all_emails)
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    recent_activities_dates = [a for a in session.exec(select(ActivityLog.createdAt).where(ActivityLog.createdAt >= seven_days_ago)).all() if a]
+    recent_emails_dates = [e for e in session.exec(select(SentEmail.sent_at).where(SentEmail.sent_at >= seven_days_ago)).all() if e]
+    recent_calls_dates = [c for c in session.exec(select(CallLog.createdAt).where(CallLog.createdAt >= seven_days_ago)).all() if c]
+    total_emails_sent = session.exec(select(func.count(SentEmail.id))).first() or 0
+
     for i in range(6, -1, -1):
         day = datetime.utcnow() - timedelta(days=i)
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
         labels.append(day.strftime("%b %d"))
-        activity_chart.append(sum(1 for a in all_activities if a.createdAt and day_start <= _to_naive_dt(a.createdAt) < day_end))
-        email_chart.append(sum(1 for e in all_emails if e.sent_at and day_start <= _to_naive_dt(e.sent_at) < day_end))
-        call_chart.append(sum(1 for c in all_calls_list if c.createdAt and day_start <= _to_naive_dt(c.createdAt) < day_end))
+        activity_chart.append(sum(1 for a in recent_activities_dates if day_start <= _to_naive_dt(a) < day_end))
+        email_chart.append(sum(1 for e in recent_emails_dates if day_start <= _to_naive_dt(e) < day_end))
+        call_chart.append(sum(1 for c in recent_calls_dates if day_start <= _to_naive_dt(c) < day_end))
 
     import calendar
-    all_invoices = session.exec(select(Invoice)).all()
-    all_quotes = session.exec(select(CRMQuote)).all()
-    all_sales_orders = session.exec(select(SalesOrder)).all()
-    all_purchase_orders = session.exec(select(PurchaseOrder)).all()
-    all_service_reqs = session.exec(select(ServiceRequest)).all()
+    six_months_ago = datetime.utcnow() - timedelta(days=190)
+    all_invoices = session.exec(select(Invoice).where(Invoice.created_at >= six_months_ago)).all()
+    all_quotes = session.exec(select(CRMQuote).where(CRMQuote.created_at >= six_months_ago)).all()
+    all_sales_orders = session.exec(select(SalesOrder).where(SalesOrder.created_at >= six_months_ago)).all()
+    all_purchase_orders = session.exec(select(PurchaseOrder).where(PurchaseOrder.created_at >= six_months_ago)).all()
+    all_service_reqs = session.exec(select(ServiceRequest).where(ServiceRequest.created_at >= six_months_ago)).all()
 
     def _billing_value(row):
         return getattr(row, "grand_total", None) or getattr(row, "total", None) or 0
@@ -9348,6 +9394,7 @@ def delete_invoice(invoice_id: int, session: Session = Depends(get_session)):
 def get_notifications(
     user_id: int,
     unread_only: bool = False,
+    limit: int = Query(50, ge=1, le=200),
     session: Session = Depends(get_session),
 ):
     q = select(Notification).where(Notification.user_id == user_id).order_by(
@@ -9355,12 +9402,17 @@ def get_notifications(
     )
     if unread_only:
         q = q.where(Notification.is_read == False)
+    q = q.limit(limit)
     
     try:
         notifs = session.exec(q).all()
+        unread_count = session.exec(
+            select(func.count(Notification.id)).where(Notification.user_id == user_id, Notification.is_read == False)
+        ).first() or 0
     except Exception as e:
         print(f"Warning: Failed to fetch notifications: {e}")
         notifs = []
+        unread_count = 0
         session.rollback()
     
     return {
@@ -9376,7 +9428,7 @@ def get_notifications(
             }
             for n in notifs
         ],
-        "unread_count": sum(1 for n in notifs if not n.is_read),
+        "unread_count": unread_count,
     }
 
 
