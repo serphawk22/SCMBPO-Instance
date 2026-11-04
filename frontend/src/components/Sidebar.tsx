@@ -349,7 +349,11 @@ export function Sidebar({ role }: SidebarProps) {
       } catch {}
     };
     load();
-    const timer = setInterval(load, 60000);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      load();
+    };
+    const timer = setInterval(tick, 60000);
     window.addEventListener("inbox-unread-changed", load);
     return () => {
       alive = false;

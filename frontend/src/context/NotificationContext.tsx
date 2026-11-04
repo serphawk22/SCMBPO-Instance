@@ -27,7 +27,7 @@ interface NotificationContextType {
 
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
-const POLL_INTERVAL = 15_000; // 15 seconds
+const POLL_INTERVAL = 60_000; // 60 seconds (pauses when tab is hidden to save DB compute)
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { user } = useRole();
@@ -60,10 +60,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
   }, [userId, fetchNotifications]);
 
-  // Polling every 15s
+  // Polling every 60s (pauses when tab is hidden to save DB compute)
   useEffect(() => {
     if (!userId) return;
-    const timer = setInterval(fetchNotifications, POLL_INTERVAL);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchNotifications();
+    };
+    const timer = setInterval(tick, POLL_INTERVAL);
     return () => clearInterval(timer);
   }, [userId, fetchNotifications]);
 

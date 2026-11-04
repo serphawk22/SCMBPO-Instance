@@ -65,7 +65,11 @@ export function CallNotificationBar() {
 
   useEffect(() => {
     fetchUnsummarized();
-    const interval = setInterval(fetchUnsummarized, 30_000);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchUnsummarized();
+    };
+    const interval = setInterval(tick, 60_000);
     
     // Listen for simulation events
     window.addEventListener("refresh-calls", fetchUnsummarized);

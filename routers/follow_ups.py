@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import Column, Text, text, update
+from sqlalchemy import Column, Text, or_, text, update
 from sqlmodel import Field, Session, SQLModel, select
 
 from database import (

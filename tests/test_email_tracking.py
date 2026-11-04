@@ -188,12 +188,13 @@ class BackgroundSwitchTests(unittest.TestCase):
         from modules import background
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("BACKGROUND_JOBS", None)
-            self.assertTrue(background.jobs_enabled())
+            self.assertFalse(background.jobs_enabled())
+        for on in ("1", "true", "Yes", "ON", " 1 "):
+            with mock.patch.dict(os.environ, {"BACKGROUND_JOBS": on}):
+                self.assertTrue(background.jobs_enabled(), on)
         for off in ("0", "false", "No", "OFF", " 0 "):
             with mock.patch.dict(os.environ, {"BACKGROUND_JOBS": off}):
                 self.assertFalse(background.jobs_enabled(), off)
-        with mock.patch.dict(os.environ, {"BACKGROUND_JOBS": "1"}):
-            self.assertTrue(background.jobs_enabled())
 
     def test_startup_starts_no_poller_when_switched_off(self):
         from tests._support import load_main

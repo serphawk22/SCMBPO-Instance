@@ -532,7 +532,11 @@ export default function EmailAgentPage() {
     };
 
     fetchEmailsData();
-    const interval = setInterval(fetchEmailsData, 10000); // Refresh every 10 seconds
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchEmailsData();
+    };
+    const interval = setInterval(tick, 60000); // Refresh every 60 seconds (pauses when hidden)
     return () => clearInterval(interval);
   }, []);
 
