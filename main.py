@@ -8972,6 +8972,7 @@ def generate_task_sheet_ai_summary(
         name = u.name if u else f"Staff #{e.user_id}"
         if name not in sales_summary:
             sales_summary[name] = {
+                "user_id": e.user_id,
                 "user_name": name,
                 "role": u.role if u else "Sales",
                 "outreaches": 0,
@@ -9000,18 +9001,23 @@ def generate_task_sheet_ai_summary(
         tot_meet += (getattr(e, "meetings_scheduled", 0) or 0)
 
     table_rows = []
+    breakdown_rows = []
+    num_sales = len(sales_summary)
     for name, data in sales_summary.items():
         outreach = data["outreaches"]
         pos = data["positives"]
         pos_rate = round((pos / outreach * 100), 1) if outreach > 0 else 0
         if pos_rate >= 25 or data["meetings"] >= 2:
             rating = "🔥 High Momentum"
+            perf_rating = "Top Performer"
             advice = "Strong qualification and demo velocity. Accelerate proposal signoffs."
         elif pos_rate >= 15 or data["followups"] >= 2:
             rating = "⚡ Steady Progress"
+            perf_rating = "Consistent"
             advice = "Good volume. Follow up promptly on open queries to prevent drop-off."
         else:
             rating = "⚠️ Needs Support"
+            perf_rating = "Needs Support"
             advice = "Optimize outreach script and target higher-intent decision makers."
 
         table_rows.append({
@@ -9027,7 +9033,41 @@ def generate_task_sheet_ai_summary(
             "strategic_advice": advice
         })
 
+        breakdown_rows.append({
+            "user_id": data.get("user_id", 0),
+            "name": name,
+            "outreaches": outreach,
+            "positives": pos,
+            "negatives": data["negatives"],
+            "followups": data["followups"],
+            "meetings": data["meetings"],
+            "positive_rate": pos_rate,
+            "key_focus": data["focus_items"][0] if data["focus_items"] else "—",
+            "performance_rating": perf_rating
+        })
+
     overall_rate = round((tot_pos / tot_outreach * 100), 1) if tot_outreach > 0 else 0
+    avg_outreaches = round(tot_outreach / num_sales, 1) if num_sales > 0 else 0
+    avg_positives = round(tot_pos / num_sales, 1) if num_sales > 0 else 0
+    avg_meetings = round(tot_meet / num_sales, 1) if num_sales > 0 else 0
+    avg_followups = round(tot_follow / num_sales, 1) if num_sales > 0 else 0
+
+    team_averages = {
+        "avg_outreaches_per_person": avg_outreaches,
+        "avg_positives_per_person": avg_positives,
+        "avg_meetings_per_person": avg_meetings,
+        "avg_followups_per_person": avg_followups
+    }
+
+    metrics = {
+        "total_outreaches": tot_outreach,
+        "total_positives": tot_pos,
+        "total_negatives": tot_neg,
+        "total_followups": tot_follow,
+        "total_meetings": tot_meet,
+        "positive_rate": overall_rate
+    }
+
     executive_summary = (
         f"For {period.replace('_', ' ').capitalize()}, team recorded {tot_outreach} outreach interactions across {len(sales_summary)} salespeople, "
         f"generating {tot_pos} positives ({overall_rate}% response rate) and {tot_neg} negatives. "
@@ -9062,7 +9102,10 @@ Provide a concise 3-sentence executive evaluation highlighting top momentum sale
         "total_followups": tot_follow,
         "total_meetings": tot_meet,
         "executive_summary": executive_summary,
-        "comparison_table": table_rows
+        "comparison_table": table_rows,
+        "metrics": metrics,
+        "team_averages": team_averages,
+        "salesperson_breakdown": breakdown_rows
     }
 
 

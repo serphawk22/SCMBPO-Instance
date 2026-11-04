@@ -82,6 +82,20 @@ class SalesScopingTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200, res.text)
         self.assertEqual({e["user_id"] for e in res.json()["entries"]}, {ANU, BEN})
 
+    def test_admin_ai_summary_returns_team_averages_and_breakdown(self):
+        self.sheet(ANU)
+        self.sheet(BEN)
+        res = self.client.post("/task-sheet/ai-summary", headers=hdr(ADMIN), json={"period": "today"})
+        self.assertEqual(res.status_code, 200, res.text)
+        data = res.json()
+        self.assertIn("team_averages", data)
+        self.assertIn("avg_outreaches_per_person", data["team_averages"])
+        self.assertIn("avg_positives_per_person", data["team_averages"])
+        self.assertIn("avg_meetings_per_person", data["team_averages"])
+        self.assertIn("avg_followups_per_person", data["team_averages"])
+        self.assertIn("salesperson_breakdown", data)
+        self.assertIsInstance(data["salesperson_breakdown"], list)
+
     # ── meetings ─────────────────────────────────────────────────────────────
     def test_meeting_defaults_to_creator_as_host_and_stamps_created_by(self):
         m = self.meeting(ANU, "Anu demo")

@@ -201,7 +201,38 @@ export default function TaskSheetPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setAiSummary(data);
+        const totalPeople = (data.salesperson_breakdown?.length || data.comparison_table?.length || 1);
+        const normalized: AISummaryData = {
+          executive_summary: data.executive_summary || "",
+          period: data.period || period,
+          metrics: data.metrics || {
+            total_outreaches: data.total_outreaches || 0,
+            total_positives: data.total_positives || 0,
+            total_negatives: data.total_negatives || 0,
+            total_followups: data.total_followups || 0,
+            total_meetings: data.total_meetings || 0,
+            positive_rate: typeof data.positive_rate === "number" ? data.positive_rate : parseFloat(data.positive_rate) || 0,
+          },
+          team_averages: data.team_averages || {
+            avg_outreaches_per_person: Math.round(((data.total_outreaches || 0) / totalPeople) * 10) / 10,
+            avg_positives_per_person: Math.round(((data.total_positives || 0) / totalPeople) * 10) / 10,
+            avg_meetings_per_person: Math.round(((data.total_meetings || 0) / totalPeople) * 10) / 10,
+            avg_followups_per_person: Math.round(((data.total_followups || 0) / totalPeople) * 10) / 10,
+          },
+          salesperson_breakdown: data.salesperson_breakdown || (data.comparison_table || []).map((ct: any, idx: number) => ({
+            user_id: ct.user_id || idx + 1,
+            name: ct.salesperson || ct.name || `Salesperson #${idx + 1}`,
+            outreaches: ct.outreaches || 0,
+            positives: ct.positives || 0,
+            negatives: ct.negatives || 0,
+            followups: ct.followups || 0,
+            meetings: ct.meetings || 0,
+            positive_rate: typeof ct.positive_rate === "number" ? ct.positive_rate : parseFloat(ct.positive_rate) || 0,
+            key_focus: ct.key_focus || "—",
+            performance_rating: ct.performance_rating || ct.rating || "Consistent",
+          })),
+        };
+        setAiSummary(normalized);
       }
     } catch (err) {
       console.error(err);
@@ -651,25 +682,25 @@ export default function TaskSheetPage() {
                       <div className="bg-white dark:bg-zinc-900 p-3 rounded-xl border border-slate-200 dark:border-zinc-700">
                         <span className="text-[11px] text-slate-400 font-semibold block">Avg Outreaches</span>
                         <span className="text-lg font-black text-slate-900 dark:text-white">
-                          {aiSummary.team_averages.avg_outreaches_per_person}
+                          {aiSummary.team_averages?.avg_outreaches_per_person ?? 0}
                         </span>
                       </div>
                       <div className="bg-white dark:bg-zinc-900 p-3 rounded-xl border border-slate-200 dark:border-zinc-700">
                         <span className="text-[11px] text-slate-400 font-semibold block">Avg Positives</span>
                         <span className="text-lg font-black text-emerald-600">
-                          {aiSummary.team_averages.avg_positives_per_person}
+                          {aiSummary.team_averages?.avg_positives_per_person ?? 0}
                         </span>
                       </div>
                       <div className="bg-white dark:bg-zinc-900 p-3 rounded-xl border border-slate-200 dark:border-zinc-700">
                         <span className="text-[11px] text-slate-400 font-semibold block">Avg Meetings</span>
                         <span className="text-lg font-black text-purple-600">
-                          {aiSummary.team_averages.avg_meetings_per_person}
+                          {aiSummary.team_averages?.avg_meetings_per_person ?? 0}
                         </span>
                       </div>
                       <div className="bg-white dark:bg-zinc-900 p-3 rounded-xl border border-slate-200 dark:border-zinc-700">
                         <span className="text-[11px] text-slate-400 font-semibold block">Avg Follow-ups</span>
                         <span className="text-lg font-black text-indigo-600">
-                          {aiSummary.team_averages.avg_followups_per_person}
+                          {aiSummary.team_averages?.avg_followups_per_person ?? 0}
                         </span>
                       </div>
                     </div>
@@ -696,7 +727,7 @@ export default function TaskSheetPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-zinc-800 font-medium">
-                          {aiSummary.salesperson_breakdown.map((sp, idx) => (
+                          {(aiSummary.salesperson_breakdown || []).map((sp, idx) => (
                             <tr key={sp.user_id} className="hover:bg-slate-50 dark:hover:bg-zinc-800/50">
                               <td className="p-3 font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                                 <span className="w-5 h-5 rounded-full bg-slate-200 dark:bg-zinc-700 text-[10px] flex items-center justify-center font-bold">
