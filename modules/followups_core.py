@@ -594,6 +594,9 @@ def _loop(interval_seconds: int):
 
 def start_followup_scheduler_thread():
     """Start the follow-up scheduler once per process. Safe to call repeatedly."""
+    from modules.background import jobs_enabled
+    if not jobs_enabled():
+        return
     global _thread_started
     with _thread_lock:
         if _thread_started:

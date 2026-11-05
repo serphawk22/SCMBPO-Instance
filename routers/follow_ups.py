@@ -962,6 +962,9 @@ _worker_started = False
 
 def start_reminder_worker(interval_seconds: int = 60) -> None:
     """Start the single background reminder loop (idempotent)."""
+    from modules.background import jobs_enabled
+    if not jobs_enabled():
+        return
     global _worker_started
     if _worker_started:
         return

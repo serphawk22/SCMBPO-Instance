@@ -659,6 +659,9 @@ def start_inbox_sync_thread():
     """Start the background inbox sync once per process. Safe to call repeatedly.
     Runs even without a configured mailbox so older EmailReply history and
     AI triage still reach the Inbox."""
+    from modules.background import jobs_enabled
+    if not jobs_enabled():
+        return
     global _thread_started
     with _thread_lock:
         if _thread_started:

@@ -762,6 +762,9 @@ def _reply_checker_loop(interval_seconds: int):
 
 def start_reply_checker_thread():
     """Start the background IMAP reply-polling loop once per process. Safe to call multiple times."""
+    from modules.background import jobs_enabled
+    if not jobs_enabled():
+        return
     global _reply_checker_started
     with _reply_checker_lock:
         if _reply_checker_started:

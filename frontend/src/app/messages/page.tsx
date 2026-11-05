@@ -182,9 +182,13 @@ export default function MessagesHubPage() {
     return () => { if (wsRef.current) { wsRef.current.close(); wsRef.current = null; } };
   }, [activeThreadId, connectWs]);
 
-  // ── Fallback poll every 30s (in case WS drops) ────────────────────────
+  // ── Fallback poll every 30s (in case WS drops, pauses when tab is hidden) ──
   useEffect(() => {
-    const id = setInterval(() => fetchThreads(true), 30000);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchThreads(true);
+    };
+    const id = setInterval(tick, 30000);
     return () => clearInterval(id);
   }, [fetchThreads]);
 

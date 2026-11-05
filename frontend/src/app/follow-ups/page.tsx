@@ -245,9 +245,14 @@ function RemindersBoard() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Periodic refresh every 60s
+  // Periodic refresh every 60s (pauses when tab is hidden)
   useEffect(() => {
-    const t = setInterval(() => { load(true); setTick(x => x + 1); }, 60000);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      load(true);
+      setTick(x => x + 1);
+    };
+    const t = setInterval(tick, 60000);
     return () => clearInterval(t);
   }, [load]);
 
