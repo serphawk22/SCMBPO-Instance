@@ -188,7 +188,7 @@ class BackgroundSwitchTests(unittest.TestCase):
         from modules import background
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("BACKGROUND_JOBS", None)
-            self.assertTrue(background.jobs_enabled())
+            self.assertFalse(background.jobs_enabled())
         for off in ("0", "false", "No", "OFF", " 0 "):
             with mock.patch.dict(os.environ, {"BACKGROUND_JOBS": off}):
                 self.assertFalse(background.jobs_enabled(), off)

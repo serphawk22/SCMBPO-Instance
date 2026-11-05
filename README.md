@@ -46,7 +46,15 @@ USE_SSL=True
 
 # Hourly email outreach limits
 HOURLY_EMAIL_LIMIT=50
+
+# Background inbox/reply polling and follow-up reminders are disabled by default.
+# Set to 1 only on the backend instance intended to run these jobs.
+BACKGROUND_JOBS=0
 ```
+
+Set `BACKGROUND_JOBS=1` to opt in to automatic inbox synchronization, reply checking,
+follow-up reminders/actions, AI follow-up scanning, and campaign resumption. Manual
+inbox sync and reply-check actions remain available when background jobs are disabled.
 
 > [!IMPORTANT]
 > **Gmail SMTP Authentication**: If you are using Gmail, standard account passwords will be rejected. You must:
